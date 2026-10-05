@@ -92,11 +92,9 @@ async def test_llm_verifier_conversation_and_fallbacks():
         "plain": {"speech": '{"person_detected": true, "reason": "Speaking occupant"}'}
     }
 
-    # Mock conversation component import
-    with patch(
-        "homeassistant.components.conversation.async_converse",
-        AsyncMock(return_value=mock_convo_res),
-    ):
+    mock_convo_mod = MagicMock()
+    mock_convo_mod.async_converse = AsyncMock(return_value=mock_convo_res)
+    with patch.dict("sys.modules", {"homeassistant.components.conversation": mock_convo_mod}):
         verifier = LLMVerifier(
             hass=mock_hass,
             provider_type=LLMProviderType.CONVERSATION,
