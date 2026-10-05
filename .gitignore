@@ -11,4 +11,3 @@ build/
 *.egg-info/
 .DS_Store
 *.zip
-uv.lock
