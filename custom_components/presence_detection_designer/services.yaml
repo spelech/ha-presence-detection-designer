@@ -1,0 +1,21 @@
+verify_presence:
+  name: Verify presence
+  description: Manually trigger an immediate snapshot acquisition and AI vision verification check.
+  fields:
+    entry_id:
+      name: Room Entry ID
+      description: Optional config entry ID for a specific room. If omitted, checks all configured rooms.
+      required: false
+      selector:
+        text:
+
+force_refresh:
+  name: Force refresh conditions
+  description: Immediately re-evaluates all sustaining conditions across configured rooms.
+  fields:
+    entry_id:
+      name: Room Entry ID
+      description: Optional config entry ID for a specific room. If omitted, refreshes all rooms.
+      required: false
+      selector:
+        text:

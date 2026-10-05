@@ -4,8 +4,8 @@
   "codeowners": ["@spelech"],
   "config_flow": true,
   "documentation": "https://github.com/spelech/ha-presence-detection-designer",
-  "issue_tracker": "https://github.com/spelech/ha-presence-detection-designer/issues",
   "integration_type": "hub",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/spelech/ha-presence-detection-designer/issues",
   "version": "1.0.0"
 }

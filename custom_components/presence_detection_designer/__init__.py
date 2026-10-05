@@ -12,6 +12,13 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["binary_sensor", "button", "switch"]
 
+try:
+    from homeassistant.helpers import config_validation as cv
+
+    CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+except Exception:  # noqa: BLE001
+    CONFIG_SCHEMA = None
+
 
 async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
     """Set up the Presence Detection Designer component."""
