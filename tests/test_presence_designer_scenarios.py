@@ -77,7 +77,10 @@ async def test_scenario_a_stationary_tv_watcher(mock_hass):
     coordinator._eval_conditions_and_update()
     coordinator.async_update_listeners()
     assert sensor.is_on is True
-    assert "media_player.living_room_tv equals playing" in sensor.extra_state_attributes["active_conditions"]
+    assert (
+        "media_player.living_room_tv equals playing"
+        in sensor.extra_state_attributes["active_conditions"]
+    )
 
     # 3. Person sits still on couch: PIR motion stops
     pir_state.state = "off"

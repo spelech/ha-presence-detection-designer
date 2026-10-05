@@ -16,6 +16,7 @@ from aiohttp import web
 try:
     import homeassistant  # noqa: F401
 except ImportError:
+
     class MockModule(types.ModuleType):
         """Dynamic mock module that returns MagicMock for missing attributes."""
 
@@ -140,7 +141,9 @@ except ImportError:
             return web.json_response(result, status=status_code, headers=headers)
 
     class StaticPathConfig:
-        def __init__(self, url_path: str | None = None, path: str | None = None, cache_headers: bool = True) -> None:
+        def __init__(
+            self, url_path: str | None = None, path: str | None = None, cache_headers: bool = True
+        ) -> None:
             self.url_path = url_path
             self.path = path
             self.cache_headers = cache_headers
@@ -183,10 +186,14 @@ except ImportError:
     aiohttp_client_mod = register_mock("homeassistant.helpers.aiohttp_client")
     aiohttp_client_mod.async_get_clientsession = MagicMock()
 
-    area_reg_mod.async_get = MagicMock(return_value=MagicMock(async_list_areas=MagicMock(return_value=[])))
+    area_reg_mod.async_get = MagicMock(
+        return_value=MagicMock(async_list_areas=MagicMock(return_value=[]))
+    )
     dev_reg_mod.async_get = MagicMock(return_value=MagicMock(devices={}))
     ent_reg_mod.async_get = MagicMock(return_value=MagicMock(entities={}))
-    floor_reg_mod.async_get = MagicMock(return_value=MagicMock(async_list_floors=MagicMock(return_value=[])))
+    floor_reg_mod.async_get = MagicMock(
+        return_value=MagicMock(async_list_floors=MagicMock(return_value=[]))
+    )
 
     helpers.area_registry = area_reg_mod
     helpers.device_registry = dev_reg_mod

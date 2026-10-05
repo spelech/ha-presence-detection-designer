@@ -7,6 +7,7 @@ from typing import Any
 try:
     import voluptuous as vol
 except ImportError:
+
     class MockVol:
         """Fallback for environments without voluptuous installed."""
 
@@ -72,14 +73,10 @@ class PresenceDetectionDesignerConfigFlow:
         schema = vol.Schema(
             {
                 vol.Required(CONF_ROOM_NAME): str,
-                vol.Optional(CONF_MODE, default=Mode.OPEN): vol.In(
-                    [Mode.BOUNDED, Mode.OPEN]
-                ),
+                vol.Optional(CONF_MODE, default=Mode.OPEN): vol.In([Mode.BOUNDED, Mode.OPEN]),
                 vol.Optional(CONF_BOUNDARY_ENTITIES, default=[]): list,
                 vol.Optional(CONF_TRIGGER_ENTITIES, default=[]): list,
-                vol.Optional(
-                    CONF_INACTIVITY_TIMEOUT, default=DEFAULT_INACTIVITY_TIMEOUT
-                ): int,
+                vol.Optional(CONF_INACTIVITY_TIMEOUT, default=DEFAULT_INACTIVITY_TIMEOUT): int,
                 vol.Optional(CONF_GRACE_TIMEOUT, default=DEFAULT_GRACE_TIMEOUT): int,
                 vol.Optional(CONF_EXTEND_TIMEOUT, default=DEFAULT_EXTEND_TIMEOUT): int,
                 vol.Optional(CONF_LLM_ENABLED, default=False): bool,
@@ -97,7 +94,9 @@ class PresenceDetectionDesignerConfigFlow:
             errors=errors,
         )
 
-    def async_show_form(self, step_id: str, data_schema: Any, errors: dict[str, str]) -> dict[str, Any]:
+    def async_show_form(
+        self, step_id: str, data_schema: Any, errors: dict[str, str]
+    ) -> dict[str, Any]:
         """Show form helper."""
         return {
             "type": "form",

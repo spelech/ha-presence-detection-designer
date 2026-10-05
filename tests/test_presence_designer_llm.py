@@ -1,7 +1,7 @@
 """Test Presence Detection Designer LLM Verifier."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -46,9 +46,7 @@ async def test_llm_verifier_vision_api():
             "choices": [
                 {
                     "message": {
-                        "content": json.dumps(
-                            {"person_detected": True, "reason": "Person visible"}
-                        )
+                        "content": json.dumps({"person_detected": True, "reason": "Person visible"})
                     }
                 }
             ]
@@ -83,3 +81,37 @@ async def test_acquire_snapshot_direct_url():
         direct_url="http://10.0.0.10:8301/api/living_room/latest.jpg"
     )
     assert data == b"jpeg_bytes_here"
+
+
+@pytest.mark.asyncio
+async def test_llm_verifier_conversation_and_fallbacks():
+    """Test conversation agent and error edge cases."""
+    mock_hass = MagicMock()
+    mock_convo_res = MagicMock()
+    mock_convo_res.response.speech = {
+        "plain": {"speech": '{"person_detected": true, "reason": "Speaking occupant"}'}
+    }
+
+    # Mock conversation component import
+    with patch(
+        "homeassistant.components.conversation.async_converse",
+        AsyncMock(return_value=mock_convo_res),
+    ):
+        verifier = LLMVerifier(
+            hass=mock_hass,
+            provider_type=LLMProviderType.CONVERSATION,
+            agent_id="test_agent",
+        )
+        detected, reason = await verifier.async_verify(b"image_bytes")
+        assert detected is True
+
+    # Test empty image bytes
+    empty_det, empty_reason = await verifier.async_verify(b"")
+    assert empty_det is False
+    assert "No snapshot image data" in empty_reason
+
+    # Test missing API URL
+    api_verifier = LLMVerifier(provider_type=LLMProviderType.VISION_API, api_url=None)
+    no_url_det, no_url_reason = await api_verifier.async_verify(b"test")
+    assert no_url_det is False
+    assert "No Vision API URL configured" in no_url_reason

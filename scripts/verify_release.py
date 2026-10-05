@@ -17,9 +17,7 @@ def check_version_sync(root_dir: Path) -> bool:
     """Verify version consistency between pyproject.toml and manifest.json."""
     print("🔍 Checking version consistency across manifests...")
     pyproject_file = root_dir / "pyproject.toml"
-    manifest_file = (
-        root_dir / "custom_components" / "presence_detection_designer" / "manifest.json"
-    )
+    manifest_file = root_dir / "custom_components" / "presence_detection_designer" / "manifest.json"
 
     if not pyproject_file.is_file():
         print(f"❌ Missing pyproject.toml at {pyproject_file}")

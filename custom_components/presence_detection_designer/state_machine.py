@@ -76,12 +76,18 @@ class RoomStateMachine:
         else:
             self._active_triggers.discard(entity_id)
             if not self._active_triggers and not self.active_conditions:
-                if self.mode == Mode.BOUNDED and len(self._open_boundaries) == 0 and self.box_state == BoxState.OCCUPIED_SEALED:
+                if (
+                    self.mode == Mode.BOUNDED
+                    and len(self._open_boundaries) == 0
+                    and self.box_state == BoxState.OCCUPIED_SEALED
+                ):
                     # Sealed box: doors closed and was sealed, keep presence sealed without motion!
                     pass
                 else:
                     self.box_state = BoxState.TIMER_ACTIVE
-                    timeout = self.grace_timeout if self.mode == Mode.BOUNDED else self.inactivity_timeout
+                    timeout = (
+                        self.grace_timeout if self.mode == Mode.BOUNDED else self.inactivity_timeout
+                    )
                     self.vacating_countdown = timeout
 
     def handle_boundary(self, entity_id: str, is_open: bool) -> None:
@@ -120,12 +126,18 @@ class RoomStateMachine:
                 self.box_state = BoxState.OCCUPIED_SEALED
         else:
             if self.is_present and not self._active_triggers:
-                if self.mode == Mode.BOUNDED and len(self._open_boundaries) == 0 and self.box_state == BoxState.OCCUPIED_SEALED:
+                if (
+                    self.mode == Mode.BOUNDED
+                    and len(self._open_boundaries) == 0
+                    and self.box_state == BoxState.OCCUPIED_SEALED
+                ):
                     # Still sealed in box
                     pass
                 else:
                     self.box_state = BoxState.TIMER_ACTIVE
-                    timeout = self.grace_timeout if self.mode == Mode.BOUNDED else self.inactivity_timeout
+                    timeout = (
+                        self.grace_timeout if self.mode == Mode.BOUNDED else self.inactivity_timeout
+                    )
                     self.vacating_countdown = timeout
 
     def handle_tick(self, seconds: int = 1) -> str | None:

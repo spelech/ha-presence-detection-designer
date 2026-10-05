@@ -76,6 +76,7 @@ class LLMVerifier:
             # Use HA aiohttp helper if available
             try:
                 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
                 return async_get_clientsession(self.hass)
             except Exception:  # noqa: BLE001
                 pass
@@ -103,10 +104,13 @@ class LLMVerifier:
         if camera_entity_id and self.hass is not None:
             try:
                 from homeassistant.components.camera import async_get_image
+
                 image_data = await async_get_image(self.hass, camera_entity_id)
                 return image_data.content
             except Exception as err:  # noqa: BLE001
-                _LOGGER.error("Failed to fetch image from camera entity %s: %s", camera_entity_id, err)
+                _LOGGER.error(
+                    "Failed to fetch image from camera entity %s: %s", camera_entity_id, err
+                )
 
         return None
 
@@ -144,9 +148,7 @@ class LLMVerifier:
                         {"type": "text", "text": self.prompt},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{b64_image}"
-                            },
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"},
                         },
                     ],
                 }
@@ -180,6 +182,7 @@ class LLMVerifier:
 
         try:
             from homeassistant.components import conversation
+
             result = await conversation.async_converse(
                 self.hass,
                 text=self.prompt,

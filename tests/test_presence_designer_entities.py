@@ -1,6 +1,6 @@
 """Test Presence Detection Designer Coordinator and Entities."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -106,3 +106,96 @@ async def test_switch_override_toggle(mock_hass, sample_config):
     await switch.async_turn_off()
     assert switch.is_on is False
     assert sensor.is_on is False
+
+
+@pytest.mark.asyncio
+async def test_component_lifecycle_and_services(mock_hass, sample_config):
+    """Test async_setup, services, async_setup_entry, and unload."""
+    from custom_components.presence_detection_designer import (
+        async_setup,
+        async_setup_entry,
+        async_unload_entry,
+        async_update_options,
+    )
+    from custom_components.presence_detection_designer.binary_sensor import (
+        async_setup_entry as async_setup_binary_sensor,
+    )
+    from custom_components.presence_detection_designer.button import (
+        async_setup_entry as async_setup_button,
+    )
+    from custom_components.presence_detection_designer.switch import (
+        async_setup_entry as async_setup_switch,
+    )
+
+    registered_services = {}
+
+    def mock_register(domain, service, handler):
+        registered_services[f"{domain}.{service}"] = handler
+
+    mock_hass.services = MagicMock()
+    mock_hass.services.has_service = MagicMock(return_value=False)
+    mock_hass.services.async_register = mock_register
+
+    # 1. Component setup
+    assert await async_setup(mock_hass, {}) is True
+    assert "presence_detection_designer.verify_presence" in registered_services
+    assert "presence_detection_designer.force_refresh" in registered_services
+
+    # 2. Config entry setup
+    mock_entry = MagicMock()
+    mock_entry.entry_id = "test_entry"
+    mock_entry.data = sample_config
+    mock_entry.options = {}
+    mock_hass.config_entries = MagicMock()
+    mock_hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=None)
+    mock_hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+    mock_hass.config_entries.async_reload = AsyncMock()
+
+    assert await async_setup_entry(mock_hass, mock_entry) is True
+    coord = mock_hass.data[DOMAIN]["test_entry"]
+
+    # Test platform setup functions
+    added_entities = []
+    await async_setup_binary_sensor(mock_hass, mock_entry, lambda ents: added_entities.extend(ents))
+    await async_setup_button(mock_hass, mock_entry, lambda ents: added_entities.extend(ents))
+    await async_setup_switch(mock_hass, mock_entry, lambda ents: added_entities.extend(ents))
+    assert len(added_entities) == 3
+
+    # Button press
+    btn = [e for e in added_entities if isinstance(e, VerifyPresenceButton)][0]
+    coord.async_manual_verify = AsyncMock()
+    await btn.async_press()
+    coord.async_manual_verify.assert_called_once()
+
+    # Trigger services
+    call_mock = MagicMock()
+    call_mock.data = {"entry_id": "test_entry"}
+    coord.async_manual_verify.reset_mock()
+    await registered_services["presence_detection_designer.verify_presence"](call_mock)
+    coord.async_manual_verify.assert_called_once()
+
+    await registered_services["presence_detection_designer.force_refresh"](call_mock)
+
+    # Coordinator event handlers
+    trigger_event = MagicMock()
+    trigger_event.data = {
+        "entity_id": "binary_sensor.lr_motion",
+        "new_state": MagicMock(state="on"),
+    }
+    coord._handle_trigger_change(trigger_event)
+    assert coord.state_machine.is_present is True
+
+    boundary_event = MagicMock()
+    boundary_event.data = {"entity_id": "binary_sensor.door", "new_state": MagicMock(state="on")}
+    coord._handle_boundary_change(boundary_event)
+
+    condition_event = MagicMock()
+    coord._handle_condition_change(condition_event)
+
+    # Options update
+    await async_update_options(mock_hass, mock_entry)
+    mock_hass.config_entries.async_reload.assert_called_with("test_entry")
+
+    # Unload entry
+    assert await async_unload_entry(mock_hass, mock_entry) is True
+    assert "test_entry" not in mock_hass.data[DOMAIN]
