@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from homeassistant.helpers import config_validation as cv
+
 from .const import DOMAIN
 from .coordinator import RoomPresenceCoordinator
 
@@ -12,12 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["binary_sensor", "button", "switch"]
 
-try:
-    from homeassistant.helpers import config_validation as cv
-
-    CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-except Exception:  # noqa: BLE001
-    CONFIG_SCHEMA = None
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
