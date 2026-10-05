@@ -6,7 +6,8 @@ from typing import Any
 
 try:
     import voluptuous as vol
-except ImportError:
+except ImportError:  # pragma: no cover
+
     class MockVol:
         """Fallback for environments without voluptuous installed."""
 
@@ -28,11 +29,16 @@ try:
     from homeassistant import config_entries
     from homeassistant.core import callback
     from homeassistant.helpers import selector
+
     if type(config_entries.ConfigFlow).__name__ == "MagicMock":
         raise ImportError
     BaseConfigFlow = config_entries.ConfigFlow
-    BaseOptionsFlow = config_entries.OptionsFlow
-except Exception:  # noqa: BLE001
+    if hasattr(config_entries, "OptionsFlowWithConfigEntry"):
+        BaseOptionsFlow = config_entries.OptionsFlowWithConfigEntry
+    else:  # pragma: no cover
+        BaseOptionsFlow = config_entries.OptionsFlow
+except Exception:  # pragma: no cover  # noqa: BLE001
+
     class BaseConfigFlow:
         """Mock base config flow."""
 
@@ -40,8 +46,15 @@ except Exception:  # noqa: BLE001
             super().__init_subclass__(**kwargs)
             cls.domain = domain
 
-        def async_show_form(self, step_id: str, data_schema: Any, errors: dict[str, str]) -> dict[str, Any]:
-            return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors}
+        def async_show_form(
+            self, step_id: str, data_schema: Any, errors: dict[str, str]
+        ) -> dict[str, Any]:
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "errors": errors,
+            }
 
         def async_create_entry(self, title: str, data: dict[str, Any]) -> dict[str, Any]:
             return {"type": "create_entry", "title": title, "data": data}
@@ -108,7 +121,6 @@ from .const import (
     DEFAULT_GRACE_TIMEOUT,
     DEFAULT_INACTIVITY_TIMEOUT,
     DOMAIN,
-    Mode,
 )
 
 
@@ -155,13 +167,23 @@ class PresenceDetectionDesignerConfigFlow(BaseConfigFlow, domain=DOMAIN):
                 vol.Optional(
                     CONF_INACTIVITY_TIMEOUT, default=DEFAULT_INACTIVITY_TIMEOUT
                 ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
+                    selector.NumberSelectorConfig(
+                        min=5, max=86400, mode=selector.NumberSelectorMode.BOX
+                    )
                 ),
-                vol.Optional(CONF_GRACE_TIMEOUT, default=DEFAULT_GRACE_TIMEOUT): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=3600, mode=selector.NumberSelectorMode.BOX)
+                vol.Optional(
+                    CONF_GRACE_TIMEOUT, default=DEFAULT_GRACE_TIMEOUT
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=5, max=3600, mode=selector.NumberSelectorMode.BOX
+                    )
                 ),
-                vol.Optional(CONF_EXTEND_TIMEOUT, default=DEFAULT_EXTEND_TIMEOUT): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
+                vol.Optional(
+                    CONF_EXTEND_TIMEOUT, default=DEFAULT_EXTEND_TIMEOUT
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=5, max=86400, mode=selector.NumberSelectorMode.BOX
+                    )
                 ),
                 vol.Optional(CONF_LLM_ENABLED, default=False): selector.BooleanSelector(),
                 vol.Optional(CONF_CAMERA_ENTITY): selector.EntitySelector(
@@ -191,7 +213,10 @@ class PresenceDetectionDesignerOptionsFlow(BaseOptionsFlow):
     """Handle options flow for tuning presence rules."""
 
     def __init__(self, config_entry: Any) -> None:
-        super().__init__(config_entry)
+        try:
+            super().__init__(config_entry)
+        except TypeError:
+            super().__init__()
         self.config_entry = config_entry
         self.hass: Any = None
 
@@ -206,54 +231,95 @@ class PresenceDetectionDesignerOptionsFlow(BaseOptionsFlow):
 
         curr = {**self.config_entry.data, **self.config_entry.options}
 
-        schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_INACTIVITY_TIMEOUT,
-                    default=curr.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
-                ),
-                vol.Optional(
-                    CONF_GRACE_TIMEOUT,
-                    default=curr.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=3600, mode=selector.NumberSelectorMode.BOX)
-                ),
-                vol.Optional(
-                    CONF_EXTEND_TIMEOUT,
-                    default=curr.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
-                ),
-                vol.Optional(
-                    CONF_LLM_ENABLED,
-                    default=curr.get(CONF_LLM_ENABLED, False),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_CAMERA_ENTITY,
-                    default=curr.get(CONF_CAMERA_ENTITY, ""),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="camera")
-                ),
-                vol.Optional(
-                    CONF_CAMERA_SNAPSHOT_URL,
-                    default=curr.get(CONF_CAMERA_SNAPSHOT_URL, ""),
-                ): selector.TextSelector(),
-                vol.Optional(
-                    CONF_LLM_API_URL,
-                    default=curr.get(CONF_LLM_API_URL, ""),
-                ): selector.TextSelector(),
-                vol.Optional(
-                    CONF_LLM_API_KEY,
-                    default=curr.get(CONF_LLM_API_KEY, ""),
-                ): selector.TextSelector(),
-                vol.Optional(
-                    CONF_LLM_MODEL,
-                    default=curr.get(CONF_LLM_MODEL, "gpt-4o-mini"),
-                ): selector.TextSelector(),
-            }
-        )
+        fields: dict[Any, Any] = {
+            vol.Optional(
+                CONF_MODE,
+                default=curr.get(CONF_MODE, "open"),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=["bounded", "open"],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_BOUNDARY_ENTITIES,
+                default=curr.get(CONF_BOUNDARY_ENTITIES, []),
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="binary_sensor", multiple=True)
+            ),
+            vol.Optional(
+                CONF_TRIGGER_ENTITIES,
+                default=curr.get(CONF_TRIGGER_ENTITIES, []),
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="binary_sensor", multiple=True)
+            ),
+            vol.Optional(
+                CONF_INACTIVITY_TIMEOUT,
+                default=curr.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=5, max=86400, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+            vol.Optional(
+                CONF_GRACE_TIMEOUT,
+                default=curr.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=5, max=3600, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Optional(
+                CONF_EXTEND_TIMEOUT,
+                default=curr.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=5, max=86400, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+            vol.Optional(
+                CONF_LLM_ENABLED,
+                default=curr.get(CONF_LLM_ENABLED, False),
+            ): selector.BooleanSelector(),
+        }
+
+        camera_ent = curr.get(CONF_CAMERA_ENTITY)
+        if camera_ent:
+            fields[vol.Optional(CONF_CAMERA_ENTITY, default=camera_ent)] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="camera")
+            )
+        else:
+            fields[vol.Optional(CONF_CAMERA_ENTITY)] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="camera")
+            )
+
+        fields[
+            vol.Optional(
+                CONF_CAMERA_SNAPSHOT_URL,
+                default=curr.get(CONF_CAMERA_SNAPSHOT_URL, ""),
+            )
+        ] = selector.TextSelector()
+
+        fields[
+            vol.Optional(
+                CONF_LLM_API_URL,
+                default=curr.get(CONF_LLM_API_URL, ""),
+            )
+        ] = selector.TextSelector()
+
+        fields[
+            vol.Optional(
+                CONF_LLM_API_KEY,
+                default=curr.get(CONF_LLM_API_KEY, ""),
+            )
+        ] = selector.TextSelector()
+
+        fields[
+            vol.Optional(
+                CONF_LLM_MODEL,
+                default=curr.get(CONF_LLM_MODEL, "gpt-4o-mini"),
+            )
+        ] = selector.TextSelector()
+
+        schema = vol.Schema(fields)
 
         return {
             "type": "form",

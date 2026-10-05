@@ -1,0 +1,105 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Presence Detection Designer - Room Setup",
+        "description": "Configure presence detection boundaries, triggers, timeouts, and optional AI vision verification for this room.",
+        "data": {
+          "room_name": "Room Name",
+          "mode": "Presence Architecture Mode",
+          "boundary_entities": "Perimeter Boundary Sensors",
+          "trigger_entities": "Instant Motion & Occupancy Triggers",
+          "inactivity_timeout": "Inactivity Timeout (seconds)",
+          "grace_timeout": "Unsealed Perimeter Grace Timeout (seconds)",
+          "extend_timeout": "Occupancy Extension Timeout (seconds)",
+          "llm_enabled": "Enable AI / Vision Snapshot Verification",
+          "camera_entity": "Camera Entity",
+          "camera_snapshot_url": "Direct Camera Snapshot URL",
+          "llm_api_url": "Vision API Endpoint URL",
+          "llm_api_key": "Vision API Key",
+          "llm_model": "Vision Model Name"
+        },
+        "data_description": {
+          "room_name": "Friendly name for this room (e.g., Living Room, Office, Master Bedroom).",
+          "mode": "Select 'bounded' if the room has physical door contact sensors (Wasp-in-a-Box), or 'open' for rooms without door sensors.",
+          "boundary_entities": "Door or gate contact sensors marking the boundary perimeter. When closed, presence is sealed inside.",
+          "trigger_entities": "Motion sensors, mmWave presence sensors, or Frigate person detection sensors inside the room.",
+          "inactivity_timeout": "Seconds to wait after motion clears before vacating an open area or unsealed room (default: 60).",
+          "grace_timeout": "Seconds of stillness allowed while door boundary is open before clearing presence (default: 30).",
+          "extend_timeout": "Additional seconds added when an AI vision verification detects a person sitting still (default: 300).",
+          "llm_enabled": "Use a Vision LLM (OpenAI, Gemini, Ollama, Local VLM) to visually confirm human presence before clearing occupancy.",
+          "camera_entity": "Home Assistant camera entity to capture snapshots from for visual verification.",
+          "camera_snapshot_url": "Direct HTTP snapshot URL (e.g. http://camera-ip/image.jpg) if not using a Home Assistant camera entity.",
+          "llm_api_url": "OpenAI-compatible chat completion URL (e.g., https://api.openai.com/v1/chat/completions or http://localhost:11434/v1/chat/completions).",
+          "llm_api_key": "API key for the Vision LLM provider (leave blank if your local Ollama / vLLM endpoint requires no authentication).",
+          "llm_model": "Model identifier with vision capabilities (e.g., gpt-4o-mini, gpt-4o, llava, or llama3.2-vision)."
+        }
+      }
+    },
+    "error": {
+      "invalid_name": "Please provide a valid, non-empty room name.",
+      "unknown": "An unexpected error occurred while setting up the room."
+    },
+    "abort": {
+      "already_configured": "This room is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tune Presence Detection Designer",
+        "description": "Adjust presence architecture, sensor mappings, timeouts, and AI vision verification settings for this room.",
+        "data": {
+          "mode": "Presence Architecture Mode",
+          "boundary_entities": "Perimeter Boundary Sensors",
+          "trigger_entities": "Instant Motion & Occupancy Triggers",
+          "inactivity_timeout": "Inactivity Timeout (seconds)",
+          "grace_timeout": "Unsealed Perimeter Grace Timeout (seconds)",
+          "extend_timeout": "Occupancy Extension Timeout (seconds)",
+          "llm_enabled": "Enable AI / Vision Snapshot Verification",
+          "camera_entity": "Camera Entity",
+          "camera_snapshot_url": "Direct Camera Snapshot URL",
+          "llm_api_url": "Vision API Endpoint URL",
+          "llm_api_key": "Vision API Key",
+          "llm_model": "Vision Model Name"
+        },
+        "data_description": {
+          "mode": "Select 'bounded' if the room has physical door contact sensors (Wasp-in-a-Box), or 'open' for rooms without door sensors.",
+          "boundary_entities": "Door or gate contact sensors marking the boundary perimeter. When closed, presence is sealed inside.",
+          "trigger_entities": "Motion sensors, mmWave presence sensors, or Frigate person detection sensors inside the room.",
+          "inactivity_timeout": "Seconds to wait after motion clears before vacating an open area or unsealed room (default: 60).",
+          "grace_timeout": "Seconds of stillness allowed while door boundary is open before clearing presence (default: 30).",
+          "extend_timeout": "Additional seconds added when an AI vision verification detects a person sitting still (default: 300).",
+          "llm_enabled": "Use a Vision LLM (OpenAI, Gemini, Ollama, Local VLM) to visually confirm human presence before clearing occupancy.",
+          "camera_entity": "Home Assistant camera entity to capture snapshots from for visual verification.",
+          "camera_snapshot_url": "Direct HTTP snapshot URL (e.g. http://camera-ip/image.jpg) if not using a Home Assistant camera entity.",
+          "llm_api_url": "OpenAI-compatible chat completion URL (e.g., https://api.openai.com/v1/chat/completions or http://localhost:11434/v1/chat/completions).",
+          "llm_api_key": "API key for the Vision LLM provider (leave blank if your local Ollama / vLLM endpoint requires no authentication).",
+          "llm_model": "Model identifier with vision capabilities (e.g., gpt-4o-mini, gpt-4o, llava, or llama3.2-vision)."
+        }
+      }
+    }
+  },
+  "services": {
+    "verify_presence": {
+      "name": "Verify Presence",
+      "description": "Manually trigger an immediate snapshot acquisition and AI vision verification check.",
+      "fields": {
+        "entry_id": {
+          "name": "Room Entry ID",
+          "description": "Optional config entry ID for a specific room. If omitted, checks all configured rooms."
+        }
+      }
+    },
+    "force_refresh": {
+      "name": "Force Refresh Conditions",
+      "description": "Immediately re-evaluates all sustaining conditions across configured rooms.",
+      "fields": {
+        "entry_id": {
+          "name": "Room Entry ID",
+          "description": "Optional config entry ID for a specific room. If omitted, refreshes all rooms."
+        }
+      }
+    }
+  }
+}

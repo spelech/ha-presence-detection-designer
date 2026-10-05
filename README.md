@@ -1,165 +1,174 @@
-# Presence Detection Designer for Home Assistant
+<div align="center">
 
-[![CI](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml/badge.svg)](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml)
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/default)
+<img src="brand/logo.png" alt="Presence Detection Designer Logo" width="600" />
+
+# Presence Detection Designer (`ha-presence-detection-designer`)
+
+**Intelligent Home Assistant Presence State Machine with Hybrid Wasp-in-a-Box (WIB), Dynamic Sustaining Conditions & AI Vision Verification.**
+
+[![CI Quality Gate](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml/badge.svg)](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
+[![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code Coverage](https://img.shields.io/badge/coverage-83%25-brightgreen.svg)](https://github.com/spelech/ha-presence-detection-designer)
 
-**Presence Detection Designer** is an intelligent room presence integration for Home Assistant combining the classic **Wasp-in-a-Box (WIB)** boundary algorithm with **dynamic entity condition matrices** and **VLM / Vision LLM snapshot verification**.
-
----
-
-## 🧐 The Problem with Standard Presence Detection
-
-Standard passive infrared (PIR) motion sensors and even smart edge person detectors (such as Frigate NVR) share a common limitation: **they lose tracking when occupants remain stationary**.
-
-* Watching a 2-hour movie on the couch? Motion stops, edge bounding boxes disappear, and lights abruptly shut off.
-* Reading a book quietly in an armchair? Motion timeouts expire.
-* Sleeping or working at a desk? Presence is lost.
-
-Traditional workarounds (huge 45-minute inactivity timeouts) result in rooms staying illuminated long after everyone has left.
+</div>
 
 ---
 
-## 💡 The Solution: Wasp-in-a-Box + Sustained State + AI Vision Guard
+## 🌟 Why Presence Detection Designer?
 
-```
-                          [ Any Trigger = ON ]
-             +---------------------------------------------+
-             |                                             |
-             v                                             |
-     +---------------+                                     |
-     |   OCCUPIED    | <--------------------+              |
-     | (Room = ON)   |                      |              |
-     +-------+-------+                      |              |
-             |                              |              |
-    [ Door Opens / Inactivity ]    [ Motion Detected /     |
-             |                      Sustaining Cond TRUE ] |
-             v                              |              |
-     +---------------+                      |              |
-     | VACATING_WAIT | ---------------------+              |
-     | (Timer runs)  |                                     |
-     +-------+-------+                                     |
-             | [ Timer Reaches 0 ]                         |
-             v                                             |
-     +---------------+                                     |
-     | LLM_VERIFYING |                                     |
-     +-------+-------+                                     |
-      |             |                                      |
- [Person Found]  [No Person]                               |
-      |             |                                      |
-      |             v                                      |
-      |      +---------------+                             |
-      |      |     CLEAR     | ----------------------------+
-      |      |  (Room = OFF) |
-      v      +---------------+
-  Extend Timer /
-  Remain Occupied
-```
+Passive infrared (PIR) motion sensors and Frigate person bounding boxes work well when occupants walk around, but fail during ordinary life:
+- **Stationary Occupancy Failure**: Watching a movie on the couch, reading a book in bed, or working at a desk? Motion clears and your room lights suddenly shut off.
+- **The "Wild Guess" Timer Trap**: Setting a 45-minute inactivity timer keeps lights on long after everyone has left the room.
+- **Open vs Bounded Rooms**: Traditional Wasp-in-a-Box setups assume every room has closed perimeter doors. In modern open-concept floorplans (kitchens, dining areas, lofts), doors simply do not exist.
 
-### 1. Bounded Rooms (Door Sensors Available)
-Uses physical perimeter boundaries (contact sensors):
-* Once motion is detected inside and the door closes, the room transitions to `occupied_sealed`.
-* Presence remains locked `ON` **indefinitely** while the door remains shut—even if PIR motion stops completely.
-* When the door opens and closes, a brief grace countdown begins (e.g. 60 seconds). If no subsequent motion or sustaining activity occurs, it verifies absence before turning `OFF`.
+**Presence Detection Designer** eliminates false-clears by combining **three coordinated layers**:
+1. **Hybrid Wasp-in-a-Box (WIB)**: Distinguishes between enclosed rooms (with door sensors) and doorless open layouts.
+2. **Dynamic Sustaining Conditions**: Preserves occupancy while secondary devices indicate presence (e.g., Apple TV playing, PC workstation power draw > 45W).
+3. **AI / Vision LLM Pre-Vacate Guard**: Before turning off lights or marking a room vacant, captures a snapshot from your security camera or video stream and asks a local (Ollama / vLLM) or cloud (OpenAI / Gemini) Vision model to confirm if an occupant is still in the room.
 
-### 2. Open-Concept Rooms (No Door Sensors)
-Designed specifically for living rooms, kitchens, and open layouts:
-* Immediate activation on motion or camera detection.
-* While **sustaining conditions** are active (e.g., TV is playing, PC power draw > 30W), the timer is frozen and presence stays locked `ON`.
-* When sustaining conditions clear and motion stops, an inactivity timer counts down.
+---
 
-### 3. VLM / Vision LLM Pre-Vacate Guard
-Before flipping presence to `OFF`, the engine captures a camera snapshot (from an HA camera or direct Frigate snapshot URL) and asks a Vision model (*"Is there a person in this room?"*):
-* **Occupant Found?** Presence is extended for another window without lights cutting out.
-* **Room Empty?** Presence immediately turns `OFF`.
+## 🏛️ Architecture Overview
 
-Compatible with:
-* Direct Vision APIs (OpenAI, Gemini API, Ollama, LocalAI)
-* Home Assistant Conversation Agents (`conversation.process`)
+<div align="center">
+  <img src="docs/images/architecture_flowchart.png" alt="Hybrid Wasp-in-a-Box Architecture" width="850" />
+</div>
+
+### State Machine Lifecycle
+- **`idle_clear` (Vacant)**: Perimeter armed. Awaiting PIR, mmWave, or Frigate trigger.
+- **`occupied_unsealed` (Open / Unsealed)**: Immediate activation upon motion. If door boundary is open or the room is an open-concept area, inactivity countdown starts when motion clears.
+- **`occupied_sealed` (Wasp-in-a-Box Sealed)**: For bounded rooms with door contact sensors. Once motion occurs and door closes, occupancy is sealed inside indefinitely regardless of motion stillness.
+- **`occupied_sustained`**: Active sustaining conditions (TV playing, power draw above threshold) hold presence locked.
+- **`llm_verifying`**: Prior to vacating, camera snapshot is evaluated by AI. If a person is resting in the frame, occupancy extends by a configurable interval (default: 300s).
+- **`override`**: Dedicated toggle switch forces presence indefinitely for house parties or guests.
+
+---
+
+## 📸 Screenshots & UI Experience
+
+### 1. Intuitive Native Configuration Flow
+Every field features clear labels and detailed hint descriptions (`data_description`) guiding you through setup:
+
+<div align="center">
+  <img src="docs/images/config_flow_setup.png" alt="Home Assistant Room Setup Dialog" width="620" />
+</div>
+
+### 2. Comprehensive Device Card & Controls
+Each configured room exposes primary occupancy, perimeter sealed status, sustaining condition state, AI verification indicator, and manual override switches:
+
+<div align="center">
+  <img src="docs/images/device_card.png" alt="Home Assistant Device Card" width="700" />
+</div>
+
+---
+
+## 🚀 Setup Walkthrough (Step-by-Step)
+
+### Step 1: Installation via HACS
+1. Open **HACS** in your Home Assistant dashboard.
+2. Click the three dots (top right) > **Custom repositories**.
+3. Repository URL: `https://github.com/spelech/ha-presence-detection-designer`
+4. Category: **Integration**
+5. Click **Add**, find **Presence Detection Designer**, and click **Download**.
+6. **Restart Home Assistant**.
+
+*(Alternatively, copy `custom_components/presence_detection_designer/` into your `<config>/custom_components/` directory).*
+
+---
+
+### Step 2: Configure a Room
+
+Navigate to **Settings** > **Devices & Services** > **Add Integration** and search for **Presence Detection Designer**.
+
+#### Scenario A: Bounded Room (e.g. Master Bedroom, Bathroom, Office)
+1. **Room Name**: `Master Bedroom`
+2. **Presence Architecture Mode**: Select `bounded`.
+3. **Perimeter Boundary Sensors**: Select your door sensors (`binary_sensor.bedroom_door_contact`).
+4. **Instant Motion & Occupancy Triggers**: Select your motion detectors (`binary_sensor.bedroom_pir`, `binary_sensor.bedroom_mmwave`).
+5. **Inactivity Timeout**: `60` seconds (countdown used if door remains ajar).
+6. **Unsealed Grace Timeout**: `30` seconds.
+
+> [!TIP]
+> Once motion is detected and the door is closed, Presence Detection Designer seals the room. You can sleep or read completely still without lights switching off!
+
+#### Scenario B: Open Area (e.g. Living Room, Kitchen)
+1. **Room Name**: `Living Room`
+2. **Presence Architecture Mode**: Select `open`.
+3. **Boundary Sensors**: Leave empty.
+4. **Instant Triggers**: Select your living room motion sensors or Frigate person detection.
+5. **Inactivity Timeout**: `120` seconds.
+
+---
+
+### Step 3: Configure AI Vision Snapshot Verification (Optional)
+
+Never get left in the dark when watching a movie or relaxing on the couch:
+
+1. In the room setup or options modal, toggle **Enable AI / Vision Snapshot Verification**.
+2. **Camera Entity**: Select your living room camera (`camera.living_room_substream`) or specify a direct snapshot URL (`http://frigate:5000/api/living_room/latest.jpg`).
+3. **Vision API Endpoint URL**:
+   - **Local Ollama**: `http://192.168.1.100:11434/v1/chat/completions` (Model: `llama3.2-vision:latest` or `llava`)
+   - **OpenAI**: `https://api.openai.com/v1/chat/completions` (Model: `gpt-4o-mini`)
+   - **Local vLLM / LocalAI**: `http://vllm.lan:8000/v1/chat/completions`
+4. **Vision API Key**: Enter your API key (leave blank for local Ollama).
+5. **Occupancy Extension Timeout**: `300` seconds (adds 5 minutes when a person is visually spotted).
 
 ---
 
 ## 📦 Entities Created per Room
 
-Each configured room creates a Home Assistant device containing:
-
-| Entity | Type | Description |
+| Entity | Domain | Purpose |
 | :--- | :--- | :--- |
-| `binary_sensor.<room>_presence` | Binary Sensor (`occupancy`) | Primary occupancy state (`on`/`off`) with rich diagnostic attributes. |
-| `button.<room>_verify_presence` | Button | Manually triggers an immediate camera snapshot + LLM verification check. |
-| `switch.<room>_presence_override` | Switch | Manual override to force and hold presence `ON` (great for guests/parties). |
-
-### Diagnostic Attributes on `binary_sensor.<room>_presence`
-* `mode`: `bounded` or `open`
-* `box_state`: `idle_clear`, `occupied_sealed`, `occupied_unsealed`, `timer_active`, `llm_verifying`, or `override`
-* `active_conditions`: List of currently satisfied sustaining conditions (e.g. `["media_player.tv equals playing"]`)
-* `last_trigger_entity`: Entity ID of the most recent trigger sensor
-* `vacating_countdown`: Remaining seconds before turning off or calling LLM verification
-* `last_llm_check`: Timestamp, verdict (`person_detected: true/false`), and reasoning
+| `binary_sensor.<room>_presence` | `binary_sensor` (`occupancy`) | Primary room presence output for automations. |
+| `binary_sensor.<room>_perimeter_sealed` | `binary_sensor` (`lock`) | Indicates if the Wasp-in-a-Box boundary is sealed. |
+| `binary_sensor.<room>_sustaining_condition` | `binary_sensor` | Indicates if an active media player or power draw is holding presence. |
+| `binary_sensor.<room>_llm_verified` | `binary_sensor` | Confirmed human occupant detected by Vision AI. |
+| `switch.<room>_manual_override` | `switch` | Locks presence ON indefinitely (parties, guests, cleaning). |
+| `button.<room>_verify_presence` | `button` | Triggers an immediate snapshot capture and AI verification check. |
+| `button.<room>_force_refresh` | `button` | Re-evaluates all sustaining conditions immediately. |
 
 ---
 
-## 🚀 Installation
+## 🛎️ Services / Actions
 
-### Option 1: Via HACS (Recommended)
-1. Open **HACS** in Home Assistant.
-2. Click the three dots in the top right corner and select **Custom repositories**.
-3. Enter `https://github.com/spelech/ha-presence-detection-designer` and choose category **Integration**.
-4. Click **Download**, then restart Home Assistant.
-
-### Option 2: Manual Installation
-1. Download `presence_detection_designer.zip` from the latest [GitHub Release](https://github.com/spelech/ha-presence-detection-designer/releases).
-2. Extract the folder into your Home Assistant directory:
-   `<config_dir>/custom_components/presence_detection_designer/`
-3. Restart Home Assistant.
-
----
-
-## ⚙️ Configuration
-
-1. In Home Assistant, go to **Settings** -> **Devices & Services** -> **Add Integration**.
-2. Search for **Presence Detection Designer**.
-3. Configure your room:
-   * **Room Name**: e.g., "Living Room" or "Master Bedroom".
-   * **Mode**: Bounded (with door sensors) or Open Area.
-   * **Boundary Sensors**: Door/window contact sensors.
-   * **Trigger Sensors**: PIR motion, Frigate person detection sensors, mmWave radar.
-   * **Timers**: Inactivity timeout (open rooms), unsealed grace timeout, occupancy extension timeout.
-   * **LLM Snapshot Verification (Optional)**:
-     * Camera entity or Frigate snapshot URL (`http://<frigate_ip>:8301/api/<cam>/latest.jpg`)
-     * Provider (Vision API / HA Conversation Agent)
-     * API endpoint, API key, model (e.g. `gpt-4o-mini`, `gemini-1.5-flash`, `llama3.2-vision`)
-
-You can edit these settings at any time by clicking **Configure** on the integration card.
-
----
-
-## 🛠️ Actions / Services
-
-* **`presence_detection_designer.verify_presence`**:
-  Manually triggers a snapshot and AI evaluation cycle.
-  ```yaml
-  action: presence_detection_designer.verify_presence
-  data:
-    entry_id: "your_room_entry_id"  # Optional, verifies all if omitted
-  ```
-* **`presence_detection_designer.force_refresh`**:
-  Re-evaluates all sustaining conditions immediately.
-
----
-
-## 🧪 Testing & Verification
-
-The integration includes a full test suite with unit tests and scenario simulations:
-
-```bash
-uv run pytest --cov=custom_components/presence_detection_designer -v
+### `presence_detection_designer.verify_presence`
+Manually trigger an immediate camera snapshot and AI vision analysis:
+```yaml
+action: presence_detection_designer.verify_presence
+data:
+  entry_id: "your_config_entry_id"  # Optional: omit to verify all rooms
 ```
 
-All scenarios (stationary TV watcher, closed-door stillness, vacate transitions, and LLM couch relaxer extensions) run with 100% test coverage.
+### `presence_detection_designer.force_refresh`
+Forces an immediate re-evaluation of all sustaining conditions (e.g. after TV power toggle):
+```yaml
+action: presence_detection_designer.force_refresh
+```
+
+---
+
+## 🧪 Development & Quality Gates
+
+This repository strictly enforces 5-stage automated CI quality gates:
+- **Repository Integrity**: Release consistency, manifests, and file layout validation.
+- **HACS Action**: Full compliance with HACS standards.
+- **Hassfest**: Strict Home Assistant manifest, strings, and translation schema validation.
+- **Ruff**: Modern Python linting and code formatting checks.
+- **Pytest**: Comprehensive test suite enforcing **>= 80% code coverage** (including state machine simulations).
+
+```bash
+# Run Ruff lint and format check
+uv run ruff check .
+uv run ruff format --check .
+
+# Run pytest with coverage enforcement
+uv run pytest --cov=custom_components/presence_detection_designer --cov-fail-under=80 -v
+```
 
 ---
 
 ## 📄 License
 
-MIT License © 2026 Steven T. Pelech
+Distributed under the [MIT License](LICENSE). Copyright &copy; 2026 Steven T. Pelech.
