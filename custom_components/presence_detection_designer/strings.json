@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Presence Detection Designer - Room Setup",
+        "description": "Configure presence detection boundaries, triggers, and AI verification for this room.",
+        "data": {
+          "room_name": "Room Name",
+          "mode": "Mode (Bounded with door sensors vs Open Area)",
+          "boundary_entities": "Perimeter / Boundary Sensors (Door/Gate contacts)",
+          "trigger_entities": "Instant Triggers (Motion, Frigate Person, mmWave)",
+          "inactivity_timeout": "Inactivity Timeout (seconds)",
+          "grace_timeout": "Unsealed Grace Timeout (seconds)",
+          "extend_timeout": "Occupancy Extension Timeout (seconds)",
+          "llm_enabled": "Enable VLM/LLM Snapshot Verification Guard",
+          "camera_entity": "Camera Entity",
+          "camera_snapshot_url": "Direct Camera Snapshot URL",
+          "llm_api_url": "Vision API URL (OpenAI / Gemini / Ollama)",
+          "llm_api_key": "Vision API Key",
+          "llm_model": "Vision Model Name"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tune Presence Detection Designer",
+        "description": "Adjust timeouts, boundary settings, and LLM verification options."
+      }
+    }
+  }
+}
