@@ -7,7 +7,6 @@ from typing import Any
 try:
     import voluptuous as vol
 except ImportError:
-
     class MockVol:
         """Fallback for environments without voluptuous installed."""
 
@@ -28,13 +27,12 @@ except ImportError:
 try:
     from homeassistant import config_entries
     from homeassistant.core import callback
-
+    from homeassistant.helpers import selector
     if type(config_entries.ConfigFlow).__name__ == "MagicMock":
         raise ImportError
     BaseConfigFlow = config_entries.ConfigFlow
     BaseOptionsFlow = config_entries.OptionsFlow
 except Exception:  # noqa: BLE001
-
     class BaseConfigFlow:
         """Mock base config flow."""
 
@@ -42,15 +40,8 @@ except Exception:  # noqa: BLE001
             super().__init_subclass__(**kwargs)
             cls.domain = domain
 
-        def async_show_form(
-            self, step_id: str, data_schema: Any, errors: dict[str, str]
-        ) -> dict[str, Any]:
-            return {
-                "type": "form",
-                "step_id": step_id,
-                "data_schema": data_schema,
-                "errors": errors,
-            }
+        def async_show_form(self, step_id: str, data_schema: Any, errors: dict[str, str]) -> dict[str, Any]:
+            return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors}
 
         def async_create_entry(self, title: str, data: dict[str, Any]) -> dict[str, Any]:
             return {"type": "create_entry", "title": title, "data": data}
@@ -64,6 +55,40 @@ except Exception:  # noqa: BLE001
     def callback(fn: Any) -> Any:
         return fn
 
+    class MockSelector:
+        """Mock selector helpers."""
+
+        def TextSelector(self, *args: Any, **kwargs: Any) -> Any:
+            return str
+
+        def BooleanSelector(self, *args: Any, **kwargs: Any) -> Any:
+            return bool
+
+        def NumberSelector(self, *args: Any, **kwargs: Any) -> Any:
+            return int
+
+        def SelectSelector(self, *args: Any, **kwargs: Any) -> Any:
+            return str
+
+        def EntitySelector(self, *args: Any, **kwargs: Any) -> Any:
+            return list
+
+        def SelectSelectorConfig(self, *args: Any, **kwargs: Any) -> Any:
+            return None
+
+        def EntitySelectorConfig(self, *args: Any, **kwargs: Any) -> Any:
+            return None
+
+        def NumberSelectorConfig(self, *args: Any, **kwargs: Any) -> Any:
+            return None
+
+        class NumberSelectorMode:
+            BOX = "box"
+
+        class SelectSelectorMode:
+            DROPDOWN = "dropdown"
+
+    selector = MockSelector()
 
 from .const import (
     CONF_BOUNDARY_ENTITIES,
@@ -114,19 +139,38 @@ class PresenceDetectionDesignerConfigFlow(BaseConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_ROOM_NAME): str,
-                vol.Optional(CONF_MODE, default=Mode.OPEN): vol.In([Mode.BOUNDED, Mode.OPEN]),
-                vol.Optional(CONF_BOUNDARY_ENTITIES, default=[]): list,
-                vol.Optional(CONF_TRIGGER_ENTITIES, default=[]): list,
-                vol.Optional(CONF_INACTIVITY_TIMEOUT, default=DEFAULT_INACTIVITY_TIMEOUT): int,
-                vol.Optional(CONF_GRACE_TIMEOUT, default=DEFAULT_GRACE_TIMEOUT): int,
-                vol.Optional(CONF_EXTEND_TIMEOUT, default=DEFAULT_EXTEND_TIMEOUT): int,
-                vol.Optional(CONF_LLM_ENABLED, default=False): bool,
-                vol.Optional(CONF_CAMERA_ENTITY): str,
-                vol.Optional(CONF_CAMERA_SNAPSHOT_URL): str,
-                vol.Optional(CONF_LLM_API_URL): str,
-                vol.Optional(CONF_LLM_API_KEY): str,
-                vol.Optional(CONF_LLM_MODEL, default="gpt-4o-mini"): str,
+                vol.Required(CONF_ROOM_NAME): selector.TextSelector(),
+                vol.Optional(CONF_MODE, default="open"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["bounded", "open"],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(CONF_BOUNDARY_ENTITIES): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="binary_sensor", multiple=True)
+                ),
+                vol.Optional(CONF_TRIGGER_ENTITIES): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="binary_sensor", multiple=True)
+                ),
+                vol.Optional(
+                    CONF_INACTIVITY_TIMEOUT, default=DEFAULT_INACTIVITY_TIMEOUT
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
+                ),
+                vol.Optional(CONF_GRACE_TIMEOUT, default=DEFAULT_GRACE_TIMEOUT): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=5, max=3600, mode=selector.NumberSelectorMode.BOX)
+                ),
+                vol.Optional(CONF_EXTEND_TIMEOUT, default=DEFAULT_EXTEND_TIMEOUT): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
+                ),
+                vol.Optional(CONF_LLM_ENABLED, default=False): selector.BooleanSelector(),
+                vol.Optional(CONF_CAMERA_ENTITY): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="camera")
+                ),
+                vol.Optional(CONF_CAMERA_SNAPSHOT_URL): selector.TextSelector(),
+                vol.Optional(CONF_LLM_API_URL): selector.TextSelector(),
+                vol.Optional(CONF_LLM_API_KEY): selector.TextSelector(),
+                vol.Optional(CONF_LLM_MODEL, default="gpt-4o-mini"): selector.TextSelector(),
             }
         )
 
@@ -167,39 +211,47 @@ class PresenceDetectionDesignerOptionsFlow(BaseOptionsFlow):
                 vol.Optional(
                     CONF_INACTIVITY_TIMEOUT,
                     default=curr.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT),
-                ): int,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
+                ),
                 vol.Optional(
                     CONF_GRACE_TIMEOUT,
                     default=curr.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT),
-                ): int,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=5, max=3600, mode=selector.NumberSelectorMode.BOX)
+                ),
                 vol.Optional(
                     CONF_EXTEND_TIMEOUT,
                     default=curr.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT),
-                ): int,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=5, max=86400, mode=selector.NumberSelectorMode.BOX)
+                ),
                 vol.Optional(
                     CONF_LLM_ENABLED,
                     default=curr.get(CONF_LLM_ENABLED, False),
-                ): bool,
+                ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_CAMERA_ENTITY,
                     default=curr.get(CONF_CAMERA_ENTITY, ""),
-                ): str,
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="camera")
+                ),
                 vol.Optional(
                     CONF_CAMERA_SNAPSHOT_URL,
                     default=curr.get(CONF_CAMERA_SNAPSHOT_URL, ""),
-                ): str,
+                ): selector.TextSelector(),
                 vol.Optional(
                     CONF_LLM_API_URL,
                     default=curr.get(CONF_LLM_API_URL, ""),
-                ): str,
+                ): selector.TextSelector(),
                 vol.Optional(
                     CONF_LLM_API_KEY,
                     default=curr.get(CONF_LLM_API_KEY, ""),
-                ): str,
+                ): selector.TextSelector(),
                 vol.Optional(
                     CONF_LLM_MODEL,
                     default=curr.get(CONF_LLM_MODEL, "gpt-4o-mini"),
-                ): str,
+                ): selector.TextSelector(),
             }
         )
 
