@@ -25,6 +25,46 @@ except ImportError:
 
     vol = MockVol()
 
+try:
+    from homeassistant import config_entries
+    from homeassistant.core import callback
+
+    if type(config_entries.ConfigFlow).__name__ == "MagicMock":
+        raise ImportError
+    BaseConfigFlow = config_entries.ConfigFlow
+    BaseOptionsFlow = config_entries.OptionsFlow
+except Exception:  # noqa: BLE001
+
+    class BaseConfigFlow:
+        """Mock base config flow."""
+
+        def __init_subclass__(cls, domain: str | None = None, **kwargs: Any) -> None:
+            super().__init_subclass__(**kwargs)
+            cls.domain = domain
+
+        def async_show_form(
+            self, step_id: str, data_schema: Any, errors: dict[str, str]
+        ) -> dict[str, Any]:
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "errors": errors,
+            }
+
+        def async_create_entry(self, title: str, data: dict[str, Any]) -> dict[str, Any]:
+            return {"type": "create_entry", "title": title, "data": data}
+
+    class BaseOptionsFlow:
+        """Mock base options flow."""
+
+        def __init__(self, config_entry: Any) -> None:
+            self.config_entry = config_entry
+
+    def callback(fn: Any) -> Any:
+        return fn
+
+
 from .const import (
     CONF_BOUNDARY_ENTITIES,
     CONF_CAMERA_ENTITY,
@@ -42,16 +82,18 @@ from .const import (
     DEFAULT_EXTEND_TIMEOUT,
     DEFAULT_GRACE_TIMEOUT,
     DEFAULT_INACTIVITY_TIMEOUT,
+    DOMAIN,
     Mode,
 )
 
 
-class PresenceDetectionDesignerConfigFlow:
+class PresenceDetectionDesignerConfigFlow(BaseConfigFlow, domain=DOMAIN):
     """Handle a config flow for Presence Detection Designer."""
 
     VERSION = 1
 
     def __init__(self) -> None:
+        super().__init__()
         self.hass: Any = None
         self._data: dict[str, Any] = {}
 
@@ -94,35 +136,18 @@ class PresenceDetectionDesignerConfigFlow:
             errors=errors,
         )
 
-    def async_show_form(
-        self, step_id: str, data_schema: Any, errors: dict[str, str]
-    ) -> dict[str, Any]:
-        """Show form helper."""
-        return {
-            "type": "form",
-            "step_id": step_id,
-            "data_schema": data_schema,
-            "errors": errors,
-        }
-
-    def async_create_entry(self, title: str, data: dict[str, Any]) -> dict[str, Any]:
-        """Create entry helper."""
-        return {
-            "type": "create_entry",
-            "title": title,
-            "data": data,
-        }
-
     @staticmethod
+    @callback
     def async_get_options_flow(config_entry: Any) -> PresenceDetectionDesignerOptionsFlow:
         """Get options flow."""
         return PresenceDetectionDesignerOptionsFlow(config_entry)
 
 
-class PresenceDetectionDesignerOptionsFlow:
+class PresenceDetectionDesignerOptionsFlow(BaseOptionsFlow):
     """Handle options flow for tuning presence rules."""
 
     def __init__(self, config_entry: Any) -> None:
+        super().__init__(config_entry)
         self.config_entry = config_entry
         self.hass: Any = None
 

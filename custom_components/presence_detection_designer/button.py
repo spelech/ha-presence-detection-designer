@@ -4,11 +4,29 @@ from __future__ import annotations
 
 from typing import Any
 
+try:
+    from homeassistant.components.button import ButtonEntity
+    from homeassistant.helpers.device_registry import DeviceInfo
+
+    if type(ButtonEntity).__name__ == "MagicMock":
+        raise ImportError
+except Exception:  # noqa: BLE001
+
+    class ButtonEntity:
+        """Fallback ButtonEntity."""
+
+    class DeviceInfo:
+        """Fallback DeviceInfo."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+
 from .const import DOMAIN
 from .coordinator import RoomPresenceCoordinator
 
 
-class VerifyPresenceButton:
+class VerifyPresenceButton(ButtonEntity):
     """Button to manually trigger snapshot LLM verification."""
 
     def __init__(self, coordinator: RoomPresenceCoordinator, entry_id: str) -> None:
@@ -17,6 +35,12 @@ class VerifyPresenceButton:
         self._attr_name = f"{coordinator.room_name} Verify Presence"
         self._attr_unique_id = f"{entry_id}_verify"
         self._attr_icon = "mdi:eye-check"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry_id)},
+            name=coordinator.room_name,
+            manufacturer="Steven T. Pelech",
+            model="Presence Detection Designer",
+        )
 
     @property
     def name(self) -> str:

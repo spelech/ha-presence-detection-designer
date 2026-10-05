@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import sys
 import types
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -119,14 +120,26 @@ except ImportError:
         def async_show_form(
             self,
             step_id: str,
+            data_schema: Any = None,
             user_input: dict | None = None,
             errors: dict | None = None,
             description_placeholders: dict | None = None,
+            **kwargs: Any,
         ):
-            return {"type": "form", "step_id": step_id, "errors": errors}
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "errors": errors,
+            }
+
+    class OptionsFlow:
+        def __init__(self, config_entry: Any = None) -> None:
+            self.config_entry = config_entry
 
     config_entries.ConfigEntry = ConfigEntry
     config_entries.ConfigFlow = ConfigFlow
+    config_entries.OptionsFlow = OptionsFlow
 
     # components.http
     http = register_mock("homeassistant.components.http")

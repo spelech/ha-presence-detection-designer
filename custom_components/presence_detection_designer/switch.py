@@ -4,11 +4,29 @@ from __future__ import annotations
 
 from typing import Any
 
+try:
+    from homeassistant.components.switch import SwitchEntity
+    from homeassistant.helpers.device_registry import DeviceInfo
+
+    if type(SwitchEntity).__name__ == "MagicMock":
+        raise ImportError
+except Exception:  # noqa: BLE001
+
+    class SwitchEntity:
+        """Fallback SwitchEntity."""
+
+    class DeviceInfo:
+        """Fallback DeviceInfo."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+
 from .const import DOMAIN
 from .coordinator import RoomPresenceCoordinator
 
 
-class PresenceOverrideSwitch:
+class PresenceOverrideSwitch(SwitchEntity):
     """Switch to manually lock room presence on."""
 
     def __init__(self, coordinator: RoomPresenceCoordinator, entry_id: str) -> None:
@@ -17,6 +35,12 @@ class PresenceOverrideSwitch:
         self._attr_name = f"{coordinator.room_name} Presence Override"
         self._attr_unique_id = f"{entry_id}_override"
         self._attr_icon = "mdi:lock-alert"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry_id)},
+            name=coordinator.room_name,
+            manufacturer="Steven T. Pelech",
+            model="Presence Detection Designer",
+        )
 
     @property
     def name(self) -> str:
