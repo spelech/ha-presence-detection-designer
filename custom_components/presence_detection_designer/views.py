@@ -47,6 +47,11 @@ from .const import (
 )
 from .coordinator import RoomPresenceCoordinator, _safe_state_getter
 from .llm_verifier import LLMVerifier
+from .replay_engine import (
+    async_fetch_room_history,
+    simulate_config_on_timelines,
+    simulate_replay_comparison,
+)
 from .store import async_get_store
 
 _LOGGER = logging.getLogger(__name__)
@@ -627,6 +632,107 @@ class PDDTranslateView(HomeAssistantView):
         return self.json(result)
 
 
+class PDDStatisticsView(HomeAssistantView):
+    """Return historical occupancy statistics, time-series curve, and sensor swimlanes for a room."""
+
+    url = "/api/presence_detection_designer/room/{entry_id}/statistics"
+    name = "api:presence_detection_designer:room_statistics"
+    requires_auth = True
+
+    async def get(self, request: Any, entry_id: str) -> Any:
+        """Handle GET /api/presence_detection_designer/room/{entry_id}/statistics."""
+        hass = request.app["hass"]
+        store = await async_get_store(hass)
+        coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
+
+        if isinstance(coordinator, RoomPresenceCoordinator):
+            config = dict(coordinator.config)
+        else:
+            stored = store.get_room(entry_id)
+            if not stored:
+                return self.json({"error": f"Room {entry_id} not found"}, status_code=404)
+            config = stored
+
+        query = getattr(request, "query", {}) or {}
+        try:
+            hours = float(query.get("hours", 6.0))
+        except (ValueError, TypeError):
+            hours = 6.0
+
+        timelines, start_ts, end_ts = await async_fetch_room_history(
+            hass=hass,
+            entry_id=entry_id,
+            config=config,
+            hours=hours,
+        )
+        stats = simulate_config_on_timelines(
+            raw_config=config,
+            entity_timelines=timelines,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        stats["entry_id"] = entry_id
+        return self.json(stats)
+
+
+class PDDReplayView(HomeAssistantView):
+    """Run a historical What-If Replay comparing Baseline vs. Tuned Candidate configuration."""
+
+    url = "/api/presence_detection_designer/room/{entry_id}/replay"
+    name = "api:presence_detection_designer:room_replay"
+    requires_auth = True
+
+    async def post(self, request: Any, entry_id: str) -> Any:
+        """Handle POST /api/presence_detection_designer/room/{entry_id}/replay."""
+        hass = request.app["hass"]
+        store = await async_get_store(hass)
+        coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
+
+        if isinstance(coordinator, RoomPresenceCoordinator):
+            baseline_cfg = dict(coordinator.config)
+        else:
+            stored = store.get_room(entry_id)
+            if not stored:
+                return self.json({"error": f"Room {entry_id} not found"}, status_code=404)
+            baseline_cfg = stored
+
+        try:
+            body = await request.json()
+        except Exception as err:  # noqa: BLE001
+            return self.json({"error": f"Invalid JSON: {err}"}, status_code=400)
+
+        try:
+            hours = float(body.get("hours", 6.0))
+        except (ValueError, TypeError):
+            hours = 6.0
+
+        raw_cand = (
+            body.get("candidate_config")
+            or body.get("yaml_config")
+            or body.get("config")
+            or baseline_cfg
+        )
+        cand_norm = parse_yaml_or_dict_to_config(raw_cand)
+        merged_cand = {**baseline_cfg, **cand_norm}
+
+        timelines, start_ts, end_ts = await async_fetch_room_history(
+            hass=hass,
+            entry_id=entry_id,
+            config=baseline_cfg,
+            hours=hours,
+            extra_configs=[merged_cand],
+        )
+        comparison = simulate_replay_comparison(
+            baseline_config=baseline_cfg,
+            candidate_config=merged_cand,
+            entity_timelines=timelines,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        comparison["entry_id"] = entry_id
+        return self.json(comparison)
+
+
 def async_register_views(hass: Any) -> None:
     """Register all HTTP API views for Presence Detection Designer once."""
     if not hass or not hasattr(hass, "http") or not hasattr(hass.http, "register_view"):
@@ -639,5 +745,7 @@ def async_register_views(hass: Any) -> None:
         PDDPreviewBayesianView,
         PDDGlobalSettingsView,
         PDDTranslateView,
+        PDDStatisticsView,
+        PDDReplayView,
     ):
         hass.http.register_view(view_cls())

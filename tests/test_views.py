@@ -187,7 +187,7 @@ async def test_views_end_to_end(mock_hass):
     )
     mock_hass.http = MagicMock()
     async_register_views(mock_hass)
-    assert mock_hass.http.register_view.call_count == 7
+    assert mock_hass.http.register_view.call_count == 9
 
     coord = RoomPresenceCoordinator(
         mock_hass,

@@ -136,6 +136,7 @@ DATA_STORE = "_store"
 PANEL_REGISTERED = "_panel_registered"
 VIEWS_REGISTERED = "_views_registered"
 MAX_ROOM_REVISIONS = 15
+MAX_TIMELINE_EVENTS = 400
 DEFAULT_BLE_TRACKERS = [
     "sensor.steve_s_s25_ble_area",
     "sensor.tab_s10_lite_ble_area",

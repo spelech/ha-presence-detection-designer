@@ -40,6 +40,7 @@ from .const import (
     DEFAULT_BLE_TRACKERS,
     DOMAIN,
     MAX_ROOM_REVISIONS,
+    MAX_TIMELINE_EVENTS,
     STORAGE_KEY,
     STORAGE_VERSION,
     LLMProviderType,
@@ -63,6 +64,7 @@ def _default_store_data() -> dict[str, Any]:
         "global_settings": copy.deepcopy(DEFAULT_GLOBAL_SETTINGS),
         "rooms": {},
         "revisions": {},
+        "timeline": {},
     }
 
 
@@ -228,7 +230,7 @@ class PDDStore:
         return restored_cfg
 
     async def async_remove_room(self, entry_id: str) -> None:
-        """Remove a room and its revisions from .storage."""
+        """Remove a room and its revisions/timeline from .storage."""
         changed = False
         if entry_id in self._data["rooms"]:
             self._data["rooms"].pop(entry_id, None)
@@ -236,8 +238,50 @@ class PDDStore:
         if entry_id in self._data["revisions"]:
             self._data["revisions"].pop(entry_id, None)
             changed = True
+        if entry_id in self._data.get("timeline", {}):
+            self._data["timeline"].pop(entry_id, None)
+            changed = True
         if changed:
             await self.async_save()
+
+    def get_timeline_events(self, entry_id: str) -> list[dict[str, Any]]:
+        """Return chronological timeline events recorded for a room."""
+        events = self._data.get("timeline", {}).get(entry_id, [])
+        return copy.deepcopy(events) if isinstance(events, list) else []
+
+    def record_timeline_event(
+        self,
+        entry_id: str,
+        event: dict[str, Any],
+    ) -> None:
+        """Append a state transition / sensor snapshot to the room's rolling timeline buffer."""
+        timeline_dict = self._data.setdefault("timeline", {})
+        events = list(timeline_dict.get(entry_id) or [])
+        now_dt = datetime.datetime.now(datetime.UTC)
+        payload = {
+            "ts": float(event.get("ts") or now_dt.timestamp()),
+            "iso": str(event.get("iso") or now_dt.isoformat()),
+            "is_present": bool(event.get("is_present", False)),
+            "box_state": str(event.get("box_state", "idle_clear")),
+            "probability_pct": float(event.get("probability_pct", 0.0)),
+            "entity_states": dict(event.get("entity_states") or {}),
+        }
+        # Deduplicate if state and sensor map are identical to last event within 60s
+        if events:
+            last = events[-1]
+            if (
+                last.get("is_present") == payload["is_present"]
+                and last.get("box_state") == payload["box_state"]
+                and last.get("probability_pct") == payload["probability_pct"]
+                and last.get("entity_states") == payload["entity_states"]
+                and (payload["ts"] - float(last.get("ts", 0.0))) < 60.0
+            ):
+                return
+
+        events.append(payload)
+        if len(events) > MAX_TIMELINE_EVENTS:
+            events = events[-MAX_TIMELINE_EVENTS:]
+        timeline_dict[entry_id] = events
 
     async def async_update_global_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         """Update shared global settings in .storage."""
