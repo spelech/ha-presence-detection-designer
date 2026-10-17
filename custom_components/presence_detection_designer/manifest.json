@@ -3,9 +3,10 @@
   "name": "Presence Detection Designer",
   "codeowners": ["@spelech"],
   "config_flow": true,
+  "dependencies": ["frontend", "http"],
   "documentation": "https://github.com/spelech/ha-presence-detection-designer",
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/spelech/ha-presence-detection-designer/issues",
-  "version": "1.1.0"
+  "version": "1.2.0"
 }

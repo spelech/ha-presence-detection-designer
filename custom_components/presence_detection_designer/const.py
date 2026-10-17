@@ -128,3 +128,15 @@ class LLMProviderType(StrEnum):
 
 EVENT_PRESENCE_TRANSITION = "presence_detection_designer_transition"
 EVENT_PRESENCE_EXPLANATION = "presence_detection_designer_explanation"
+
+# Native .storage & custom panel constants
+STORAGE_VERSION = 1
+STORAGE_KEY = DOMAIN
+DATA_STORE = "_store"
+PANEL_REGISTERED = "_panel_registered"
+VIEWS_REGISTERED = "_views_registered"
+MAX_ROOM_REVISIONS = 15
+DEFAULT_BLE_TRACKERS = [
+    "sensor.steve_s_s25_ble_area",
+    "sensor.tab_s10_lite_ble_area",
+]

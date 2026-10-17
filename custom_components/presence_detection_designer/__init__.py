@@ -17,16 +17,94 @@ from .const import (
     CONF_ROOM_NAME,
     DOMAIN,
     EVENT_PRESENCE_EXPLANATION,
+    PANEL_REGISTERED,
+    VIEWS_REGISTERED,
     LLMProviderType,
 )
 from .coordinator import RoomPresenceCoordinator
 from .llm_verifier import LLMVerifier
+from .store import async_get_store
+from .views import async_apply_and_persist_room_config, async_register_views
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["binary_sensor", "sensor", "button", "switch"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def _async_ensure_panel_and_views(hass: Any) -> None:
+    """Register static path, HTTP API views, and custom sidebar panel once."""
+    if not hass or not hasattr(hass, "data") or not isinstance(hass.data, dict):
+        return
+    domain_data = hass.data.setdefault(DOMAIN, {})
+
+    version = "1.2.0"
+    try:
+        from homeassistant.loader import async_get_integration
+
+        integration = await async_get_integration(hass, DOMAIN)
+        if getattr(integration, "version", None):
+            version = str(integration.version)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if not domain_data.get(VIEWS_REGISTERED):
+        try:
+            if hasattr(hass, "http") and hasattr(hass.http, "async_register_static_paths"):
+                from homeassistant.components.http import StaticPathConfig
+
+                static_dir = hass.config.path(
+                    "custom_components/presence_detection_designer/static"
+                )
+                await hass.http.async_register_static_paths(
+                    [
+                        StaticPathConfig(
+                            "/presence_detection_designer/static",
+                            static_dir,
+                            True,
+                        )
+                    ]
+                )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Skipping static path registration: %s", err)
+
+        try:
+            async_register_views(hass)
+            domain_data[VIEWS_REGISTERED] = True
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Skipping HTTP view registration: %s", err)
+
+    if not domain_data.get(PANEL_REGISTERED):
+        try:
+            from homeassistant.components.frontend import (
+                async_register_built_in_panel,
+                async_remove_panel,
+            )
+
+            if (
+                callable(async_register_built_in_panel)
+                and type(async_register_built_in_panel).__name__ != "MagicMock"
+            ):
+                async_remove_panel(hass, DOMAIN, warn_if_unknown=False)
+                async_register_built_in_panel(
+                    hass=hass,
+                    component_name="custom",
+                    sidebar_title="Presence Designer",
+                    sidebar_icon="mdi:floor-plan",
+                    frontend_url_path=DOMAIN,
+                    require_admin=False,
+                    config={
+                        "_panel_custom": {
+                            "name": "presence-detection-designer-panel",
+                            "js_url": f"/presence_detection_designer/static/panel.js?v={version}",
+                        },
+                        "version": version,
+                    },
+                )
+                domain_data[PANEL_REGISTERED] = True
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Skipping sidebar panel registration: %s", err)
 
 
 def _register_service(
@@ -106,6 +184,8 @@ def _get_default_llm_verifier(hass: Any) -> LLMVerifier:
 async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
     """Set up the Presence Detection Designer component."""
     hass.data.setdefault(DOMAIN, {})
+    await async_get_store(hass)
+    await _async_ensure_panel_and_views(hass)
 
     async def handle_verify_presence(call: Any) -> None:
         """Service call to verify presence across rooms or specific entry."""
@@ -126,7 +206,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
 
-    async def handle_explain_presence(call: Any) -> dict[str, Any]:
+    async def handle_explain_presence(call: Any) -> dict[str, Any] | None:
         """Generate natural-language and YAML explanations for one or all rooms."""
         entry_id = call.data.get("entry_id")
         room_name_filter = call.data.get("room_name", "").strip().lower()
@@ -224,17 +304,17 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
                     break
 
         if target_entry is not None:
-            merged = {**target_entry.data, **normalized}
-            hass.config_entries.async_update_entry(
-                target_entry,
-                title=merged.get(CONF_ROOM_NAME, target_entry.title),
-                data=merged,
+            await async_apply_and_persist_room_config(
+                hass=hass,
+                entry_id=target_entry.entry_id,
+                raw_config=normalized,
+                note="Updated via configure_room service",
+                record_revision=True,
             )
-            await hass.config_entries.async_reload(target_entry.entry_id)
             out = {
                 "status": "updated",
                 "entry_id": target_entry.entry_id,
-                "room_name": merged.get(CONF_ROOM_NAME),
+                "room_name": normalized.get(CONF_ROOM_NAME, target_entry.title),
             }
             return out if getattr(call, "return_response", True) else None
 
@@ -260,8 +340,21 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 async def async_setup_entry(hass: Any, entry: Any) -> bool:
     """Set up Presence Detection Designer from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    store = await async_get_store(hass)
+    await _async_ensure_panel_and_views(hass)
 
     config_data = {**entry.data, **entry.options}
+    stored_room = store.get_room(entry.entry_id)
+    if stored_room:
+        config_data = {**stored_room, **config_data}
+
+    await store.async_save_room(
+        entry.entry_id,
+        config_data,
+        note="Initial entry setup",
+        record_revision=False,
+    )
+
     coordinator = RoomPresenceCoordinator(hass, entry.entry_id, config_data)
     await coordinator.async_setup()
 
@@ -306,4 +399,22 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
     else:
         unload_ok = True
 
+    remaining_coords = [
+        v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, RoomPresenceCoordinator)
+    ]
+    if not remaining_coords and hass.data.get(DOMAIN, {}).get(PANEL_REGISTERED):
+        try:
+            from homeassistant.components.frontend import async_remove_panel
+
+            async_remove_panel(hass, DOMAIN, warn_if_unknown=False)
+            hass.data[DOMAIN][PANEL_REGISTERED] = False
+        except Exception:  # noqa: BLE001
+            pass
+
     return unload_ok
+
+
+async def async_remove_entry(hass: Any, entry: Any) -> None:
+    """Handle removal of a room config entry from .storage."""
+    store = await async_get_store(hass)
+    await store.async_remove_room(entry.entry_id)
