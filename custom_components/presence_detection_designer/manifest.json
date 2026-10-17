@@ -1,6 +1,7 @@
 {
   "domain": "presence_detection_designer",
   "name": "Presence Detection Designer",
+  "after_dependencies": ["recorder"],
   "codeowners": ["@spelech"],
   "config_flow": true,
   "dependencies": ["frontend", "http"],
