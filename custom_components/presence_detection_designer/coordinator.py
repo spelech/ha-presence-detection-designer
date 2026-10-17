@@ -89,8 +89,41 @@ class RoomPresenceCoordinator:
     ) -> None:
         self.hass = hass
         self.entry_id = entry_id
-        self.config = config
+        self.config = dict(config)
 
+        self._listeners: list[Callable[[], None]] = []
+        self._unsub_trackers: list[Callable[[], None]] = []
+        self._previous_presence = False
+        self.last_bayesian_eval: BayesianEvaluation | None = None
+        self.state_machine: RoomStateMachine = None  # type: ignore[assignment]
+
+        self._apply_config_fields(self.config, preserve_state=False)
+
+    def _resolve_global_llm_defaults(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Merge global_settings from PDDStore for any unset LLM fields."""
+        from .const import DATA_STORE, DOMAIN
+
+        gs: dict[str, Any] = {}
+        if self.hass and isinstance(getattr(self.hass, "data", None), dict):
+            store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+            if store is not None and hasattr(store, "global_settings"):
+                gs = store.global_settings or {}
+
+        return {
+            CONF_LLM_PROVIDER_TYPE: (
+                config.get(CONF_LLM_PROVIDER_TYPE)
+                or gs.get("llm_provider_type")
+                or LLMProviderType.VISION_API
+            ),
+            CONF_LLM_AGENT_ID: config.get(CONF_LLM_AGENT_ID) or gs.get("llm_agent_id"),
+            CONF_LLM_API_URL: config.get(CONF_LLM_API_URL) or gs.get("llm_api_url"),
+            CONF_LLM_API_KEY: config.get(CONF_LLM_API_KEY) or gs.get("llm_api_key"),
+            CONF_LLM_MODEL: config.get(CONF_LLM_MODEL) or gs.get("llm_model"),
+        }
+
+    def _apply_config_fields(self, config: dict[str, Any], preserve_state: bool = False) -> None:
+        """Populate coordinator attributes and state machine from config dict."""
+        self.config = dict(config)
         self.room_name: str = config.get(CONF_ROOM_NAME, "Room")
         self.area_id: str | None = config.get(CONF_AREA_ID)
         self.boundary_entities: list[str] = list(config.get(CONF_BOUNDARY_ENTITIES, []) or [])
@@ -119,37 +152,52 @@ class RoomPresenceCoordinator:
         extend_timeout = int(config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT))
         llm_enabled = bool(config.get(CONF_LLM_ENABLED, False))
 
-        self.state_machine = RoomStateMachine(
-            name=self.room_name,
-            mode=self.mode,
-            inactivity_timeout=inactivity_timeout,
-            grace_timeout=grace_timeout,
-            extend_timeout=extend_timeout,
-            llm_enabled=llm_enabled,
-            bayesian_prior=self.bayesian_prior,
-            bayesian_threshold=self.bayesian_threshold,
-        )
+        if preserve_state and self.state_machine is not None:
+            self.state_machine.name = self.room_name
+            self.state_machine.mode = self.mode
+            self.state_machine.inactivity_timeout = inactivity_timeout
+            self.state_machine.grace_timeout = grace_timeout
+            self.state_machine.extend_timeout = extend_timeout
+            self.state_machine.llm_enabled = llm_enabled
+            self.state_machine.bayesian_prior = self.bayesian_prior
+            self.state_machine.bayesian_threshold = self.bayesian_threshold
+            self.state_machine._active_triggers.intersection_update(self.trigger_entities)
+            self.state_machine._open_boundaries.intersection_update(self.boundary_entities)
+        else:
+            self.state_machine = RoomStateMachine(
+                name=self.room_name,
+                mode=self.mode,
+                inactivity_timeout=inactivity_timeout,
+                grace_timeout=grace_timeout,
+                extend_timeout=extend_timeout,
+                llm_enabled=llm_enabled,
+                bayesian_prior=self.bayesian_prior,
+                bayesian_threshold=self.bayesian_threshold,
+            )
 
+        llm_cfg = self._resolve_global_llm_defaults(config)
         self.verifier = LLMVerifier(
-            hass=hass,
-            provider_type=config.get(CONF_LLM_PROVIDER_TYPE, LLMProviderType.VISION_API),
-            agent_id=config.get(CONF_LLM_AGENT_ID),
-            api_url=config.get(CONF_LLM_API_URL),
-            api_key=config.get(CONF_LLM_API_KEY),
-            model=config.get(CONF_LLM_MODEL),
+            hass=self.hass,
+            provider_type=llm_cfg[CONF_LLM_PROVIDER_TYPE],
+            agent_id=llm_cfg[CONF_LLM_AGENT_ID],
+            api_url=llm_cfg[CONF_LLM_API_URL],
+            api_key=llm_cfg[CONF_LLM_API_KEY],
+            model=llm_cfg[CONF_LLM_MODEL],
             prompt=config.get(CONF_LLM_PROMPT, DEFAULT_LLM_PROMPT),
         )
 
         self.camera_entity = config.get(CONF_CAMERA_ENTITY)
         self.camera_snapshot_url = config.get(CONF_CAMERA_SNAPSHOT_URL)
 
-        self.rule_guide: str = explain_config_in_natural_language(config)
-        self.yaml_representations: dict[str, str] = config_to_yaml_representations(config)
-        self.last_bayesian_eval: BayesianEvaluation | None = None
+        self.rule_guide = explain_config_in_natural_language(config)
+        self.yaml_representations = config_to_yaml_representations(config)
 
-        self._listeners: list[Callable[[], None]] = []
-        self._unsub_trackers: list[Callable[[], None]] = []
-        self._previous_presence = False
+    async def async_apply_config_in_place(self, new_config: dict[str, Any]) -> None:
+        """Hot-apply an updated configuration without losing active room presence or entity listeners."""
+        self._unsubscribe_trackers()
+        self._apply_config_fields(new_config, preserve_state=True)
+        await self.async_setup()
+        self.async_update_listeners()
 
     def async_add_listener(self, update_callback: Callable[[], None]) -> Callable[[], None]:
         """Add listener for state updates."""
@@ -261,14 +309,18 @@ class RoomPresenceCoordinator:
         # Initial evaluation of live states on startup
         self.async_refresh_all_states()
 
-    def async_unload(self) -> None:
-        """Unsubscribe all entity listeners and timers."""
+    def _unsubscribe_trackers(self) -> None:
+        """Unsubscribe entity state listeners and timer tick without clearing entity listeners."""
         for unsub in self._unsub_trackers:
             try:
                 unsub()
             except Exception:  # noqa: BLE001
                 pass
         self._unsub_trackers.clear()
+
+    def async_unload(self) -> None:
+        """Unsubscribe all entity listeners and timers."""
+        self._unsubscribe_trackers()
         self._listeners.clear()
 
     def async_refresh_all_states(self) -> None:

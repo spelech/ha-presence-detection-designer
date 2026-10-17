@@ -111,6 +111,37 @@ def friendly_entity_label(obs: dict[str, Any], entity_state_obj: Any = None) -> 
     return slug.replace("_", " ").title()
 
 
+def normalize_observation(obs: dict[str, Any]) -> dict[str, Any]:
+    """Return a normalized Bayesian observation dictionary with resolved weights and likelihood ratio."""
+    raw_eid = obs.get("entity_id", "sensor.unknown")
+    eid = str(raw_eid.get("entity_id") if isinstance(raw_eid, dict) else raw_eid)
+    op = str(obs.get("operator", ConditionOperator.EQUALS))
+    st = str(obs.get("state", "on"))
+    preset_name, pt, pf = resolve_observation_weights(obs)
+    lr = _clamp_prob(pt) / _clamp_prob(pf)
+    return {
+        "entity_id": eid,
+        "label": friendly_entity_label({**obs, "entity_id": eid}),
+        "preset": preset_name,
+        "operator": op,
+        "state": st,
+        "attribute": obs.get("attribute"),
+        "prob_given_true": round(pt, 3),
+        "prob_given_false": round(pf, 3),
+        "likelihood_ratio": round(lr, 2),
+        "penalize_when_off": bool(obs.get("penalize_when_off", False)),
+    }
+
+
+def prior_and_lrs_to_posterior(prior: float, likelihood_ratios: list[float]) -> float:
+    """Compute Bayesian posterior probability (0..1) from prior and a list of likelihood ratios."""
+    p0 = _clamp_prob(prior)
+    odds = p0 / (1.0 - p0)
+    for lr in likelihood_ratios:
+        odds *= max(0.001, float(lr))
+    return odds / (1.0 + odds)
+
+
 def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Build the complete list of Bayesian observations from room configuration.
 
