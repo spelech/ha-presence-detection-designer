@@ -7,14 +7,100 @@ from typing import Any
 
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN
+from .bayesian_engine import parse_yaml_or_dict_to_config
+from .const import (
+    CONF_LLM_AGENT_ID,
+    CONF_LLM_API_KEY,
+    CONF_LLM_API_URL,
+    CONF_LLM_MODEL,
+    CONF_LLM_PROVIDER_TYPE,
+    CONF_ROOM_NAME,
+    DOMAIN,
+    EVENT_PRESENCE_EXPLANATION,
+    LLMProviderType,
+)
 from .coordinator import RoomPresenceCoordinator
+from .llm_verifier import LLMVerifier
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["binary_sensor", "button", "switch"]
+PLATFORMS = ["binary_sensor", "sensor", "button", "switch"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+def _register_service(
+    hass: Any,
+    service: str,
+    handler: Any,
+    supports_optional_response: bool = False,
+) -> None:
+    """Register a HA service, supporting SupportsResponse.OPTIONAL when available."""
+    if supports_optional_response:
+        try:
+            from homeassistant.core import SupportsResponse
+
+            hass.services.async_register(
+                DOMAIN,
+                service,
+                handler,
+                supports_response=SupportsResponse.OPTIONAL,
+            )
+            return
+        except (ImportError, TypeError):
+            pass
+    hass.services.async_register(DOMAIN, service, handler)
+
+
+def _collect_available_entities_for_room(
+    hass: Any, room_name: str | None = None
+) -> list[dict[str, str]]:
+    """Collect candidate entities from HA state machine matching a room name."""
+    if not hass or not hasattr(hass, "states") or not hasattr(hass.states, "async_all"):
+        return []
+    room_tokens = (
+        [t for t in room_name.lower().replace("'", "").split() if len(t) > 2] if room_name else []
+    )
+    results: list[dict[str, str]] = []
+    try:
+        for state_obj in hass.states.async_all():
+            eid = getattr(state_obj, "entity_id", "")
+            if not eid.startswith(
+                (
+                    "binary_sensor.",
+                    "sensor.",
+                    "media_player.",
+                    "camera.",
+                    "light.",
+                    "fan.",
+                    "switch.",
+                )
+            ):
+                continue
+            attrs = getattr(state_obj, "attributes", {}) or {}
+            fname = str(attrs.get("friendly_name", eid))
+            haystack = f"{eid} {fname}".lower()
+            if not room_tokens or all(tok in haystack for tok in room_tokens) or "ble_area" in eid:
+                results.append(
+                    {
+                        "entity_id": eid,
+                        "name": fname,
+                        "state": str(getattr(state_obj, "state", "")),
+                    }
+                )
+    except Exception:  # noqa: BLE001
+        return []
+    return results[:80]
+
+
+def _get_default_llm_verifier(hass: Any) -> LLMVerifier:
+    """Return an LLMVerifier configured from the first room entry that has LLM settings."""
+    for coord in hass.data.get(DOMAIN, {}).values():
+        if isinstance(coord, RoomPresenceCoordinator) and (
+            coord.verifier.api_url or coord.verifier.agent_id
+        ):
+            return coord.verifier
+    return LLMVerifier(hass=hass, provider_type=LLMProviderType.CONVERSATION)
 
 
 async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
@@ -25,20 +111,148 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         """Service call to verify presence across rooms or specific entry."""
         entry_id = call.data.get("entry_id")
         for eid, coordinator in hass.data[DOMAIN].items():
-            if not entry_id or eid == entry_id:
+            if isinstance(coordinator, RoomPresenceCoordinator) and (
+                not entry_id or eid == entry_id
+            ):
                 await coordinator.async_manual_verify()
 
     async def handle_force_refresh(call: Any) -> None:
-        """Service call to refresh conditions."""
+        """Service call to refresh conditions and Bayesian observations."""
         entry_id = call.data.get("entry_id")
         for eid, coordinator in hass.data[DOMAIN].items():
-            if not entry_id or eid == entry_id:
-                coordinator._eval_conditions_and_update()
+            if isinstance(coordinator, RoomPresenceCoordinator) and (
+                not entry_id or eid == entry_id
+            ):
+                coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
 
+    async def handle_explain_presence(call: Any) -> dict[str, Any]:
+        """Generate natural-language and YAML explanations for one or all rooms."""
+        entry_id = call.data.get("entry_id")
+        room_name_filter = call.data.get("room_name", "").strip().lower()
+        use_llm = bool(call.data.get("use_llm", True))
+
+        explanations: dict[str, Any] = {}
+        for eid, coordinator in hass.data[DOMAIN].items():
+            if not isinstance(coordinator, RoomPresenceCoordinator):
+                continue
+            if entry_id and eid != entry_id:
+                continue
+            if room_name_filter and coordinator.room_name.lower() != room_name_filter:
+                continue
+            explanations[coordinator.room_name] = await coordinator.async_explain_presence(
+                use_llm=use_llm
+            )
+
+        payload = {"rooms": explanations}
+        if hasattr(hass, "bus"):
+            try:
+                hass.bus.async_fire(EVENT_PRESENCE_EXPLANATION, payload)
+            except Exception:  # noqa: BLE001
+                pass
+        if getattr(call, "return_response", True):
+            return payload
+        return None
+
+    async def handle_translate_config(call: Any) -> dict[str, Any] | None:
+        """Translate back and forth between natural-language descriptions and YAML/Designer configs."""
+        entry_id = call.data.get("entry_id")
+        room_name = call.data.get("room_name")
+        direction = call.data.get("direction", "auto")
+        description = call.data.get("description")
+        yaml_config = call.data.get("yaml_config")
+        use_llm = bool(call.data.get("use_llm", True))
+
+        verifier = _get_default_llm_verifier(hass)
+        if not yaml_config and (entry_id or (room_name and not description)):
+            for eid, coord in hass.data[DOMAIN].items():
+                if not isinstance(coord, RoomPresenceCoordinator):
+                    continue
+                if (entry_id and eid == entry_id) or (
+                    room_name and coord.room_name.lower() == room_name.strip().lower()
+                ):
+                    yaml_config = coord.config
+                    room_name = coord.room_name
+                    verifier = coord.verifier
+                    break
+
+        if call.data.get(CONF_LLM_API_URL) or call.data.get(CONF_LLM_AGENT_ID):
+            verifier = LLMVerifier(
+                hass=hass,
+                provider_type=call.data.get(CONF_LLM_PROVIDER_TYPE, verifier.provider_type),
+                agent_id=call.data.get(CONF_LLM_AGENT_ID, verifier.agent_id),
+                api_url=call.data.get(CONF_LLM_API_URL, verifier.api_url),
+                api_key=call.data.get(CONF_LLM_API_KEY, verifier.api_key),
+                model=call.data.get(CONF_LLM_MODEL, verifier.model),
+            )
+
+        candidates = _collect_available_entities_for_room(hass, room_name)
+        result = await verifier.async_translate_config(
+            direction=direction,
+            room_name=room_name,
+            description=description,
+            yaml_config=yaml_config,
+            available_entities=candidates,
+            use_llm=use_llm,
+        )
+        if hasattr(hass, "bus"):
+            try:
+                hass.bus.async_fire(EVENT_PRESENCE_EXPLANATION, result)
+            except Exception:  # noqa: BLE001
+                pass
+        if getattr(call, "return_response", True):
+            return result
+        return None
+
+    async def handle_configure_room(call: Any) -> dict[str, Any] | None:
+        """Apply a YAML or dict room configuration to an existing or matching room entry."""
+        entry_id = call.data.get("entry_id")
+        room_name = call.data.get("room_name")
+        raw_cfg = call.data.get("config") or dict(call.data)
+        normalized = parse_yaml_or_dict_to_config(raw_cfg)
+        if room_name:
+            normalized[CONF_ROOM_NAME] = room_name
+        target_name = str(normalized.get(CONF_ROOM_NAME, "")).strip()
+
+        target_entry = None
+        if hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_entries"):
+            for entry in hass.config_entries.async_entries(DOMAIN):
+                if (entry_id and entry.entry_id == entry_id) or (
+                    target_name and entry.title.strip().lower() == target_name.lower()
+                ):
+                    target_entry = entry
+                    break
+
+        if target_entry is not None:
+            merged = {**target_entry.data, **normalized}
+            hass.config_entries.async_update_entry(
+                target_entry,
+                title=merged.get(CONF_ROOM_NAME, target_entry.title),
+                data=merged,
+            )
+            await hass.config_entries.async_reload(target_entry.entry_id)
+            out = {
+                "status": "updated",
+                "entry_id": target_entry.entry_id,
+                "room_name": merged.get(CONF_ROOM_NAME),
+            }
+            return out if getattr(call, "return_response", True) else None
+
+        out = {"status": "not_found", "room_name": target_name}
+        return out if getattr(call, "return_response", True) else None
+
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
-        hass.services.async_register(DOMAIN, "verify_presence", handle_verify_presence)
-        hass.services.async_register(DOMAIN, "force_refresh", handle_force_refresh)
+        _register_service(hass, "verify_presence", handle_verify_presence)
+        _register_service(hass, "force_refresh", handle_force_refresh)
+        _register_service(
+            hass, "explain_presence", handle_explain_presence, supports_optional_response=True
+        )
+        _register_service(
+            hass, "translate_config", handle_translate_config, supports_optional_response=True
+        )
+        _register_service(
+            hass, "configure_room", handle_configure_room, supports_optional_response=True
+        )
 
     return True
 
@@ -58,6 +272,19 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     else:
         for platform in PLATFORMS:
             await hass.config_entries.async_forward_entry_setup(entry, platform)
+
+    # Assign created device to configured area_id if specified
+    if coordinator.area_id:
+        try:
+            from homeassistant.helpers import device_registry as dr
+
+            dev_reg = dr.async_get(hass)
+            if hasattr(dev_reg, "async_get_device"):
+                device = dev_reg.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+                if device and getattr(device, "area_id", None) != coordinator.area_id:
+                    dev_reg.async_update_device(device.id, area_id=coordinator.area_id)
+        except Exception:  # noqa: BLE001
+            pass
 
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     return True

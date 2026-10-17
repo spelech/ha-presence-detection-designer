@@ -11,7 +11,7 @@ verify_presence:
 
 force_refresh:
   name: Force refresh conditions
-  description: Immediately re-evaluates all sustaining conditions across configured rooms.
+  description: Immediately re-evaluates all boundaries, triggers, sustaining conditions, and Bayesian observations across configured rooms.
   fields:
     entry_id:
       name: Room Entry ID
@@ -19,3 +19,99 @@ force_refresh:
       required: false
       selector:
         text:
+
+explain_presence:
+  name: Explain presence & Bayesian state
+  description: Generate a natural-language explanation of room occupancy, per-sensor Bayesian probability contributions, tuning advice, and equivalent YAML.
+  fields:
+    entry_id:
+      name: Room Entry ID
+      description: Optional config entry ID for a specific room.
+      required: false
+      selector:
+        text:
+    room_name:
+      name: Room Name
+      description: Optional room name filter (e.g. Office, Family Room). If omitted, explains all configured rooms.
+      required: false
+      selector:
+        text:
+    use_llm:
+      name: Use LLM Narrative
+      description: Query the configured HA Conversation / AI Task / LiteLLM provider for an AI narrative explanation in addition to the deterministic math breakdown.
+      required: false
+      default: true
+      selector:
+        boolean:
+
+translate_config:
+  name: Translate between natural language and YAML config
+  description: Bidirectionally convert between a natural-language description of room presence rules and ready-to-use Presence Detection Designer / Home Assistant Bayesian YAML.
+  fields:
+    direction:
+      name: Translation Direction
+      description: Choose 'to_yaml' (Natural Language -> YAML) or 'to_natural_language' (YAML / Room Entry -> Natural Language).
+      required: false
+      default: auto
+      selector:
+        select:
+          options:
+            - auto
+            - to_yaml
+            - to_natural_language
+    room_name:
+      name: Room Name
+      description: Name of the room (e.g. Office, Master Bedroom).
+      required: false
+      selector:
+        text:
+    entry_id:
+      name: Room Entry ID
+      description: Existing room config entry ID to explain or export to YAML.
+      required: false
+      selector:
+        text:
+    description:
+      name: Natural Language Description
+      description: Plain-English description of how sensors, zones, doors, and conditions should detect and hold presence in the room.
+      required: false
+      selector:
+        text:
+          multiline: true
+    yaml_config:
+      name: YAML or JSON Configuration
+      description: "Existing Home Assistant platform: bayesian YAML or Presence Detection Designer YAML to translate into plain English."
+      required: false
+      selector:
+        text:
+          multiline: true
+    use_llm:
+      name: Use LLM
+      description: Use the configured LLM provider to enrich translation.
+      required: false
+      default: true
+      selector:
+        boolean:
+
+configure_room:
+  name: Configure room presence rules
+  description: Apply a YAML or JSON room presence configuration to an existing room config entry and reload it immediately.
+  fields:
+    entry_id:
+      name: Room Entry ID
+      description: Optional config entry ID for the room.
+      required: false
+      selector:
+        text:
+    room_name:
+      name: Room Name
+      description: Name of the room to update (e.g. Office, Family Room).
+      required: false
+      selector:
+        text:
+    config:
+      name: Room Configuration (YAML / JSON)
+      description: Full or partial Presence Detection Designer or Home Assistant Bayesian room configuration.
+      required: true
+      selector:
+        object:
