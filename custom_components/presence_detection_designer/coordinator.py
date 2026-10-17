@@ -367,7 +367,42 @@ class RoomPresenceCoordinator:
             inactive_observations=evaluation.inactive_observations,
             trigger_state_machine=self.has_explicit_bayesian,
         )
+        self._record_timeline_snapshot()
         return evaluation
+
+    def _record_timeline_snapshot(self) -> None:
+        """Record a compact sensor & state snapshot into PDDStore's rolling timeline buffer."""
+        from .const import DATA_STORE, DOMAIN
+
+        if not self.hass or not isinstance(getattr(self.hass, "data", None), dict):
+            return
+        store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if store is None or not hasattr(store, "record_timeline_event"):
+            return
+
+        entity_states: dict[str, str] = {}
+        tracked_eids: set[str] = set(self.boundary_entities) | set(self.trigger_entities)
+        for cond in self.conditions:
+            if isinstance(cond, dict) and cond.get("entity_id"):
+                tracked_eids.add(str(cond["entity_id"]))
+        for obs in self.bayesian_observations:
+            if isinstance(obs, dict) and obs.get("entity_id"):
+                tracked_eids.add(str(obs["entity_id"]))
+
+        for eid in sorted(tracked_eids):
+            st_obj = _safe_state_getter(self.hass, eid)
+            if st_obj is not None:
+                entity_states[eid] = str(st_obj.state)
+
+        store.record_timeline_event(
+            self.entry_id,
+            {
+                "is_present": self.state_machine.is_present,
+                "box_state": str(self.state_machine.box_state),
+                "probability_pct": self.state_machine.bayesian_probability_pct,
+                "entity_states": entity_states,
+            },
+        )
 
     def _eval_conditions_and_update(self) -> None:
         """Evaluate sustaining conditions and Bayesian observations."""

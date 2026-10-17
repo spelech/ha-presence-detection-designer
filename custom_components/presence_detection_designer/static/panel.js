@@ -22,6 +22,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._revisionNote = "";
     this._showGlobalModal = false;
     this._globalDraft = null;
+    this._studioView = "design"; // "design" | "statistics" | "replay"
+    this._historyHours = 6;
+    this._statsData = null;
+    this._replayData = null;
+    this._replayCandidate = null;
     this._toast = null;
     this._loading = false;
     this._initialized = false;
@@ -134,6 +139,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     if (!Array.isArray(this._draftConfig.sustaining_conditions)) {
       this._draftConfig.sustaining_conditions = [];
     }
+    this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig));
     this._previewData = {
       probability_pct: room.bayesian_probability_pct,
       is_occupied: room.bayesian_occupied,
@@ -150,7 +156,53 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._yamlDraft = room.designer_yaml || "";
     this._dirty = false;
     this._revisionNote = "";
-    if (renderAfter) this.render();
+    if (this._studioView === "statistics") {
+      this.loadStatistics();
+    } else if (this._studioView === "replay") {
+      this.runReplay();
+    } else if (renderAfter) {
+      this.render();
+    }
+  }
+
+  async loadStatistics() {
+    if (!this._selectedRoomId) return;
+    try {
+      const res = await this._apiCall(
+        "GET",
+        `/api/presence_detection_designer/room/${this._selectedRoomId}/statistics?hours=${this._historyHours}`
+      );
+      this._statsData = res;
+      this.render();
+    } catch (err) {
+      this.showToast(`Failed to load statistics: ${err.message}`, "error");
+    }
+  }
+
+  async runReplay() {
+    if (!this._selectedRoomId || !this._replayCandidate) return;
+    try {
+      const res = await this._apiCall(
+        "POST",
+        `/api/presence_detection_designer/room/${this._selectedRoomId}/replay`,
+        {
+          hours: this._historyHours,
+          candidate_config: this._replayCandidate,
+        }
+      );
+      this._replayData = res;
+      this.render();
+    } catch (err) {
+      this.showToast(`Replay simulation failed: ${err.message}`, "error");
+    }
+  }
+
+  async applyReplayCandidate() {
+    if (!this._selectedRoomId || !this._replayCandidate) return;
+    this._draftConfig = JSON.parse(JSON.stringify(this._replayCandidate));
+    this._revisionNote = `Applied tuned configuration from ${this._historyHours}h Replay Simulator`;
+    await this.saveCurrentRoom();
+    await this.runReplay();
   }
 
   get selectedRoom() {
@@ -816,6 +868,86 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           max-width: 94vw;
           padding: 20px;
         }
+        .mode-switcher {
+          display: flex;
+          background: #0b1120;
+          border: 1px solid #334155;
+          border-radius: 9px;
+          padding: 3px;
+          gap: 4px;
+        }
+        .mode-btn {
+          background: transparent;
+          color: #94a3b8;
+          border: none;
+          padding: 6px 13px;
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .mode-btn.active {
+          background: #2563eb;
+          color: #fff;
+          box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+        }
+        .kpi-grid-6 {
+          display: grid;
+          grid-template-columns: repeat(6, 1fr);
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+        @media (max-width: 1280px) {
+          .kpi-grid-6 { grid-template-columns: repeat(3, 1fr); }
+        }
+        .kpi-card {
+          background: #0b1120;
+          border: 1px solid #1e293b;
+          border-radius: 10px;
+          padding: 11px 13px;
+        }
+        .kpi-label {
+          font-size: 10.5px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #94a3b8;
+          font-weight: 600;
+        }
+        .kpi-val {
+          font-size: 21px;
+          font-weight: 800;
+          margin-top: 4px;
+          color: #f8fafc;
+        }
+        .kpi-sub {
+          font-size: 11px;
+          color: #64748b;
+          margin-top: 2px;
+        }
+        .swimlane-row {
+          display: grid;
+          grid-template-columns: 240px 1fr 90px;
+          align-items: center;
+          gap: 10px;
+          padding: 6px 0;
+          border-bottom: 1px solid #1e293b;
+          font-size: 11.5px;
+        }
+        .swimlane-track {
+          position: relative;
+          height: 18px;
+          background: #090d16;
+          border: 1px solid #1e293b;
+          border-radius: 5px;
+          overflow: hidden;
+        }
+        .swimlane-seg {
+          position: absolute;
+          top: 2px;
+          bottom: 2px;
+          border-radius: 3px;
+        }
       </style>
 
       <div id="pdd-toast-container" style="position:fixed;bottom:20px;right:24px;z-index:200;"></div>
@@ -836,10 +968,38 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <div class="brand-icon">PDD</div>
           <div>
             <h1>Presence Detection Designer</h1>
-            <div class="brand-sub">Visual Bayesian Fusion Studio &amp; Native <code>.storage</code> Manager (v1.2.0)</div>
+            <div class="brand-sub">Visual Bayesian Fusion Studio, Timeline Analytics &amp; Replay Simulator (v1.2.0)</div>
           </div>
         </div>
+
+        <div class="mode-switcher">
+          <button class="mode-btn ${this._studioView === "design" ? "active" : ""}" data-studio-view="design">🎨 Design Studio</button>
+          <button class="mode-btn ${this._studioView === "statistics" ? "active" : ""}" data-studio-view="statistics">📈 Statistics &amp; Timeline</button>
+          <button class="mode-btn ${this._studioView === "replay" ? "active" : ""}" data-studio-view="replay">⏮️ Replay &amp; Tuning Simulator</button>
+        </div>
+
         <div class="top-pills">
+          ${
+            this._studioView !== "design"
+              ? `<div class="mode-switcher" style="margin-right:4px;">
+                  ${[
+                    { h: 1, label: "1h" },
+                    { h: 6, label: "6h" },
+                    { h: 24, label: "24h" },
+                    { h: 168, label: "7d" },
+                  ]
+                    .map(
+                      (w) =>
+                        `<button class="mode-btn ${
+                          Number(this._historyHours) === w.h ? "active" : ""
+                        }" data-history-hours="${w.h}" style="padding:4px 9px;font-size:11px;">${
+                          w.label
+                        }</button>`
+                    )
+                    .join("")}
+                </div>`
+              : ""
+          }
           <div class="stat-pill">Occupied: <strong>${occupiedCount} / ${rooms.length}</strong></div>
           <div class="stat-pill">Storage: <strong>.storage/presence_detection_designer</strong></div>
           <button class="btn" id="btn-open-global">⚙ Global .storage Settings</button>
@@ -908,6 +1068,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           </div>
         </div>
 
+        ${
+          this._studioView === "statistics"
+            ? `<div style="grid-column: 2 / -1;">${this._renderStatisticsPane(selRoom)}</div>`
+            : this._studioView === "replay"
+            ? `<div style="grid-column: 2 / -1;">${this._renderReplayPane(selRoom, presets)}</div>`
+            : `
         <!-- CENTER COLUMN: Interactive Room & Bayesian Weight Builder -->
         <div class="col-center">
           ${
@@ -1408,6 +1574,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           `
           }
         </div>
+        `
+        }
       </div>
 
       ${
@@ -1477,9 +1645,650 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._bindEvents();
   }
 
+  _buildStepSvgPaths(series, width = 940, height = 185) {
+    const pts = series || [];
+    if (pts.length === 0) {
+      return { linePath: "", areaPath: "" };
+    }
+    const coords = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const x = Math.max(0, Math.min(width, (Number(p.offset_pct || 0) / 100) * width));
+      const y = Math.max(
+        6,
+        Math.min(height - 6, height - (Number(p.probability_pct || 0) / 100) * (height - 12) - 6)
+      );
+      if (i > 0) {
+        const prevY = coords[coords.length - 1][1];
+        coords.push([x, prevY]);
+      }
+      coords.push([x, y]);
+    }
+    const lastY = coords[coords.length - 1][1];
+    coords.push([width, lastY]);
+
+    const linePath = coords
+      .map((c, idx) => `${idx === 0 ? "M" : "L"}${c[0].toFixed(1)},${c[1].toFixed(1)}`)
+      .join(" ");
+    const areaPath = `${linePath} L${width},${height} L0,${height} Z`;
+    return { linePath, areaPath };
+  }
+
+  _presetColor(preset) {
+    const p = String(preset || "").toLowerCase();
+    if (p === "decisive") return "#10b981";
+    if (p === "strong") return "#38bdf8";
+    if (p === "moderate") return "#818cf8";
+    if (p === "supporting") return "#f59e0b";
+    if (p === "door") return "#a855f7";
+    return "#64748b";
+  }
+
+  _renderStatisticsPane(selRoom) {
+    if (!selRoom) {
+      return `<div class="panel-card">Select a room to inspect statistics.</div>`;
+    }
+    const st = this._statsData;
+    if (!st || st.entry_id !== selRoom.entry_id) {
+      return `<div class="panel-card">Loading ${this._historyHours}h historical timeline &amp; sensor attribution for <strong>${this._escape(
+        selRoom.room_name
+      )}</strong>...</div>`;
+    }
+    const sum = st.summary || {};
+    const series = st.series || [];
+    const swimlanes = st.swimlanes || [];
+    const W = 940;
+    const H = 185;
+    const { linePath, areaPath } = this._buildStepSvgPaths(series, W, H);
+    const threshY = H - (Number(st.threshold_pct || 75) / 100) * (H - 12) - 6;
+    const priorY = H - (Number(st.prior_pct || 20) / 100) * (H - 12) - 6;
+
+    const occBands = series
+      .filter((s) => s.is_present && Number(s.width_pct || 0) > 0)
+      .map((s) => {
+        const x = (Number(s.offset_pct || 0) / 100) * W;
+        const w = Math.max(2, (Number(s.width_pct || 0) / 100) * W);
+        return `<rect x="${x.toFixed(1)}" y="0" width="${w.toFixed(
+          1
+        )}" height="${H}" fill="rgba(16, 185, 129, 0.14)" />`;
+      })
+      .join("");
+
+    return `
+      <div class="panel-card">
+        <div class="card-header" style="flex-wrap:wrap;">
+          <div>
+            <h2 class="card-title" style="font-size:18px;">
+              📈 ${this._escape(selRoom.room_name)} — ${sum.window_hours || this._historyHours}h Occupancy &amp; Bayesian Signal Analytics
+            </h2>
+            <div class="card-subtitle">
+              Window: ${this._escape((st.start_iso || "").slice(11, 19))} UTC &rarr; ${this._escape(
+      (st.end_iso || "").slice(11, 19)
+    )} UTC · Threshold: ${st.threshold_pct}% · Baseline Prior: ${st.prior_pct}%
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm" id="btn-reload-stats">↻ Refresh Analytics</button>
+            <button class="btn btn-primary btn-sm" id="btn-jump-to-replay">⏮️ Open in Replay Simulator</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid-6" style="margin-top:12px;">
+          <div class="kpi-card">
+            <div class="kpi-label">Occupancy Duty Cycle</div>
+            <div class="kpi-val" style="color:#10b981;">${Number(sum.occupied_pct || 0).toFixed(1)}%</div>
+            <div class="kpi-sub">${Number(sum.occupied_minutes || 0).toFixed(1)} min occupied</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">State Transitions</div>
+            <div class="kpi-val" style="color:#38bdf8;">${sum.transition_count || 0}</div>
+            <div class="kpi-sub">Vacant &rarr; Occupied entries</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Wasp-in-a-Box Hold</div>
+            <div class="kpi-val" style="color:#a855f7;">${Number(sum.sealed_hold_minutes || 0).toFixed(
+              1
+            )}m</div>
+            <div class="kpi-sub">Held by sealed door latch</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Deflected Noise</div>
+            <div class="kpi-val" style="color:#f59e0b;">${sum.sub_threshold_deflections || 0}</div>
+            <div class="kpi-sub">Sub-threshold events blocked</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Mean Occupied Prob</div>
+            <div class="kpi-val">${Number(sum.avg_occupied_probability_pct || 0).toFixed(1)}%</div>
+            <div class="kpi-sub">Threshold: ${st.threshold_pct}%</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Peak Posterior Prob</div>
+            <div class="kpi-val" style="color:#34d399;">${Number(sum.peak_probability_pct || 0).toFixed(
+              1
+            )}%</div>
+            <div class="kpi-sub">Baseline Prior: ${st.prior_pct}%</div>
+          </div>
+        </div>
+
+        <!-- SVG Probability & Occupancy Timeline Chart -->
+        <div style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11.5px;color:#94a3b8;">
+            <span><strong>Bayesian Posterior Probability Curve (0–100%)</strong> &amp; Shaded Occupied Intervals</span>
+            <div style="display:flex;gap:14px;">
+              <span><span style="display:inline-block;width:10px;height:10px;background:rgba(16,185,129,0.35);border:1px solid #10b981;margin-right:5px;"></span>Occupied State</span>
+              <span><span style="display:inline-block;width:12px;height:2px;background:#38bdf8;vertical-align:middle;margin-right:5px;"></span>Posterior %</span>
+              <span><span style="display:inline-block;width:12px;height:2px;background:#f59e0b;vertical-align:middle;margin-right:5px;"></span>Threshold (${st.threshold_pct}%)</span>
+            </div>
+          </div>
+          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:190px;display:block;">
+            <defs>
+              <linearGradient id="probGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35" />
+                <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.02" />
+              </linearGradient>
+            </defs>
+            ${occBands}
+            <line x1="0" y1="${threshY.toFixed(1)}" x2="${W}" y2="${threshY.toFixed(
+      1
+    )}" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6,4" />
+            <line x1="0" y1="${priorY.toFixed(1)}" x2="${W}" y2="${priorY.toFixed(
+      1
+    )}" stroke="#475569" stroke-width="1" stroke-dasharray="3,4" />
+            <path d="${areaPath}" fill="url(#probGrad)" />
+            <path d="${linePath}" fill="none" stroke="#38bdf8" stroke-width="2.2" />
+            <text x="8" y="${Math.max(12, threshY - 5).toFixed(
+              1
+            )}" fill="#f59e0b" font-size="10" font-weight="700">Threshold ${st.threshold_pct}%</text>
+            <text x="8" y="${Math.max(12, priorY - 5).toFixed(
+              1
+            )}" fill="#64748b" font-size="10">Prior ${st.prior_pct}%</text>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Synchronized Multi-Track Sensor Swimlanes -->
+      <div class="panel-card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">Synchronized Sensor Activity Swimlanes (${swimlanes.length} Tracked Signals)</h3>
+            <div class="card-subtitle">Each horizontal bar shows when a sensor matched its active occupancy condition across the ${
+              sum.window_hours || this._historyHours
+            }h window.</div>
+          </div>
+        </div>
+        <div>
+          ${swimlanes
+            .map((lane) => {
+              const color = this._presetColor(lane.preset);
+              const segsHtml = (lane.segments || [])
+                .map(
+                  (seg) =>
+                    `<div class="swimlane-seg" title="${this._escape(lane.label)}: ${this._escape(
+                      seg.state
+                    )} (${this._escape(seg.start_iso.slice(11, 19))} - ${this._escape(
+                      seg.end_iso.slice(11, 19)
+                    )})" style="left:${seg.start_pct}%;width:${seg.width_pct}%;background:${color};"></div>`
+                )
+                .join("");
+              return `
+                <div class="swimlane-row">
+                  <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span>
+                    <strong style="color:#e2e8f0;">${this._escape(lane.label)}</strong>
+                    <span style="color:#64748b;font-size:10px;margin-left:4px;">(${this._escape(
+                      lane.preset
+                    )})</span>
+                  </div>
+                  <div class="swimlane-track">${segsHtml}</div>
+                  <div style="text-align:right;color:#cbd5e1;font-size:11px;">
+                    <strong>${Number(lane.active_pct || 0).toFixed(1)}%</strong>
+                    <span style="color:#64748b;">(${Number(lane.active_minutes || 0).toFixed(
+                      0
+                    )}m)</span>
+                  </div>
+                </div>`;
+            })
+            .join("")}
+        </div>
+      </div>
+
+      <!-- Sensor Attribution & False-Alarm Deflection Table -->
+      <div class="panel-card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">Sensor Signal Attribution &amp; Noise Deflection Breakdown</h3>
+            <div class="card-subtitle">Evaluate which sensors reliably corroborate occupancy versus which sensors fire alone without crossing the ${
+              st.threshold_pct
+            }% threshold.</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="obs-table">
+            <thead>
+              <tr>
+                <th>Sensor Label &amp; Entity ID</th>
+                <th>Tier / Preset</th>
+                <th>Weights P(E|T) / P(E|F)</th>
+                <th>Solo Posterior</th>
+                <th>Active Duty</th>
+                <th>Activations</th>
+                <th>Corroborated Occupancies</th>
+                <th>Deflected Below Threshold</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${swimlanes
+                .map(
+                  (lane) => `
+                <tr>
+                  <td>
+                    <div style="font-weight:600;color:#f1f5f9;">${this._escape(lane.label)}</div>
+                    <div style="font-family:monospace;font-size:10.5px;color:#64748b;">${this._escape(
+                      lane.entity_id
+                    )}</div>
+                  </td>
+                  <td><span class="occ-badge" style="background:#1e293b;color:${this._presetColor(
+                    lane.preset
+                  )};">${this._escape(lane.preset.toUpperCase())}</span></td>
+                  <td><code>${Number(lane.prob_given_true).toFixed(2)} / ${Number(
+                    lane.prob_given_false
+                  ).toFixed(2)}</code></td>
+                  <td><strong>${Number(lane.solo_posterior_pct).toFixed(1)}%</strong></td>
+                  <td>${Number(lane.active_pct).toFixed(1)}% (${Number(lane.active_minutes).toFixed(
+                    1
+                  )}m)</td>
+                  <td>${lane.activation_count}</td>
+                  <td style="color:#34d399;font-weight:700;">${lane.corroborated_count}</td>
+                  <td style="color:${lane.deflected_count > 0 ? "#f59e0b" : "#64748b"};font-weight:700;">
+                    ${lane.deflected_count} ${lane.deflected_count > 0 ? "(blocked solo noise)" : ""}
+                  </td>
+                </tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderReplayPane(selRoom, presets) {
+    if (!selRoom) {
+      return `<div class="panel-card">Select a room to run historical replay &amp; parameter tuning.</div>`;
+    }
+    const cand = this._replayCandidate || this._draftConfig || {};
+    const rep = this._replayData;
+    const candPriorPct = Math.round(Number(cand.bayesian_prior ?? 0.2) * 100);
+    const candThreshPct = Math.round(Number(cand.bayesian_threshold ?? 0.75) * 100);
+
+    if (!rep || rep.entry_id !== selRoom.entry_id) {
+      return `<div class="panel-card">Simulating historical What-If Replay for <strong>${this._escape(
+        selRoom.room_name
+      )}</strong>...</div>`;
+    }
+
+    const baseRes = rep.baseline || {};
+    const candRes = rep.candidate || {};
+    const deltas = rep.deltas || {};
+    const divergences = rep.divergence_windows || [];
+    const W = 940;
+    const H = 195;
+    const basePaths = this._buildStepSvgPaths(baseRes.series || [], W, H);
+    const candPaths = this._buildStepSvgPaths(candRes.series || [], W, H);
+    const candThreshY = H - (candThreshPct / 100) * (H - 12) - 6;
+
+    const divBands = divergences
+      .map((d) => {
+        const x = (Number(d.start_pct || 0) / 100) * W;
+        const w = Math.max(3, (Number(d.width_pct || 0) / 100) * W);
+        const fill =
+          d.type === "false_positive_eliminated"
+            ? "rgba(244, 63, 94, 0.24)"
+            : "rgba(16, 185, 129, 0.24)";
+        return `<rect x="${x.toFixed(1)}" y="0" width="${w.toFixed(
+          1
+        )}" height="${H}" fill="${fill}" />`;
+      })
+      .join("");
+
+    return `
+      <!-- Top Delta Comparison & Action Bar -->
+      <div class="panel-card">
+        <div class="card-header" style="flex-wrap:wrap;">
+          <div>
+            <h2 class="card-title" style="font-size:18px;">
+              ⏮️ ${this._escape(selRoom.room_name)} — Historical What-If Replay &amp; Bayesian Tuning Simulator (${
+      this._historyHours
+    }h)
+            </h2>
+            <div class="card-subtitle">
+              Tune prior, threshold, timeouts, or sensor weights below and immediately see how historical occupancy decisions change against saved baseline.
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm" id="btn-replay-reset">↺ Reset to Saved Baseline</button>
+            <button class="btn btn-primary btn-sm" id="btn-replay-run">▶ Run Replay</button>
+            <button class="btn btn-success btn-sm" id="btn-replay-apply">💾 Apply Tuned Config to Room (.storage)</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid-6" style="margin-top:12px;">
+          <div class="kpi-card">
+            <div class="kpi-label">Baseline Occupied</div>
+            <div class="kpi-val">${Number(baseRes.summary?.occupied_pct || 0).toFixed(1)}%</div>
+            <div class="kpi-sub">${Number(baseRes.summary?.occupied_minutes || 0).toFixed(
+              1
+            )}m (${baseRes.summary?.transition_count || 0} transitions)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Tuned Candidate Occupied</div>
+            <div class="kpi-val" style="color:#38bdf8;">${Number(
+              candRes.summary?.occupied_pct || 0
+            ).toFixed(1)}%</div>
+            <div class="kpi-sub">${Number(candRes.summary?.occupied_minutes || 0).toFixed(
+              1
+            )}m (${candRes.summary?.transition_count || 0} transitions)</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Duty Cycle Delta</div>
+            <div class="kpi-val" style="color:${
+              Number(deltas.occupied_pct_delta || 0) < 0
+                ? "#f43f5e"
+                : Number(deltas.occupied_pct_delta || 0) > 0
+                ? "#10b981"
+                : "#94a3b8"
+            };">${Number(deltas.occupied_pct_delta || 0) >= 0 ? "+" : ""}${Number(
+      deltas.occupied_pct_delta || 0
+    ).toFixed(1)}%</div>
+            <div class="kpi-sub">${
+              Number(deltas.occupied_minutes_delta || 0) >= 0 ? "+" : ""
+            }${Number(deltas.occupied_minutes_delta || 0).toFixed(1)} min vs baseline</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">False Positives Cut</div>
+            <div class="kpi-val" style="color:#f43f5e;">${Number(
+              deltas.false_positive_eliminated_minutes || 0
+            ).toFixed(1)}m</div>
+            <div class="kpi-sub">Baseline Occupied &rarr; Tuned Vacant</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Dropouts Prevented</div>
+            <div class="kpi-val" style="color:#10b981;">${Number(
+              deltas.occupancy_gained_minutes || 0
+            ).toFixed(1)}m</div>
+            <div class="kpi-sub">Baseline Vacant &rarr; Tuned Occupied</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Timeline Agreement</div>
+            <div class="kpi-val">${Number(deltas.agreement_pct ?? 100).toFixed(1)}%</div>
+            <div class="kpi-sub">${deltas.divergence_count || 0} divergence windows</div>
+          </div>
+        </div>
+
+        <!-- Dual-Curve Overlay SVG Chart -->
+        <div style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11.5px;color:#94a3b8;flex-wrap:wrap;gap:8px;">
+            <span><strong>Baseline vs. Tuned Candidate Posterior Probability Overlay</strong></span>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;">
+              <span><span style="display:inline-block;width:12px;height:2px;background:#94a3b8;vertical-align:middle;margin-right:5px;"></span>Saved Baseline (%)</span>
+              <span><span style="display:inline-block;width:12px;height:2px;background:#38bdf8;vertical-align:middle;margin-right:5px;"></span>Tuned Candidate (%)</span>
+              <span><span style="display:inline-block;width:10px;height:10px;background:rgba(244,63,94,0.35);border:1px solid #f43f5e;margin-right:5px;"></span>False Positive Cut</span>
+              <span><span style="display:inline-block;width:10px;height:10px;background:rgba(16,185,129,0.35);border:1px solid #10b981;margin-right:5px;"></span>Occupancy Gained</span>
+            </div>
+          </div>
+          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:195px;display:block;">
+            ${divBands}
+            <line x1="0" y1="${candThreshY.toFixed(1)}" x2="${W}" y2="${candThreshY.toFixed(
+      1
+    )}" stroke="#10b981" stroke-width="1.4" stroke-dasharray="6,4" />
+            <path d="${basePaths.linePath}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="4,3" />
+            <path d="${candPaths.linePath}" fill="none" stroke="#38bdf8" stroke-width="2.4" />
+            <text x="8" y="${Math.max(12, candThreshY - 5).toFixed(
+              1
+            )}" fill="#10b981" font-size="10" font-weight="700">Candidate Threshold ${candThreshPct}%</text>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Candidate Sandbox & Divergence Windows Inspector -->
+      <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:16px;align-items:start;">
+        <div class="panel-card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">Candidate Tuning Sandbox (What-If Parameters)</h3>
+              <div class="card-subtitle">Adjust sliders or sensor weights to test how they would have performed over the last ${
+                this._historyHours
+              } hours.</div>
+            </div>
+          </div>
+
+          <div class="form-grid-4" style="margin-bottom:12px;">
+            <div>
+              <label class="field-label">Candidate Prior: <strong style="color:#38bdf8;">${candPriorPct}%</strong></label>
+              <input type="range" min="5" max="50" step="1" id="rep-prior-slider" value="${candPriorPct}" style="width:100%;" />
+            </div>
+            <div>
+              <label class="field-label">Candidate Threshold: <strong style="color:#10b981;">${candThreshPct}%</strong></label>
+              <input type="range" min="50" max="95" step="1" id="rep-thresh-slider" value="${candThreshPct}" style="width:100%;" />
+            </div>
+            <div>
+              <label class="field-label">Inactivity Timeout (s)</label>
+              <input type="number" class="num-input" id="rep-inactivity" value="${Number(
+                cand.inactivity_timeout ?? 240
+              )}" />
+            </div>
+            <div>
+              <label class="field-label">Door Grace Timeout (s)</label>
+              <input type="number" class="num-input" id="rep-grace" value="${Number(
+                cand.grace_timeout ?? 60
+              )}" />
+            </div>
+          </div>
+
+          <div style="overflow-x:auto;">
+            <table class="obs-table">
+              <thead>
+                <tr>
+                  <th>Sensor Label</th>
+                  <th>Candidate Preset</th>
+                  <th>P(E|Occ)</th>
+                  <th>P(E|Vac)</th>
+                  <th>Solo %</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(cand.bayesian_observations || [])
+                  .map((obs, idx) => {
+                    const presetVal = obs.preset || "moderate";
+                    const pDefaults = presets[presetVal] || {
+                      prob_given_true: 0.72,
+                      prob_given_false: 0.12,
+                    };
+                    const pTrue = Number(obs.prob_given_true ?? pDefaults.prob_given_true);
+                    const pFalse = Number(obs.prob_given_false ?? pDefaults.prob_given_false);
+                    const p0 = Math.max(0.01, Math.min(0.99, Number(cand.bayesian_prior ?? 0.2)));
+                    const soloOdds =
+                      (p0 / (1 - p0)) * (Math.max(0.001, pTrue) / Math.max(0.001, pFalse));
+                    const soloPct = ((soloOdds / (1 + soloOdds)) * 100).toFixed(1);
+                    return `
+                      <tr>
+                        <td>
+                          <div style="font-weight:600;color:#e2e8f0;">${this._escape(
+                            obs.label || obs.entity_id
+                          )}</div>
+                          <div style="font-size:10px;color:#64748b;font-family:monospace;">${this._escape(
+                            obs.entity_id
+                          )}</div>
+                        </td>
+                        <td>
+                          <select class="select-input rep-obs-preset" data-idx="${idx}">
+                            ${["decisive", "strong", "moderate", "supporting", "custom"]
+                              .map(
+                                (p) =>
+                                  `<option value="${p}" ${
+                                    presetVal === p ? "selected" : ""
+                                  }>${p.toUpperCase()}</option>`
+                              )
+                              .join("")}
+                          </select>
+                        </td>
+                        <td style="width:78px;">
+                          <input type="number" step="0.01" min="0.01" max="0.99" class="num-input rep-obs-prob" data-idx="${idx}" data-key="prob_given_true" value="${pTrue.toFixed(
+                      2
+                    )}" />
+                        </td>
+                        <td style="width:78px;">
+                          <input type="number" step="0.01" min="0.01" max="0.99" class="num-input rep-obs-prob" data-idx="${idx}" data-key="prob_given_false" value="${pFalse.toFixed(
+                      2
+                    )}" />
+                        </td>
+                        <td><strong style="color:${
+                          Number(soloPct) >= candThreshPct ? "#34d399" : "#94a3b8"
+                        };">${soloPct}%</strong></td>
+                      </tr>`;
+                  })
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">Divergence Inspector (${divergences.length} Windows)</h3>
+              <div class="card-subtitle">Exact intervals where Tuned Candidate changed the room occupancy decision vs. Saved Baseline.</div>
+            </div>
+          </div>
+          ${
+            divergences.length === 0
+              ? `<div style="padding:18px;text-align:center;color:#64748b;font-size:12px;background:#090d16;border-radius:8px;border:1px solid #1e293b;">
+                  No occupancy divergences between Baseline and Candidate over this window (100% agreement). Adjust Candidate Threshold, Prior, or Sensor Weights on the left to test sensitivity!
+                </div>`
+              : divergences
+                  .slice(0, 12)
+                  .map(
+                    (d) => `
+                  <div style="background:#090d16;border-left:3px solid ${
+                    d.type === "false_positive_eliminated" ? "#f43f5e" : "#10b981"
+                  };border-radius:7px;padding:10px 12px;margin-bottom:8px;font-size:11.5px;">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                      <strong style="color:${
+                        d.type === "false_positive_eliminated" ? "#fda4af" : "#6ee7b7"
+                      };">
+                        ${
+                          d.type === "false_positive_eliminated"
+                            ? "🛡 False Positive Eliminated"
+                            : "⚡ Occupancy Gained / Held"
+                        }
+                      </strong>
+                      <span style="color:#94a3b8;font-family:monospace;font-size:10.5px;">
+                        ${this._escape(d.start_iso.slice(11, 19))} &rarr; ${this._escape(
+                      d.end_iso.slice(11, 19)
+                    )} (${d.duration_sec}s)
+                      </span>
+                    </div>
+                    <div style="color:#cbd5e1;line-height:1.4;">${this._escape(
+                      d.explanation
+                    )}</div>
+                  </div>`
+                  )
+                  .join("")
+          }
+        </div>
+      </div>
+    `;
+  }
+
   _bindEvents() {
     const root = this.shadowRoot;
     const presets = (this._overview && this._overview.presets) || {};
+
+    root.querySelectorAll(".mode-btn[data-studio-view]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const v = el.getAttribute("data-studio-view");
+        this._studioView = v;
+        if (v === "statistics") {
+          this.loadStatistics();
+        } else if (v === "replay") {
+          if (!this._replayCandidate && this._draftConfig) {
+            this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig));
+          }
+          this.runReplay();
+        } else {
+          this.render();
+        }
+      });
+    });
+
+    root.querySelectorAll(".mode-btn[data-history-hours]").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._historyHours = Number(el.getAttribute("data-history-hours") || 6);
+        if (this._studioView === "statistics") {
+          this.loadStatistics();
+        } else if (this._studioView === "replay") {
+          this.runReplay();
+        }
+      });
+    });
+
+    root.querySelector("#btn-reload-stats")?.addEventListener("click", () => this.loadStatistics());
+    root.querySelector("#btn-jump-to-replay")?.addEventListener("click", () => {
+      this._studioView = "replay";
+      this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig || {}));
+      this.runReplay();
+    });
+
+    // Replay Simulator events
+    root.querySelector("#btn-replay-run")?.addEventListener("click", () => this.runReplay());
+    root.querySelector("#btn-replay-reset")?.addEventListener("click", () => {
+      this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig || {}));
+      this.runReplay();
+    });
+    root.querySelector("#btn-replay-apply")?.addEventListener("click", () =>
+      this.applyReplayCandidate()
+    );
+    root.querySelector("#rep-prior-slider")?.addEventListener("change", (e) => {
+      this._replayCandidate.bayesian_prior = Number(e.target.value) / 100.0;
+      this.runReplay();
+    });
+    root.querySelector("#rep-thresh-slider")?.addEventListener("change", (e) => {
+      this._replayCandidate.bayesian_threshold = Number(e.target.value) / 100.0;
+      this.runReplay();
+    });
+    root.querySelector("#rep-inactivity")?.addEventListener("change", (e) => {
+      this._replayCandidate.inactivity_timeout = Number(e.target.value);
+      this.runReplay();
+    });
+    root.querySelector("#rep-grace")?.addEventListener("change", (e) => {
+      this._replayCandidate.grace_timeout = Number(e.target.value);
+      this.runReplay();
+    });
+    root.querySelectorAll(".rep-obs-preset").forEach((el) => {
+      el.addEventListener("change", () => {
+        const idx = Number(el.getAttribute("data-idx"));
+        const obs = this._replayCandidate?.bayesian_observations?.[idx];
+        if (!obs) return;
+        const p = el.value;
+        obs.preset = p;
+        if (presets[p] && p !== "custom") {
+          obs.prob_given_true = presets[p].prob_given_true;
+          obs.prob_given_false = presets[p].prob_given_false;
+        }
+        this.runReplay();
+      });
+    });
+    root.querySelectorAll(".rep-obs-prob").forEach((el) => {
+      el.addEventListener("change", () => {
+        const idx = Number(el.getAttribute("data-idx"));
+        const key = el.getAttribute("data-key");
+        const obs = this._replayCandidate?.bayesian_observations?.[idx];
+        if (!obs) return;
+        obs[key] = Number(el.value);
+        obs.preset = "custom";
+        this.runReplay();
+      });
+    });
 
     root.querySelector("#btn-refresh-overview")?.addEventListener("click", () => {
       this.loadOverview(true);
