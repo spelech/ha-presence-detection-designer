@@ -3,36 +3,52 @@
     "step": {
       "user": {
         "title": "Presence Detection Designer - Room Setup",
-        "description": "Configure presence detection boundaries, triggers, timeouts, and optional AI vision verification for this room.",
+        "description": "Configure presence detection boundaries, triggers, Bayesian probability fusion, timeouts, and optional AI vision verification for this room.",
         "data": {
           "room_name": "Room Name",
+          "area_id": "Home Assistant Area",
           "mode": "Presence Architecture Mode",
           "boundary_entities": "Perimeter Boundary Sensors",
           "trigger_entities": "Instant Motion & Occupancy Triggers",
+          "sustaining_conditions": "Sustaining Conditions (YAML / JSON List)",
+          "bayesian_enabled": "Enable Explainable Bayesian Sensor Fusion",
+          "bayesian_prior": "Bayesian Baseline Prior Probability (0.01 - 0.95)",
+          "bayesian_threshold": "Bayesian Occupancy Threshold (0.10 - 0.99)",
+          "bayesian_observations": "Bayesian Observations (YAML / JSON List)",
           "inactivity_timeout": "Inactivity Timeout (seconds)",
           "grace_timeout": "Unsealed Perimeter Grace Timeout (seconds)",
           "extend_timeout": "Occupancy Extension Timeout (seconds)",
           "llm_enabled": "Enable AI / Vision Snapshot Verification",
+          "llm_provider_type": "LLM / AI Provider Type",
           "camera_entity": "Camera Entity",
           "camera_snapshot_url": "Direct Camera Snapshot URL",
-          "llm_api_url": "Vision API Endpoint URL",
-          "llm_api_key": "Vision API Key",
-          "llm_model": "Vision Model Name"
+          "llm_agent_id": "Home Assistant Conversation / AI Task Entity ID",
+          "llm_api_url": "Vision / Chat API Endpoint URL",
+          "llm_api_key": "Vision / Chat API Key",
+          "llm_model": "LLM / Vision Model Name"
         },
         "data_description": {
           "room_name": "Friendly name for this room (e.g. Living Room, Office, Master Bedroom).",
+          "area_id": "Assign the created room presence device to a Home Assistant Area.",
           "mode": "Select 'bounded' if the room has physical door contact sensors (Wasp-in-a-Box), or 'open' for rooms without door sensors.",
           "boundary_entities": "Door or gate contact sensors marking the boundary perimeter. When closed, presence is sealed inside.",
           "trigger_entities": "Motion sensors, mmWave presence sensors, or Frigate person detection sensors inside the room.",
-          "inactivity_timeout": "Seconds to wait after motion clears before vacating an open area or unsealed room (default: 60).",
-          "grace_timeout": "Seconds of stillness allowed while door boundary is open before clearing presence (default: 30).",
+          "sustaining_conditions": "List of condition rules ({entity_id, operator, state, label}) that sustain room presence without motion.",
+          "bayesian_enabled": "Enable Bayesian probability calculation and natural-language sensor explanations.",
+          "bayesian_prior": "Baseline probability of occupancy before sensor evidence is applied (default: 0.20).",
+          "bayesian_threshold": "Posterior probability required to declare the room occupied (default: 0.75).",
+          "bayesian_observations": "List of Bayesian sensor observations ({entity_id, label, preset, operator, state}) with preset in [decisive, strong, moderate, supporting].",
+          "inactivity_timeout": "Seconds to wait after motion clears before vacating an open area or unsealed room (default: 300).",
+          "grace_timeout": "Seconds of stillness allowed while door boundary is open before clearing presence (default: 60).",
           "extend_timeout": "Additional seconds added when an AI vision verification detects a person sitting still (default: 300).",
-          "llm_enabled": "Use a Vision LLM (OpenAI, Gemini, Ollama, Local VLM) to visually confirm human presence before clearing occupancy.",
+          "llm_enabled": "Use a Vision LLM (OpenAI, Gemini, LiteLLM, Ollama) to visually confirm human presence before clearing occupancy.",
+          "llm_provider_type": "Select 'vision_api' for OpenAI-compatible HTTP endpoints (LiteLLM, OpenAI, Ollama), 'conversation' for HA Conversation agents, or 'ai_task' for HA AI Task entities.",
           "camera_entity": "Home Assistant camera entity to capture snapshots from for visual verification.",
           "camera_snapshot_url": "Direct snapshot path (such as /api/camera/latest.jpg) if not using a Home Assistant camera entity.",
-          "llm_api_url": "OpenAI-compatible chat completion endpoint path (such as /v1/chat/completions for Ollama, OpenAI, or Gemini).",
-          "llm_api_key": "API key for the Vision LLM provider (leave blank if your local Ollama or vLLM endpoint requires no authentication).",
-          "llm_model": "Model identifier with vision capabilities (e.g. gpt-4o-mini, gpt-4o, llava, or llama3.2-vision)."
+          "llm_agent_id": "Optional Home Assistant conversation agent ID or ai_task entity ID.",
+          "llm_api_url": "OpenAI-compatible chat completion endpoint path (such as http://10.0.0.10:8448/v1/chat/completions).",
+          "llm_api_key": "API key for the LLM provider (leave blank if your local endpoint requires no authentication).",
+          "llm_model": "Model identifier with vision/chat capabilities (e.g. gemini-2.5-flash, gpt-4o-mini, qwen3-vl-32b-instruct)."
         }
       }
     },
@@ -48,34 +64,50 @@
     "step": {
       "init": {
         "title": "Tune Presence Detection Designer",
-        "description": "Adjust presence architecture, sensor mappings, timeouts, and AI vision verification settings for this room.",
+        "description": "Adjust presence architecture, sensor mappings, Bayesian thresholds, timeouts, and AI vision verification settings for this room.",
         "data": {
+          "area_id": "Home Assistant Area",
           "mode": "Presence Architecture Mode",
           "boundary_entities": "Perimeter Boundary Sensors",
           "trigger_entities": "Instant Motion & Occupancy Triggers",
+          "sustaining_conditions": "Sustaining Conditions (YAML / JSON List)",
+          "bayesian_enabled": "Enable Explainable Bayesian Sensor Fusion",
+          "bayesian_prior": "Bayesian Baseline Prior Probability (0.01 - 0.95)",
+          "bayesian_threshold": "Bayesian Occupancy Threshold (0.10 - 0.99)",
+          "bayesian_observations": "Bayesian Observations (YAML / JSON List)",
           "inactivity_timeout": "Inactivity Timeout (seconds)",
           "grace_timeout": "Unsealed Perimeter Grace Timeout (seconds)",
           "extend_timeout": "Occupancy Extension Timeout (seconds)",
           "llm_enabled": "Enable AI / Vision Snapshot Verification",
+          "llm_provider_type": "LLM / AI Provider Type",
           "camera_entity": "Camera Entity",
           "camera_snapshot_url": "Direct Camera Snapshot URL",
-          "llm_api_url": "Vision API Endpoint URL",
-          "llm_api_key": "Vision API Key",
-          "llm_model": "Vision Model Name"
+          "llm_agent_id": "Home Assistant Conversation / AI Task Entity ID",
+          "llm_api_url": "Vision / Chat API Endpoint URL",
+          "llm_api_key": "Vision / Chat API Key",
+          "llm_model": "LLM / Vision Model Name"
         },
         "data_description": {
+          "area_id": "Assign the room presence device to a Home Assistant Area.",
           "mode": "Select 'bounded' if the room has physical door contact sensors (Wasp-in-a-Box), or 'open' for rooms without door sensors.",
           "boundary_entities": "Door or gate contact sensors marking the boundary perimeter. When closed, presence is sealed inside.",
           "trigger_entities": "Motion sensors, mmWave presence sensors, or Frigate person detection sensors inside the room.",
-          "inactivity_timeout": "Seconds to wait after motion clears before vacating an open area or unsealed room (default: 60).",
-          "grace_timeout": "Seconds of stillness allowed while door boundary is open before clearing presence (default: 30).",
+          "sustaining_conditions": "List of condition rules ({entity_id, operator, state, label}) that sustain room presence without motion.",
+          "bayesian_enabled": "Enable Bayesian probability calculation and natural-language sensor explanations.",
+          "bayesian_prior": "Baseline probability of occupancy before sensor evidence is applied (default: 0.20).",
+          "bayesian_threshold": "Posterior probability required to declare the room occupied (default: 0.75).",
+          "bayesian_observations": "List of Bayesian sensor observations ({entity_id, label, preset, operator, state}) with preset in [decisive, strong, moderate, supporting].",
+          "inactivity_timeout": "Seconds to wait after motion clears before vacating an open area or unsealed room (default: 300).",
+          "grace_timeout": "Seconds of stillness allowed while door boundary is open before clearing presence (default: 60).",
           "extend_timeout": "Additional seconds added when an AI vision verification detects a person sitting still (default: 300).",
-          "llm_enabled": "Use a Vision LLM (OpenAI, Gemini, Ollama, Local VLM) to visually confirm human presence before clearing occupancy.",
+          "llm_enabled": "Use a Vision LLM (OpenAI, Gemini, LiteLLM, Ollama) to visually confirm human presence before clearing occupancy.",
+          "llm_provider_type": "Select 'vision_api' for OpenAI-compatible HTTP endpoints (LiteLLM, OpenAI, Ollama), 'conversation' for HA Conversation agents, or 'ai_task' for HA AI Task entities.",
           "camera_entity": "Home Assistant camera entity to capture snapshots from for visual verification.",
           "camera_snapshot_url": "Direct snapshot path (such as /api/camera/latest.jpg) if not using a Home Assistant camera entity.",
-          "llm_api_url": "OpenAI-compatible chat completion endpoint path (such as /v1/chat/completions for Ollama, OpenAI, or Gemini).",
-          "llm_api_key": "API key for the Vision LLM provider (leave blank if your local Ollama or vLLM endpoint requires no authentication).",
-          "llm_model": "Model identifier with vision capabilities (e.g. gpt-4o-mini, gpt-4o, llava, or llama3.2-vision)."
+          "llm_agent_id": "Optional Home Assistant conversation agent ID or ai_task entity ID.",
+          "llm_api_url": "OpenAI-compatible chat completion endpoint path (such as http://10.0.0.10:8448/v1/chat/completions).",
+          "llm_api_key": "API key for the LLM provider (leave blank if your local endpoint requires no authentication).",
+          "llm_model": "Model identifier with vision/chat capabilities (e.g. gemini-2.5-flash, gpt-4o-mini, qwen3-vl-32b-instruct)."
         }
       }
     }
@@ -93,11 +125,77 @@
     },
     "force_refresh": {
       "name": "Force Refresh Conditions",
-      "description": "Immediately re-evaluates all sustaining conditions across configured rooms.",
+      "description": "Immediately re-evaluates all boundaries, triggers, sustaining conditions, and Bayesian observations across configured rooms.",
       "fields": {
         "entry_id": {
           "name": "Room Entry ID",
           "description": "Optional config entry ID for a specific room. If omitted, refreshes all rooms."
+        }
+      }
+    },
+    "explain_presence": {
+      "name": "Explain Presence & Bayesian State",
+      "description": "Generate a natural-language explanation of room occupancy, per-sensor Bayesian probability contributions, tuning advice, and equivalent YAML.",
+      "fields": {
+        "entry_id": {
+          "name": "Room Entry ID",
+          "description": "Optional config entry ID for a specific room."
+        },
+        "room_name": {
+          "name": "Room Name",
+          "description": "Optional room name filter (e.g. Office, Family Room)."
+        },
+        "use_llm": {
+          "name": "Use LLM Narrative",
+          "description": "Query the configured LLM provider for a conversational explanation in addition to the deterministic breakdown."
+        }
+      }
+    },
+    "translate_config": {
+      "name": "Translate Between Natural Language and YAML Config",
+      "description": "Bidirectionally convert between a natural-language description of room presence rules and ready-to-use Presence Detection Designer / Home Assistant Bayesian YAML.",
+      "fields": {
+        "direction": {
+          "name": "Translation Direction",
+          "description": "Choose 'to_yaml' (Natural Language -> YAML) or 'to_natural_language' (YAML / Room Entry -> Natural Language)."
+        },
+        "room_name": {
+          "name": "Room Name",
+          "description": "Name of the room (e.g. Office, Master Bedroom)."
+        },
+        "entry_id": {
+          "name": "Room Entry ID",
+          "description": "Existing room config entry ID to explain or export to YAML."
+        },
+        "description": {
+          "name": "Natural Language Description",
+          "description": "Plain-English description of how sensors, zones, doors, and conditions should detect and hold presence in the room."
+        },
+        "yaml_config": {
+          "name": "YAML or JSON Configuration",
+          "description": "Existing Home Assistant `platform: bayesian` YAML or Presence Detection Designer YAML to translate into plain English."
+        },
+        "use_llm": {
+          "name": "Use LLM",
+          "description": "Use the configured LLM provider to enrich translation."
+        }
+      }
+    },
+    "configure_room": {
+      "name": "Configure Room Presence Rules",
+      "description": "Apply a YAML or JSON room presence configuration to an existing room config entry and reload it immediately.",
+      "fields": {
+        "entry_id": {
+          "name": "Room Entry ID",
+          "description": "Optional config entry ID for the room."
+        },
+        "room_name": {
+          "name": "Room Name",
+          "description": "Name of the room to update (e.g. Office, Family Room)."
+        },
+        "config": {
+          "name": "Room Configuration (YAML / JSON)",
+          "description": "Full or partial Presence Detection Designer or Home Assistant Bayesian room configuration."
         }
       }
     }

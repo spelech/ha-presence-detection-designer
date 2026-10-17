@@ -24,16 +24,28 @@ def evaluate_condition(
     """Evaluate a single condition against current state and attributes.
 
     Returns False if current_state is None, 'unavailable', or 'unknown'.
+    Supports optional 'attribute' key in condition to evaluate an attribute value
+    instead of the primary state string.
     """
-    if current_state is None or current_state.lower() in ("unavailable", "unknown"):
-        return False
+    attr_name = condition.get("attribute")
+    if attr_name:
+        if not current_attributes or attr_name not in current_attributes:
+            return False
+        raw_val = current_attributes.get(attr_name)
+        if raw_val is None:
+            return False
+        eval_value = str(raw_val)
+    else:
+        if current_state is None or str(current_state).lower() in ("unavailable", "unknown"):
+            return False
+        eval_value = str(current_state)
 
     operator = condition.get("operator", ConditionOperator.EQUALS)
-    target_state = condition.get("state", "")
+    target_state = condition.get("state", "on")
 
-    # Compare numeric if operator requires or both are floats
+    # Compare numeric if operator requires
     if operator in (ConditionOperator.GREATER_THAN, ConditionOperator.LESS_THAN):
-        curr_num = _to_float(current_state)
+        curr_num = _to_float(eval_value)
         target_num = _to_float(target_state)
         if curr_num is None or target_num is None:
             return False
@@ -41,13 +53,23 @@ def evaluate_condition(
             return curr_num > target_num
         return curr_num < target_num
 
+    # Set / list membership operator ("in")
+    if operator == ConditionOperator.IN:
+        if isinstance(target_state, (list, tuple, set)):
+            candidates = [str(item).strip().lower() for item in target_state]
+        else:
+            candidates = [
+                part.strip().lower() for part in str(target_state).split(",") if part.strip()
+            ]
+        return eval_value.strip().lower() in candidates
+
     # For equals / not_equals, check if both are numeric first
-    curr_num = _to_float(current_state)
+    curr_num = _to_float(eval_value)
     target_num = _to_float(target_state)
     if curr_num is not None and target_num is not None:
         is_match = curr_num == target_num
     else:
-        is_match = str(current_state).strip().lower() == str(target_state).strip().lower()
+        is_match = eval_value.strip().lower() == str(target_state).strip().lower()
 
     if operator == ConditionOperator.EQUALS:
         return is_match
@@ -59,10 +81,16 @@ def evaluate_condition(
 
 def format_condition_description(condition: dict[str, Any]) -> str:
     """Return human-readable representation of condition."""
+    label = condition.get("label")
     entity_id = condition.get("entity_id", "")
-    op = condition.get("operator", ConditionOperator.EQUALS)
-    val = condition.get("state", "")
-    return f"{entity_id} {op} {val}"
+    attr_name = condition.get("attribute")
+    op = str(condition.get("operator", ConditionOperator.EQUALS))
+    val = condition.get("state", "on")
+    subject = f"{entity_id}.{attr_name}" if attr_name else entity_id
+    base = f"{subject} {op} {val}"
+    if label:
+        return f"{label} ({base})"
+    return base
 
 
 def evaluate_all(

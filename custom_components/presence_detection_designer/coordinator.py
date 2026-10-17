@@ -1,4 +1,4 @@
-"""Coordinator managing room state machine, entity tracking, and LLM verification."""
+"""Coordinator managing room state machine, Bayesian fusion, entity tracking, and LLM verification."""
 
 from __future__ import annotations
 
@@ -6,8 +6,32 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+try:
+    from homeassistant.core import callback
+
+    if type(callback).__name__ == "MagicMock":
+        raise ImportError
+except Exception:  # noqa: BLE001
+
+    def callback(func: Any) -> Any:  # type: ignore[misc]
+        """Fallback callback decorator when running outside Home Assistant."""
+        return func
+
+
+from .bayesian_engine import (
+    BayesianEvaluation,
+    build_effective_observations,
+    config_to_yaml_representations,
+    evaluate_bayesian,
+    explain_config_in_natural_language,
+)
 from .condition_evaluator import evaluate_all
 from .const import (
+    CONF_AREA_ID,
+    CONF_BAYESIAN_ENABLED,
+    CONF_BAYESIAN_OBSERVATIONS,
+    CONF_BAYESIAN_PRIOR,
+    CONF_BAYESIAN_THRESHOLD,
     CONF_BOUNDARY_ENTITIES,
     CONF_CAMERA_ENTITY,
     CONF_CAMERA_SNAPSHOT_URL,
@@ -25,6 +49,8 @@ from .const import (
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
+    DEFAULT_BAYESIAN_PRIOR,
+    DEFAULT_BAYESIAN_THRESHOLD,
     DEFAULT_EXTEND_TIMEOUT,
     DEFAULT_GRACE_TIMEOUT,
     DEFAULT_INACTIVITY_TIMEOUT,
@@ -40,8 +66,20 @@ from .state_machine import RoomStateMachine
 _LOGGER = logging.getLogger(__name__)
 
 
+def _safe_state_getter(hass: Any, entity_id: str) -> Any:
+    """Return HA state object only if its `.state` attribute is a concrete string."""
+    if not hass or not hasattr(hass, "states"):
+        return None
+    state_obj = hass.states.get(entity_id)
+    if state_obj is None:
+        return None
+    if not isinstance(getattr(state_obj, "state", None), str):
+        return None
+    return state_obj
+
+
 class RoomPresenceCoordinator:
-    """Coordinates state machine, entity listeners, and LLM verification for one room."""
+    """Coordinates state machine, Bayesian fusion, entity listeners, and LLM verification."""
 
     def __init__(
         self,
@@ -54,9 +92,21 @@ class RoomPresenceCoordinator:
         self.config = config
 
         self.room_name: str = config.get(CONF_ROOM_NAME, "Room")
-        self.boundary_entities: list[str] = config.get(CONF_BOUNDARY_ENTITIES, [])
-        self.trigger_entities: list[str] = config.get(CONF_TRIGGER_ENTITIES, [])
-        self.conditions: list[dict[str, Any]] = config.get(CONF_SUSTAINING_CONDITIONS, [])
+        self.area_id: str | None = config.get(CONF_AREA_ID)
+        self.boundary_entities: list[str] = list(config.get(CONF_BOUNDARY_ENTITIES, []) or [])
+        self.trigger_entities: list[str] = list(config.get(CONF_TRIGGER_ENTITIES, []) or [])
+        self.conditions: list[dict[str, Any]] = list(
+            config.get(CONF_SUSTAINING_CONDITIONS, []) or []
+        )
+
+        # Bayesian configuration
+        self.bayesian_enabled: bool = bool(config.get(CONF_BAYESIAN_ENABLED, True))
+        self.bayesian_prior: float = float(config.get(CONF_BAYESIAN_PRIOR, DEFAULT_BAYESIAN_PRIOR))
+        self.bayesian_threshold: float = float(
+            config.get(CONF_BAYESIAN_THRESHOLD, DEFAULT_BAYESIAN_THRESHOLD)
+        )
+        self.has_explicit_bayesian: bool = bool(config.get(CONF_BAYESIAN_OBSERVATIONS))
+        self.bayesian_observations: list[dict[str, Any]] = build_effective_observations(config)
 
         mode_val = config.get(CONF_MODE)
         if not mode_val:
@@ -64,10 +114,10 @@ class RoomPresenceCoordinator:
         else:
             self.mode = Mode(mode_val)
 
-        inactivity_timeout = config.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT)
-        grace_timeout = config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT)
-        extend_timeout = config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT)
-        llm_enabled = config.get(CONF_LLM_ENABLED, False)
+        inactivity_timeout = int(config.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT))
+        grace_timeout = int(config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT))
+        extend_timeout = int(config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT))
+        llm_enabled = bool(config.get(CONF_LLM_ENABLED, False))
 
         self.state_machine = RoomStateMachine(
             name=self.room_name,
@@ -76,6 +126,8 @@ class RoomPresenceCoordinator:
             grace_timeout=grace_timeout,
             extend_timeout=extend_timeout,
             llm_enabled=llm_enabled,
+            bayesian_prior=self.bayesian_prior,
+            bayesian_threshold=self.bayesian_threshold,
         )
 
         self.verifier = LLMVerifier(
@@ -91,6 +143,10 @@ class RoomPresenceCoordinator:
         self.camera_entity = config.get(CONF_CAMERA_ENTITY)
         self.camera_snapshot_url = config.get(CONF_CAMERA_SNAPSHOT_URL)
 
+        self.rule_guide: str = explain_config_in_natural_language(config)
+        self.yaml_representations: dict[str, str] = config_to_yaml_representations(config)
+        self.last_bayesian_eval: BayesianEvaluation | None = None
+
         self._listeners: list[Callable[[], None]] = []
         self._unsub_trackers: list[Callable[[], None]] = []
         self._previous_presence = False
@@ -105,6 +161,7 @@ class RoomPresenceCoordinator:
 
         return remove_listener
 
+    @callback
     def async_update_listeners(self) -> None:
         """Notify all registered entity listeners."""
         for update_callback in self._listeners:
@@ -126,6 +183,11 @@ class RoomPresenceCoordinator:
                             "room_name": self.room_name,
                             "presence": curr_presence,
                             "box_state": self.state_machine.box_state,
+                            "bayesian_probability": self.state_machine.bayesian_probability,
+                            "bayesian_probability_pct": self.state_machine.bayesian_probability_pct,
+                            "natural_language_explanation": (
+                                self.state_machine.build_natural_language_explanation()
+                            ),
                             "last_trigger": self.state_machine.last_trigger_entity,
                             "active_conditions": self.state_machine.active_conditions,
                         },
@@ -173,6 +235,21 @@ class RoomPresenceCoordinator:
             )
             self._unsub_trackers.append(unsub)
 
+        # Track additional Bayesian observation entities
+        already_tracked = set(self.trigger_entities) | set(cond_entities)
+        bayesian_only_entities = [
+            obs["entity_id"]
+            for obs in self.bayesian_observations
+            if obs.get("entity_id") and obs["entity_id"] not in already_tracked
+        ]
+        if bayesian_only_entities:
+            unsub = async_track_state_change_event(
+                self.hass,
+                list(dict.fromkeys(bayesian_only_entities)),
+                self._handle_bayesian_change,
+            )
+            self._unsub_trackers.append(unsub)
+
         # Track 1-second timer tick
         unsub_tick = async_track_time_interval(
             self.hass,
@@ -181,8 +258,8 @@ class RoomPresenceCoordinator:
         )
         self._unsub_trackers.append(unsub_tick)
 
-        # Initial evaluation of conditions
-        self._eval_conditions_and_update()
+        # Initial evaluation of live states on startup
+        self.async_refresh_all_states()
 
     def async_unload(self) -> None:
         """Unsubscribe all entity listeners and timers."""
@@ -194,17 +271,65 @@ class RoomPresenceCoordinator:
         self._unsub_trackers.clear()
         self._listeners.clear()
 
+    def async_refresh_all_states(self) -> None:
+        """Evaluate current HA states for boundaries, triggers, conditions, and Bayesian fusion."""
+        if not self.hass or not hasattr(self.hass, "states"):
+            return
+
+        # 1. Boundaries
+        for b_eid in self.boundary_entities:
+            st_obj = _safe_state_getter(self.hass, b_eid)
+            if st_obj is not None:
+                is_open = st_obj.state in ("on", "open")
+                self.state_machine.handle_boundary(b_eid, is_open)
+
+        # 2. Instant triggers
+        for t_eid in self.trigger_entities:
+            st_obj = _safe_state_getter(self.hass, t_eid)
+            if st_obj is not None:
+                is_active = st_obj.state in ("on", "playing", "home")
+                if is_active:
+                    self.state_machine.handle_trigger(t_eid, True)
+
+        # 3. Sustaining conditions & Bayesian evaluation
+        self._eval_conditions_and_update()
+
+    def _eval_bayesian_and_update(self) -> BayesianEvaluation | None:
+        """Evaluate Bayesian sensor fusion across all configured observations."""
+        if not self.hass or not hasattr(self.hass, "states") or not self.bayesian_enabled:
+            return None
+
+        evaluation = evaluate_bayesian(
+            self.bayesian_observations,
+            lambda eid: _safe_state_getter(self.hass, eid),
+            prior=self.bayesian_prior,
+            threshold=self.bayesian_threshold,
+        )
+        self.last_bayesian_eval = evaluation
+        self.state_machine.handle_bayesian(
+            probability=evaluation.probability,
+            probability_pct=evaluation.probability_pct,
+            is_occupied=evaluation.is_occupied,
+            summary=evaluation.natural_language_summary,
+            active_observations=evaluation.active_observations,
+            inactive_observations=evaluation.inactive_observations,
+            trigger_state_machine=self.has_explicit_bayesian,
+        )
+        return evaluation
+
     def _eval_conditions_and_update(self) -> None:
-        """Evaluate sustaining conditions."""
+        """Evaluate sustaining conditions and Bayesian observations."""
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
         any_active, descs = evaluate_all(
             self.conditions,
-            lambda eid: self.hass.states.get(eid),
+            lambda eid: _safe_state_getter(self.hass, eid),
         )
         self.state_machine.handle_conditions(any_active, descs)
+        self._eval_bayesian_and_update()
 
+    @callback
     def _handle_trigger_change(self, event: Any) -> None:
         """Handle trigger sensor event."""
         to_state = event.data.get("new_state")
@@ -214,8 +339,10 @@ class RoomPresenceCoordinator:
 
         is_active = to_state.state in ("on", "playing", "home")
         self.state_machine.handle_trigger(entity_id, is_active)
+        self._eval_bayesian_and_update()
         self.async_update_listeners()
 
+    @callback
     def _handle_boundary_change(self, event: Any) -> None:
         """Handle boundary sensor event (door open/close)."""
         to_state = event.data.get("new_state")
@@ -227,9 +354,16 @@ class RoomPresenceCoordinator:
         self.state_machine.handle_boundary(entity_id, is_open)
         self.async_update_listeners()
 
+    @callback
     def _handle_condition_change(self, event: Any) -> None:
         """Handle condition entity state change."""
         self._eval_conditions_and_update()
+        self.async_update_listeners()
+
+    @callback
+    def _handle_bayesian_change(self, event: Any) -> None:
+        """Handle state change on a Bayesian observation entity."""
+        self._eval_bayesian_and_update()
         self.async_update_listeners()
 
     async def _async_handle_tick(self, _now: Any) -> None:
@@ -264,3 +398,18 @@ class RoomPresenceCoordinator:
         self.state_machine.box_state = BoxState.LLM_VERIFYING
         self.async_update_listeners()
         await self.async_run_llm_verification()
+
+    async def async_explain_presence(self, use_llm: bool = True) -> dict[str, Any]:
+        """Return natural-language explanation and YAML equivalents for this room."""
+        self._eval_bayesian_and_update()
+        live_explanation = self.state_machine.build_natural_language_explanation()
+        result = await self.verifier.async_explain_presence(
+            room_config=self.config,
+            live_explanation=live_explanation,
+            use_llm=use_llm,
+        )
+        result["entry_id"] = self.entry_id
+        result["bayesian_probability_pct"] = self.state_machine.bayesian_probability_pct
+        result["box_state"] = str(self.state_machine.box_state)
+        result["is_present"] = self.state_machine.is_present
+        return result

@@ -6,51 +6,26 @@ from typing import Any
 
 try:
     from homeassistant.components.switch import SwitchEntity
-    from homeassistant.helpers.device_registry import DeviceInfo
 
     if type(SwitchEntity).__name__ == "MagicMock":
         raise ImportError
 except Exception:  # noqa: BLE001
 
-    class SwitchEntity:
+    class SwitchEntity:  # type: ignore[no-redef]
         """Fallback SwitchEntity."""
-
-    class DeviceInfo:
-        """Fallback DeviceInfo."""
-
-        def __init__(self, **kwargs: Any) -> None:
-            pass
 
 
 from .const import DOMAIN
 from .coordinator import RoomPresenceCoordinator
+from .entity import PresenceDesignerEntityMixin
 
 
-class PresenceOverrideSwitch(SwitchEntity):
+class PresenceOverrideSwitch(PresenceDesignerEntityMixin, SwitchEntity):
     """Switch to manually lock room presence on."""
 
     def __init__(self, coordinator: RoomPresenceCoordinator, entry_id: str) -> None:
-        self.coordinator = coordinator
-        self.entry_id = entry_id
-        self._attr_name = f"{coordinator.room_name} Presence Override"
-        self._attr_unique_id = f"{entry_id}_override"
+        self._init_designer_entity(coordinator, entry_id, "override", "Presence Override")
         self._attr_icon = "mdi:lock-alert"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry_id)},
-            name=coordinator.room_name,
-            manufacturer="Steven T. Pelech",
-            model="Presence Detection Designer",
-        )
-
-    @property
-    def name(self) -> str:
-        """Return the name of the switch."""
-        return self._attr_name
-
-    @property
-    def unique_id(self) -> str:
-        """Return unique ID."""
-        return self._attr_unique_id
 
     @property
     def icon(self) -> str:
