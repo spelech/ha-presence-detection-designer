@@ -54,7 +54,7 @@ def test_sustaining_condition_prevents_timeout():
     # Sustaining condition (e.g. TV on) turns active
     sm.handle_conditions(any_active=True, active_descriptions=["media_player.tv == playing"])
     assert sm.is_present is True
-    assert sm.box_state == BoxState.OCCUPIED_SEALED
+    assert sm.box_state == BoxState.OCCUPIED
 
     # Ticking should not vacate
     action = sm.handle_tick(20)

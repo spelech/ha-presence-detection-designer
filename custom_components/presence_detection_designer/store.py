@@ -45,6 +45,7 @@ from .const import (
     STORAGE_VERSION,
     LLMProviderType,
 )
+from .spatial_topology import get_default_floorplan
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def _default_store_data() -> dict[str, Any]:
         "rooms": {},
         "revisions": {},
         "timeline": {},
+        "floorplan": get_default_floorplan(),
     }
 
 
@@ -94,6 +96,10 @@ class PDDStore:
             if key not in stored or not isinstance(stored[key], type(default_val)):
                 stored[key] = copy.deepcopy(default_val)
                 dirty = True
+
+        if not stored.get("floorplan", {}).get("rooms"):
+            stored["floorplan"] = get_default_floorplan()
+            dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
             if k not in stored["global_settings"]:
@@ -305,6 +311,22 @@ class PDDStore:
 
         await self.async_save()
         return copy.deepcopy(gs)
+
+    def get_floorplan(self) -> dict[str, Any]:
+        """Return a deep copy of the stored 2D spatial floorplan and camera view cones."""
+        fp = self._data.get("floorplan")
+        if not isinstance(fp, dict) or not fp.get("floors"):
+            fp = get_default_floorplan()
+            self._data["floorplan"] = fp
+        return copy.deepcopy(fp)
+
+    async def async_save_floorplan(self, floorplan: dict[str, Any]) -> dict[str, Any]:
+        """Persist an updated 2D spatial floorplan to .storage."""
+        if not isinstance(floorplan, dict) or not floorplan.get("floors"):
+            floorplan = get_default_floorplan()
+        self._data["floorplan"] = copy.deepcopy(floorplan)
+        await self.async_save()
+        return copy.deepcopy(self._data["floorplan"])
 
 
 async def async_get_store(hass: Any) -> PDDStore:

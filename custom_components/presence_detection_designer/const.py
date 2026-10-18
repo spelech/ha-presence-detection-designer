@@ -14,6 +14,7 @@ CONF_SUSTAINING_CONDITIONS = "sustaining_conditions"
 CONF_INACTIVITY_TIMEOUT = "inactivity_timeout"
 CONF_GRACE_TIMEOUT = "grace_timeout"
 CONF_EXTEND_TIMEOUT = "extend_timeout"
+CONF_CONNECTED_ROOMS = "connected_rooms"
 
 # Bayesian sensor fusion configuration
 CONF_BAYESIAN_ENABLED = "bayesian_enabled"
@@ -48,6 +49,7 @@ class BoxState(StrEnum):
     """Wasp-in-a-Box states."""
 
     IDLE_CLEAR = "idle_clear"
+    OCCUPIED = "occupied"
     OCCUPIED_SEALED = "occupied_sealed"
     OCCUPIED_UNSEALED = "occupied_unsealed"
     TIMER_ACTIVE = "timer_active"

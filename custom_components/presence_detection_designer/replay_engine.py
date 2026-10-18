@@ -404,7 +404,7 @@ def simulate_config_on_timelines(
     occupied_sec = 0.0
     sealed_hold_sec = 0.0
     weighted_occ_prob = 0.0
-    peak_prob_pct = round(prior * 100.0, 1)
+    peak_prob_pct = 0.0
     transition_count = 0
     sub_threshold_deflections = 0
 
@@ -433,9 +433,7 @@ def simulate_config_on_timelines(
                     sub_threshold_deflections += 1
 
     occupied_pct = round((occupied_sec / window_sec) * 100.0, 1)
-    avg_occ_prob_pct = (
-        round(weighted_occ_prob / occupied_sec, 1) if occupied_sec > 0 else round(prior * 100.0, 1)
-    )
+    avg_occ_prob_pct = round(weighted_occ_prob / occupied_sec, 1) if occupied_sec > 0 else 0.0
 
     # Build synchronized sensor swimlanes & attribution metrics
     swimlanes: list[dict[str, Any]] = []
