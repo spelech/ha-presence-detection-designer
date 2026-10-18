@@ -52,6 +52,11 @@ from .replay_engine import (
     simulate_config_on_timelines,
     simulate_replay_comparison,
 )
+from .spatial_topology import (
+    apply_compiled_topology_to_config,
+    compile_floorplan_topology,
+    get_default_floorplan,
+)
 from .store import async_get_store
 
 _LOGGER = logging.getLogger(__name__)
@@ -152,6 +157,7 @@ def serialize_room_coordinator(
         "room_name": coordinator.room_name,
         "area_id": coordinator.area_id,
         "mode": str(coordinator.mode),
+        "connected_rooms": coordinator.connected_rooms,
         "is_present": sm.is_present,
         "box_state": str(sm.box_state),
         "perimeter_sealed": sm.is_perimeter_sealed,
@@ -356,6 +362,7 @@ class PDDOverviewView(HomeAssistantView):
 
         rooms_payload.sort(key=lambda r: str(r.get("room_name", "")).lower())
         areas, entities = collect_ha_areas_and_entities(hass)
+        floorplan = store.get_floorplan()
 
         return self.json(
             {
@@ -364,6 +371,8 @@ class PDDOverviewView(HomeAssistantView):
                 "areas": areas,
                 "entities": entities,
                 "presets": build_presets_metadata(),
+                "floorplan": floorplan,
+                "compiled_topology": compile_floorplan_topology(floorplan),
             }
         )
 
@@ -733,6 +742,96 @@ class PDDReplayView(HomeAssistantView):
         return self.json(comparison)
 
 
+class PDDFloorplanView(HomeAssistantView):
+    """Get, save, reset, and compile 2D spatial floorplan & camera view cones into room rules."""
+
+    url = "/api/presence_detection_designer/floorplan"
+    name = "api:presence_detection_designer:floorplan"
+    requires_auth = True
+
+    async def get(self, request: Any) -> Any:
+        """Handle GET /api/presence_detection_designer/floorplan."""
+        hass = request.app["hass"]
+        store = await async_get_store(hass)
+        fp = store.get_floorplan()
+        return self.json(
+            {
+                "floorplan": fp,
+                "compiled_topology": compile_floorplan_topology(fp),
+            }
+        )
+
+    async def post(self, request: Any) -> Any:
+        """Handle POST /api/presence_detection_designer/floorplan."""
+        hass = request.app["hass"]
+        store = await async_get_store(hass)
+        try:
+            body = await request.json()
+        except Exception as err:  # noqa: BLE001
+            return self.json({"error": f"Invalid JSON: {err}"}, status_code=400)
+
+        action = str(body.get("action") or "save")
+        if action == "reset":
+            fp = await store.async_save_floorplan(get_default_floorplan())
+            compiled = compile_floorplan_topology(fp)
+            return self.json(
+                {
+                    "status": "ok",
+                    "floorplan": fp,
+                    "compiled_topology": compiled,
+                }
+            )
+
+        incoming_fp = body.get("floorplan")
+        if isinstance(incoming_fp, dict) and incoming_fp.get("floors"):
+            fp = await store.async_save_floorplan(incoming_fp)
+        else:
+            fp = store.get_floorplan()
+
+        compiled = compile_floorplan_topology(fp)
+        updated_rooms: list[dict[str, Any]] = []
+
+        if action == "compile_and_apply" or bool(body.get("apply", False)):
+            domain_data = hass.data.get(DOMAIN, {}) if hasattr(hass, "data") else {}
+            seen_eids: set[str] = set()
+
+            for eid, coordinator in list(domain_data.items()):
+                if not isinstance(coordinator, RoomPresenceCoordinator):
+                    continue
+                seen_eids.add(eid)
+                updated_cfg = apply_compiled_topology_to_config(coordinator.config, compiled)
+                room_payload = await async_apply_and_persist_room_config(
+                    hass=hass,
+                    entry_id=eid,
+                    raw_config=updated_cfg,
+                    note="Compiled from 2D Floorplan & Camera View Cones",
+                    record_revision=True,
+                )
+                updated_rooms.append(room_payload)
+
+            for eid, stored_cfg in store.rooms.items():
+                if eid in seen_eids:
+                    continue
+                updated_cfg = apply_compiled_topology_to_config(stored_cfg, compiled)
+                room_payload = await async_apply_and_persist_room_config(
+                    hass=hass,
+                    entry_id=eid,
+                    raw_config=updated_cfg,
+                    note="Compiled from 2D Floorplan & Camera View Cones",
+                    record_revision=True,
+                )
+                updated_rooms.append(room_payload)
+
+        return self.json(
+            {
+                "status": "ok",
+                "floorplan": fp,
+                "compiled_topology": compiled,
+                "updated_rooms": updated_rooms,
+            }
+        )
+
+
 def async_register_views(hass: Any) -> None:
     """Register all HTTP API views for Presence Detection Designer once."""
     if not hass or not hasattr(hass, "http") or not hasattr(hass.http, "register_view"):
@@ -747,5 +846,6 @@ def async_register_views(hass: Any) -> None:
         PDDTranslateView,
         PDDStatisticsView,
         PDDReplayView,
+        PDDFloorplanView,
     ):
         hass.http.register_view(view_cls())

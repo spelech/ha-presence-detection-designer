@@ -35,6 +35,7 @@ from .const import (
     CONF_BOUNDARY_ENTITIES,
     CONF_CAMERA_ENTITY,
     CONF_CAMERA_SNAPSHOT_URL,
+    CONF_CONNECTED_ROOMS,
     CONF_EXTEND_TIMEOUT,
     CONF_GRACE_TIMEOUT,
     CONF_INACTIVITY_TIMEOUT,
@@ -128,6 +129,9 @@ class RoomPresenceCoordinator:
         self.area_id: str | None = config.get(CONF_AREA_ID)
         self.boundary_entities: list[str] = list(config.get(CONF_BOUNDARY_ENTITIES, []) or [])
         self.trigger_entities: list[str] = list(config.get(CONF_TRIGGER_ENTITIES, []) or [])
+        self.connected_rooms: list[str] = [
+            str(r) for r in (config.get(CONF_CONNECTED_ROOMS, []) or []) if r
+        ]
         self.conditions: list[dict[str, Any]] = list(
             config.get(CONF_SUSTAINING_CONDITIONS, []) or []
         )
@@ -155,6 +159,7 @@ class RoomPresenceCoordinator:
         if preserve_state and self.state_machine is not None:
             self.state_machine.name = self.room_name
             self.state_machine.mode = self.mode
+            self.state_machine.has_boundaries = bool(self.boundary_entities)
             self.state_machine.inactivity_timeout = inactivity_timeout
             self.state_machine.grace_timeout = grace_timeout
             self.state_machine.extend_timeout = extend_timeout
@@ -173,6 +178,7 @@ class RoomPresenceCoordinator:
                 llm_enabled=llm_enabled,
                 bayesian_prior=self.bayesian_prior,
                 bayesian_threshold=self.bayesian_threshold,
+                has_boundaries=bool(self.boundary_entities),
             )
 
         llm_cfg = self._resolve_global_llm_defaults(config)
@@ -368,7 +374,59 @@ class RoomPresenceCoordinator:
             trigger_state_machine=self.has_explicit_bayesian,
         )
         self._record_timeline_snapshot()
+        if evaluation.is_occupied and self.has_explicit_bayesian:
+            self._notify_connected_rooms_if_active()
         return evaluation
+
+    def notify_adjacent_occupancy(self, from_room_name: str) -> bool:
+        """Clear vacating timer immediately if an adjacent connected room just detected an occupant."""
+        if self.state_machine.handle_adjacent_room_occupied(from_room_name):
+            self._record_timeline_snapshot()
+            self.async_update_listeners()
+            return True
+        return False
+
+    def _notify_connected_rooms_if_active(self) -> None:
+        """Notify connected adjacent rooms when this room actively detects an occupant."""
+        from .const import DOMAIN
+
+        if not self.hass or not isinstance(getattr(self.hass, "data", None), dict):
+            return
+        if not self.state_machine.is_present or self.state_machine.box_state not in (
+            BoxState.OCCUPIED,
+            BoxState.OCCUPIED_SEALED,
+            BoxState.OCCUPIED_UNSEALED,
+        ):
+            return
+
+        domain_data = self.hass.data.get(DOMAIN, {})
+        if not isinstance(domain_data, dict):
+            return
+
+        my_tokens = {
+            self.room_name.strip().lower(),
+            self.entry_id.strip().lower(),
+            self.room_name.strip().lower().replace("'", "").replace(" ", "_"),
+        }
+        if self.area_id:
+            my_tokens.add(str(self.area_id).strip().lower())
+
+        my_connected = {r.strip().lower() for r in self.connected_rooms if r}
+
+        for other in list(domain_data.values()):
+            if other is self or not isinstance(other, RoomPresenceCoordinator):
+                continue
+            other_tokens = {
+                other.room_name.strip().lower(),
+                other.entry_id.strip().lower(),
+                other.room_name.strip().lower().replace("'", "").replace(" ", "_"),
+            }
+            if other.area_id:
+                other_tokens.add(str(other.area_id).strip().lower())
+            other_connected = {r.strip().lower() for r in other.connected_rooms if r}
+
+            if (my_connected & other_tokens) or (other_connected & my_tokens):
+                other.notify_adjacent_occupancy(self.room_name)
 
     def _record_timeline_snapshot(self) -> None:
         """Record a compact sensor & state snapshot into PDDStore's rolling timeline buffer."""
@@ -427,6 +485,8 @@ class RoomPresenceCoordinator:
         is_active = to_state.state in ("on", "playing", "home")
         self.state_machine.handle_trigger(entity_id, is_active)
         self._eval_bayesian_and_update()
+        if is_active:
+            self._notify_connected_rooms_if_active()
         self.async_update_listeners()
 
     @callback

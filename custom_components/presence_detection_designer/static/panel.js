@@ -22,7 +22,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._revisionNote = "";
     this._showGlobalModal = false;
     this._globalDraft = null;
-    this._studioView = "design"; // "design" | "statistics" | "replay"
+    this._studioView = "design"; // "design" | "floorplan" | "statistics" | "replay"
+    this._floorplan = null;
+    this._compiledTopology = null;
+    this._selectedFloorId = "main";
+    this._selectedCamEntity = null;
     this._historyHours = 6;
     this._statsData = null;
     this._replayData = null;
@@ -104,6 +108,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       const data = await this._apiCall("GET", "/api/presence_detection_designer/overview");
       this._overview = data;
       this._globalDraft = JSON.parse(JSON.stringify(data.global_settings || {}));
+      if (data.floorplan) {
+        this._floorplan = JSON.parse(JSON.stringify(data.floorplan));
+      }
+      if (data.compiled_topology) {
+        this._compiledTopology = data.compiled_topology;
+      }
       const rooms = data.rooms || [];
       if (rooms.length > 0) {
         const exists =
@@ -139,6 +149,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     if (!Array.isArray(this._draftConfig.sustaining_conditions)) {
       this._draftConfig.sustaining_conditions = [];
     }
+    if (!Array.isArray(this._draftConfig.connected_rooms)) {
+      this._draftConfig.connected_rooms = Array.isArray(room.connected_rooms)
+        ? [...room.connected_rooms]
+        : [];
+    }
     this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig));
     this._previewData = {
       probability_pct: room.bayesian_probability_pct,
@@ -160,8 +175,63 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this.loadStatistics();
     } else if (this._studioView === "replay") {
       this.runReplay();
+    } else if (this._studioView === "floorplan") {
+      if (!this._floorplan) {
+        this.loadFloorplan();
+      } else if (renderAfter) {
+        this.render();
+      }
     } else if (renderAfter) {
       this.render();
+    }
+  }
+
+  async loadFloorplan() {
+    try {
+      const res = await this._apiCall("GET", "/api/presence_detection_designer/floorplan");
+      if (res && res.floorplan) {
+        this._floorplan = res.floorplan;
+        this._compiledTopology = res.compiled_topology || null;
+      }
+      this.render();
+    } catch (err) {
+      this.showToast(`Failed to load floorplan: ${err.message}`, "error");
+    }
+  }
+
+  async saveOrCompileFloorplan(action = "save") {
+    try {
+      const res = await this._apiCall("POST", "/api/presence_detection_designer/floorplan", {
+        action,
+        floorplan: this._floorplan,
+      });
+      if (res && res.floorplan) {
+        this._floorplan = res.floorplan;
+        this._compiledTopology = res.compiled_topology || null;
+      }
+      if (res && Array.isArray(res.updated_rooms) && res.updated_rooms.length > 0 && this._overview) {
+        for (const ur of res.updated_rooms) {
+          const idx = (this._overview.rooms || []).findIndex((r) => r.entry_id === ur.entry_id);
+          if (idx >= 0) {
+            this._overview.rooms[idx] = ur;
+          }
+        }
+        const cur = this.selectedRoom;
+        if (cur) this._selectRoomObject(cur, false);
+      }
+      this.render();
+      if (action === "compile_and_apply") {
+        this.showToast(
+          `Compiled floorplan topology & applied linkages/spillover rules to ${(res?.updated_rooms || []).length} rooms!`,
+          "success"
+        );
+      } else if (action === "reset") {
+        this.showToast("Reset floorplan layout to default house geometry", "info");
+      } else {
+        this.showToast("Saved 2D floorplan & camera view cones to .storage", "success");
+      }
+    } catch (err) {
+      this.showToast(`Floorplan action failed: ${err.message}`, "error");
     }
   }
 
@@ -458,7 +528,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
     const priorPct = Math.round(Number(cfg.bayesian_prior ?? 0.2) * 100);
     const threshPct = Math.round(Number(cfg.bayesian_threshold ?? 0.75) * 100);
-    const livePct = Number(prev.probability_pct ?? (selRoom ? selRoom.bayesian_probability_pct : 20)).toFixed(1);
+    const livePct = Number(prev.probability_pct ?? (selRoom ? selRoom.bayesian_probability_pct : 0)).toFixed(1);
     const isOccupied = selRoom ? selRoom.is_present : false;
 
     this.shadowRoot.innerHTML = `
@@ -974,13 +1044,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
         <div class="mode-switcher">
           <button class="mode-btn ${this._studioView === "design" ? "active" : ""}" data-studio-view="design">🎨 Design Studio</button>
+          <button class="mode-btn ${this._studioView === "floorplan" ? "active" : ""}" data-studio-view="floorplan">🗺️ Floorplan &amp; Coverage</button>
           <button class="mode-btn ${this._studioView === "statistics" ? "active" : ""}" data-studio-view="statistics">📈 Statistics &amp; Timeline</button>
           <button class="mode-btn ${this._studioView === "replay" ? "active" : ""}" data-studio-view="replay">⏮️ Replay &amp; Tuning Simulator</button>
         </div>
 
         <div class="top-pills">
           ${
-            this._studioView !== "design"
+            this._studioView === "statistics" || this._studioView === "replay"
               ? `<div class="mode-switcher" style="margin-right:4px;">
                   ${[
                     { h: 1, label: "1h" },
@@ -1069,7 +1140,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         </div>
 
         ${
-          this._studioView === "statistics"
+          this._studioView === "floorplan"
+            ? `<div style="grid-column: 2 / -1;">${this._renderFloorplanPane(selRoom)}</div>`
+            : this._studioView === "statistics"
             ? `<div style="grid-column: 2 / -1;">${this._renderStatisticsPane(selRoom)}</div>`
             : this._studioView === "replay"
             ? `<div style="grid-column: 2 / -1;">${this._renderReplayPane(selRoom, presets)}</div>`
@@ -1400,6 +1473,40 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   </div>`
                   )
                   .join("")}
+              </div>
+
+              <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e293b;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                  <label class="field-label" style="margin:0;">Connected Adjacent Rooms (Cross-Room Timer Hand-Off — Zeroes Countdown on Adjacent Entry)</label>
+                  <button class="btn btn-sm" id="btn-open-floorplan-tab" style="color:#38bdf8;">🗺️ Edit in Floorplan</button>
+                </div>
+                <div class="chip-list">
+                  ${(cfg.connected_rooms || []).length === 0
+                    ? `<span style="font-size:11px;color:#64748b;">No connected rooms linked yet. Use the 🗺️ Floorplan &amp; Coverage tab or add below.</span>`
+                    : (cfg.connected_rooms || [])
+                        .map(
+                          (rname, i) => `
+                        <span class="entity-chip" style="border-color:#38bdf8;color:#bae6fd;">🔗 ${this._escape(rname)}
+                          <button class="del-connected-room" data-idx="${i}">×</button>
+                        </span>`
+                        )
+                        .join("")}
+                </div>
+                <div style="display:flex;gap:6px;max-width:360px;">
+                  <select class="select-input" id="add-connected-room-input">
+                    <option value="">— Select adjacent room —</option>
+                    ${rooms
+                      .filter((r) => r.room_name !== (cfg.room_name || selRoom.room_name))
+                      .map(
+                        (r) =>
+                          `<option value="${this._escape(r.room_name)}">${this._escape(
+                            r.room_name
+                          )}</option>`
+                      )
+                      .join("")}
+                  </select>
+                  <button class="btn btn-sm" id="btn-add-connected-room">+ Link Room</button>
+                </div>
               </div>
             </div>
           `
@@ -2200,6 +2307,672 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     `;
   }
 
+  _coneSvgPath(cam) {
+    const cx = Number(cam.x || 0);
+    const cy = Number(cam.y || 0);
+    const r = Math.max(20, Number(cam.range_px || 180));
+    const heading = Number(cam.heading_deg || 0);
+    const fov = Math.max(10, Math.min(350, Number(cam.fov_deg || 90)));
+    const startDeg = heading - fov / 2.0;
+    const endDeg = heading + fov / 2.0;
+    const startRad = (startDeg * Math.PI) / 180.0;
+    const endRad = (endDeg * Math.PI) / 180.0;
+    const x1 = cx + r * Math.cos(startRad);
+    const y1 = cy + r * Math.sin(startRad);
+    const x2 = cx + r * Math.cos(endRad);
+    const y2 = cy + r * Math.sin(endRad);
+    const largeArc = fov > 180 ? 1 : 0;
+    return `M ${cx.toFixed(1)},${cy.toFixed(1)} L ${x1.toFixed(1)},${y1.toFixed(
+      1
+    )} A ${r.toFixed(1)},${r.toFixed(1)} 0 ${largeArc},1 ${x2.toFixed(1)},${y2.toFixed(1)} Z`;
+  }
+
+  _renderFloorplanPane(selRoom) {
+    const fp = this._floorplan || this._overview?.floorplan;
+    const compiled = this._compiledTopology || this._overview?.compiled_topology || {};
+    if (!fp || !Array.isArray(fp.floors)) {
+      return `<div class="panel-card">Loading 2D Spatial Floorplan &amp; Camera View Cones...</div>`;
+    }
+    const floors = fp.floors;
+    const activeFloor = floors.find((f) => f.id === this._selectedFloorId) || floors[1] || floors[0];
+    this._selectedFloorId = activeFloor.id;
+
+    const liveRoomsByName = {};
+    ((this._overview && this._overview.rooms) || []).forEach((r) => {
+      liveRoomsByName[r.room_name] = r;
+    });
+
+    const allFpRooms = fp.rooms || [];
+    const allFpConns = fp.connections || [];
+    const allFpCams = fp.cameras || [];
+
+    const fRooms =
+      activeFloor.rooms || allFpRooms.filter((r) => r.floor === activeFloor.id);
+    const floorRoomNames = new Set(fRooms.map((r) => r.name || r.room_name));
+    const fConns =
+      activeFloor.connections ||
+      allFpConns.filter(
+        (c) => floorRoomNames.has(c.from_room) || floorRoomNames.has(c.to_room)
+      );
+    const fCams =
+      activeFloor.cameras || allFpCams.filter((c) => c.floor === activeFloor.id);
+
+    if (
+      fCams.length > 0 &&
+      (!this._selectedCamEntity ||
+        !fCams.some((c) => (c.id || c.camera_entity) === this._selectedCamEntity))
+    ) {
+      this._selectedCamEntity = fCams[0].id || fCams[0].camera_entity;
+    }
+    const selCam =
+      fCams.find((c) => (c.id || c.camera_entity) === this._selectedCamEntity) ||
+      fCams[0] ||
+      null;
+    const selBox =
+      fRooms.find(
+        (b) => selRoom && (b.name || b.room_name) === selRoom.room_name
+      ) ||
+      fRooms[0] ||
+      null;
+
+    const roomBoxMap = {};
+    fRooms.forEach((b) => {
+      roomBoxMap[b.name || b.room_name] = b;
+    });
+
+    const camAnalysis = compiled.camera_analysis || [];
+    const ambiguities = compiled.ambiguities || [];
+    const sealAnalysis = compiled.seal_analysis || {};
+    const connMap = compiled.connected_rooms_map || {};
+    const roomCoverage = compiled.room_coverage || {};
+
+    // Build SVG grid lines (1000 x 580 canvas)
+    const gridLines = [];
+    for (let gx = 80; gx < 1000; gx += 80) {
+      gridLines.push(
+        `<line x1="${gx}" y1="0" x2="${gx}" y2="580" stroke="#1e293b" stroke-width="0.6" stroke-dasharray="2,4" />`
+      );
+    }
+    for (let gy = 80; gy < 580; gy += 80) {
+      gridLines.push(
+        `<line x1="0" y1="${gy}" x2="1000" y2="${gy}" stroke="#1e293b" stroke-width="0.6" stroke-dasharray="2,4" />`
+      );
+    }
+
+    // Build SVG camera cones (with translucent fill)
+    const conesSvg = fCams
+      .map((cam) => {
+        const camId = cam.id || cam.camera_entity;
+        const camLabel = (cam.name || cam.label || camId).replace(" Camera", "");
+        const isSelectedCam = selCam && (selCam.id || selCam.camera_entity) === camId;
+        const hasSpill =
+          (Array.isArray(cam.spills_into) && cam.spills_into.length > 0) ||
+          camAnalysis.some((ca) => ca.camera_id === camId && ca.has_multi_room_bleed);
+        const coneColor = hasSpill ? "#f59e0b" : "#38bdf8";
+        const pathD = this._coneSvgPath(cam);
+        const rad = (Number(cam.heading_deg || 0) * Math.PI) / 180.0;
+        const labelDist = Math.min(130, Number(cam.range_px || 200) * 0.45);
+        const labelX = Math.max(70, Math.min(930, Number(cam.x) + Math.cos(rad) * labelDist));
+        const labelY = Math.max(20, Math.min(560, Number(cam.y) + Math.sin(rad) * labelDist));
+        return `
+          <g class="fp-cam-group" data-cam-entity="${this._escape(camId)}" style="cursor:pointer;">
+            <path
+              d="${pathD}"
+              fill="${hasSpill ? "rgba(245, 158, 11, 0.18)" : "rgba(56, 189, 248, 0.16)"}"
+              stroke="${coneColor}"
+              stroke-width="${isSelectedCam ? "2.6" : "1.4"}"
+              stroke-dasharray="${hasSpill ? "6,4" : "none"}"
+            />
+            <circle
+              cx="${Number(cam.x).toFixed(1)}"
+              cy="${Number(cam.y).toFixed(1)}"
+              r="${isSelectedCam ? "8" : "6"}"
+              fill="${coneColor}"
+              stroke="#090d16"
+              stroke-width="2"
+            />
+            <rect
+              x="${(labelX - 66).toFixed(1)}"
+              y="${(labelY - 11).toFixed(1)}"
+              width="132"
+              height="20"
+              rx="5"
+              fill="rgba(9, 13, 22, 0.88)"
+              stroke="${coneColor}"
+              stroke-width="1"
+            />
+            <text
+              x="${labelX.toFixed(1)}"
+              y="${(labelY + 3).toFixed(1)}"
+              text-anchor="middle"
+              fill="${hasSpill ? "#fde68a" : "#bae6fd"}"
+              font-size="10.5"
+              font-weight="700"
+            >📷 ${this._escape(camLabel)} (${cam.fov_deg}°)</text>
+          </g>
+        `;
+      })
+      .join("");
+
+    // Build SVG room boxes
+    const roomsSvg = fRooms
+      .map((box) => {
+        const rName = box.name || box.room_name;
+        const live = liveRoomsByName[rName];
+        const isSel = selRoom && selRoom.room_name === rName;
+        const isOcc = live ? Boolean(live.is_present) : false;
+        const probPct = live ? Number(live.bayesian_probability_pct || 0).toFixed(1) : "0.0";
+        const boxState = live ? String(live.box_state || "idle_clear") : "transit";
+        const sealInfo = sealAnalysis[rName] || {};
+        const canSeal = Boolean(sealInfo.can_be_bounded || sealInfo.can_seal);
+        const isTransit = box.room_type === "transit" || Boolean(box.is_transit);
+        const covPct = Number(roomCoverage[rName]?.max_coverage_pct ?? 100);
+        const hasBlindSpot = !isTransit && covPct === 0;
+
+        let strokeColor = isSel ? "#38bdf8" : "#334155";
+        let fillColor = "rgba(15, 23, 42, 0.80)";
+        if (isOcc) {
+          strokeColor = "#10b981";
+          fillColor = "rgba(6, 78, 59, 0.44)";
+        } else if (hasBlindSpot) {
+          strokeColor = "#f59e0b";
+          fillColor = "rgba(120, 53, 15, 0.25)";
+        } else if (isTransit) {
+          strokeColor = "#475569";
+          fillColor = "rgba(30, 41, 59, 0.48)";
+        }
+
+        const rx = Number(box.x);
+        const ry = Number(box.y);
+        const rw = Number(box.width ?? box.w ?? 200);
+        const rh = Number(box.height ?? box.h ?? 150);
+
+        return `
+          <g class="fp-room-box" data-room-name="${this._escape(rName)}" style="cursor:pointer;">
+            <rect
+              x="${rx}"
+              y="${ry}"
+              width="${rw}"
+              height="${rh}"
+              rx="10"
+              fill="${fillColor}"
+              stroke="${strokeColor}"
+              stroke-width="${isSel ? "3.0" : "1.8"}"
+              stroke-dasharray="${isTransit ? "5,4" : "none"}"
+            />
+            <text
+              x="${rx + 12}"
+              y="${ry + 22}"
+              fill="#f8fafc"
+              font-size="13.5"
+              font-weight="800"
+            >${this._escape(rName)}</text>
+            ${
+              live
+                ? `<text
+                    x="${rx + rw - 10}"
+                    y="${ry + 22}"
+                    text-anchor="end"
+                    fill="${isOcc ? "#34d399" : "#94a3b8"}"
+                    font-size="11.5"
+                    font-weight="700"
+                  >${isOcc ? `OCC ${probPct}%` : `VAC ${probPct}%`}</text>`
+                : `<text
+                    x="${rx + rw - 10}"
+                    y="${ry + 22}"
+                    text-anchor="end"
+                    fill="#64748b"
+                    font-size="10.5"
+                  >Transit / Shared</text>`
+            }
+            <text
+              x="${rx + 12}"
+              y="${ry + 42}"
+              fill="${canSeal ? "#c084fc" : "#38bdf8"}"
+              font-size="10.5"
+              font-weight="600"
+            >${
+              isTransit
+                ? "↕ Multi-Room Transit Hub"
+                : canSeal
+                ? "🔒 Bounded (Sensor Door Seal)"
+                : "🌊 Open Passage / Timer Hand-Off"
+            }</text>
+            ${
+              live
+                ? `<text
+                    x="${rx + 12}"
+                    y="${ry + 60}"
+                    fill="#94a3b8"
+                    font-size="10.5"
+                  >State: ${this._escape(boxState)}${
+                    live.vacating_countdown ? ` (${live.vacating_countdown}s)` : ""
+                  } · Linked: ${(connMap[rName] || []).length} rooms</text>`
+                : ""
+            }
+            ${
+              box.notes
+                ? `<text
+                    x="${rx + 12}"
+                    y="${ry + rh - (hasBlindSpot ? 24 : 10)}"
+                    fill="#64748b"
+                    font-size="9.5"
+                  >${this._escape(
+                    box.notes.length > 52 ? box.notes.slice(0, 50) + "…" : box.notes
+                  )}</text>`
+                : ""
+            }
+            ${
+              hasBlindSpot
+                ? `<text
+                    x="${rx + 12}"
+                    y="${ry + rh - 9}"
+                    fill="#fbbf24"
+                    font-size="10"
+                    font-weight="700"
+                  >⚠️ No Direct Camera View Cone (Relies on PIR / Doorway / BLE)</text>`
+                : ""
+            }
+          </g>
+        `;
+      })
+      .join("");
+
+    // Build SVG logical connections between room centers
+    const connsSvg = fConns
+      .map((conn) => {
+        const bFrom = roomBoxMap[conn.from_room];
+        const bTo = roomBoxMap[conn.to_room];
+        if (!bFrom || !bTo) {
+          const localBox = bFrom || bTo;
+          if (!localBox) return "";
+          const otherName = bFrom ? conn.to_room : conn.from_room;
+          const lw = Number(localBox.width ?? localBox.w ?? 200);
+          const lh = Number(localBox.height ?? localBox.h ?? 150);
+          const cx = Number(localBox.x) + lw / 2;
+          const cy = Number(localBox.y) + lh - 16;
+          return `
+            <g>
+              <rect x="${(cx - 82).toFixed(1)}" y="${(cy - 10).toFixed(
+            1
+          )}" width="164" height="19" rx="5" fill="#1e1b4b" stroke="#a855f7" stroke-width="1.2" />
+              <text x="${cx.toFixed(1)}" y="${(cy + 3).toFixed(
+            1
+          )}" text-anchor="middle" fill="#e9d5ff" font-size="10" font-weight="700">🪜 Stairs &harr; ${this._escape(
+            otherName
+          )}</text>
+            </g>`;
+        }
+        const w1 = Number(bFrom.width ?? bFrom.w ?? 200);
+        const h1 = Number(bFrom.height ?? bFrom.h ?? 150);
+        const w2 = Number(bTo.width ?? bTo.w ?? 200);
+        const h2 = Number(bTo.height ?? bTo.h ?? 150);
+        const x1 = Number(bFrom.x) + w1 / 2;
+        const y1 = Number(bFrom.y) + h1 / 2;
+        const x2 = Number(bTo.x) + w2 / 2;
+        const y2 = Number(bTo.y) + h2 / 2;
+        const mx = (x1 + x2) / 2;
+        const my = (y1 + y2) / 2;
+        let color = "#38bdf8";
+        let icon = "↔";
+        if (conn.type === "sensor_door") {
+          color = "#10b981";
+          icon = "🚪";
+        } else if (conn.type === "unmonitored_door") {
+          color = "#f59e0b";
+          icon = "🔓";
+        } else if (conn.type === "stairs") {
+          color = "#a855f7";
+          icon = "🪜";
+        }
+        return `
+          <g>
+            <line
+              x1="${x1.toFixed(1)}"
+              y1="${y1.toFixed(1)}"
+              x2="${x2.toFixed(1)}"
+              y2="${y2.toFixed(1)}"
+              stroke="${color}"
+              stroke-width="2.2"
+              stroke-dasharray="${conn.type === "sensor_door" ? "none" : "6,4"}"
+              opacity="0.85"
+            />
+            <circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="11" fill="#090d16" stroke="${color}" stroke-width="1.5" />
+            <text x="${mx.toFixed(1)}" y="${(my + 4).toFixed(1)}" text-anchor="middle" font-size="10.5">${icon}</text>
+          </g>
+        `;
+      })
+      .join("");
+
+    const selBoxName = selBox ? selBox.name || selBox.room_name : selRoom?.room_name || "Room";
+    const selCamId = selCam ? selCam.id || selCam.camera_entity : "";
+    const spilloverCount = camAnalysis.filter((c) => c.has_multi_room_bleed).length;
+
+    return `
+      <!-- Top Floorplan Header & Compiler Bar -->
+      <div class="panel-card">
+        <div class="card-header" style="flex-wrap:wrap;">
+          <div>
+            <h2 class="card-title" style="font-size:18px;">
+              🗺️ 2D House Floorplan, Camera View Cones &amp; Logical Room Linkage Compiler
+            </h2>
+            <div class="card-subtitle">
+              Place room boxes and camera field-of-view (FOV) cones to automatically compile adjacent room hand-offs, validate Wasp-in-a-Box door seals, and detect cross-room camera spillover or sensor blind spots.
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <div class="mode-switcher">
+              ${floors
+                .map(
+                  (fl) => `
+                <button class="mode-btn ${
+                  fl.id === activeFloor.id ? "active" : ""
+                }" data-floor-id="${this._escape(fl.id)}">
+                  ${
+                    fl.id === "upstairs"
+                      ? "🛏️ Upstairs"
+                      : fl.id === "basement"
+                      ? "🎬 Basement"
+                      : "🏠 Main Floor"
+                  }
+                </button>`
+                )
+                .join("")}
+            </div>
+            <button class="btn btn-sm" id="btn-fp-reset">↺ Reset Default Layout</button>
+            <button class="btn btn-sm" id="btn-fp-save">💾 Save Layout</button>
+            <button class="btn btn-success btn-sm" id="btn-fp-compile">⚡ Compile Floorplan &rarr; Apply Linkages &amp; Rules</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid-6" style="margin-top:10px;margin-bottom:4px;">
+          <div class="kpi-card">
+            <div class="kpi-label">Active Floor</div>
+            <div class="kpi-val" style="font-size:16px;color:#38bdf8;">${this._escape(
+              activeFloor.name
+            )}</div>
+            <div class="kpi-sub">${fRooms.length} room boxes · ${fCams.length} cameras</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Total Camera Cones</div>
+            <div class="kpi-val" style="color:#38bdf8;">${allFpCams.length || 10}</div>
+            <div class="kpi-sub">2D FOV coverage wedges</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Cross-Room Spillovers</div>
+            <div class="kpi-val" style="color:#f59e0b;">${spilloverCount}</div>
+            <div class="kpi-sub">Whole-frame downgraded to supporting</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Open / Unsealed Rooms</div>
+            <div class="kpi-val" style="color:#a855f7;">${
+              Object.values(sealAnalysis).filter((v) => !v.can_be_bounded).length
+            }</div>
+            <div class="kpi-sub">Prevented fake occupied_sealed latches</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Adjacent Hand-Off Links</div>
+            <div class="kpi-val" style="color:#10b981;">${
+              Object.values(connMap).reduce((acc, arr) => acc + (arr ? arr.length : 0), 0)
+            }</div>
+            <div class="kpi-sub">Zeroes vacating timer on hand-off</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Ambiguities &amp; Blind Spots</div>
+            <div class="kpi-val" style="color:#f43f5e;">${ambiguities.length}</div>
+            <div class="kpi-sub">Spatial coverage &amp; bleed findings</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main 2-Column Canvas + Camera Cone & Room Box Inspector -->
+      <div style="display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start;">
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+            <span style="font-size:12.5px;font-weight:700;color:#e2e8f0;">
+              ${this._escape(activeFloor.name)} — Interactive Room Boxes, Passages &amp; Camera FOV Cones
+            </span>
+            <div style="display:flex;gap:12px;font-size:11px;color:#94a3b8;flex-wrap:wrap;">
+              <span>🚪 <strong style="color:#10b981;">Sensor Door</strong></span>
+              <span>🔓 <strong style="color:#f59e0b;">Unmonitored Door</strong></span>
+              <span>↔ <strong style="color:#38bdf8;">Open Passage</strong></span>
+              <span>🪜 <strong style="color:#a855f7;">Stairs</strong></span>
+              <span>📷 <strong style="color:#fde68a;">Spillover FOV Cone</strong></span>
+            </div>
+          </div>
+
+          <div style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:8px;overflow:hidden;">
+            <svg id="fp-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:410px;display:block;user-select:none;">
+              ${gridLines.join("")}
+              ${roomsSvg}
+              ${connsSvg}
+              ${conesSvg}
+            </svg>
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-top:6px;">
+            💡 Click any <strong>Room Box</strong> to select that room, or click any <strong>📷 Camera Cone</strong> to tune its position, heading angle, FOV wedge, and range on the right.
+          </div>
+        </div>
+
+        <!-- Right Inspector: Camera Cone Tuner & Room Linkage Summary -->
+        <div>
+          <!-- Camera View Cone Tuner -->
+          <div class="panel-card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">📷 Camera View Cone Inspector</h3>
+                <div class="card-subtitle">Adjust camera placement, heading (°), FOV angle (°), and range to see which rooms fall inside its view cone.</div>
+              </div>
+            </div>
+            ${
+              !selCam
+                ? `<div style="font-size:12px;color:#64748b;">No cameras on this floor.</div>`
+                : `
+              <div style="margin-bottom:10px;">
+                <label class="field-label">Select Camera on ${this._escape(activeFloor.name)}</label>
+                <select class="select-input" id="fp-cam-select">
+                  ${fCams
+                    .map((c) => {
+                      const cid = c.id || c.camera_entity;
+                      const cname = c.name || c.label || cid;
+                      return `<option value="${this._escape(cid)}" ${
+                        cid === selCamId ? "selected" : ""
+                      }>${this._escape(cname)} (${this._escape(cid)})</option>`;
+                    })
+                    .join("")}
+                </select>
+              </div>
+              <div class="form-grid-5" style="margin-bottom:10px;">
+                <div>
+                  <label class="field-label">Origin X</label>
+                  <input type="number" class="num-input fp-cam-field" data-key="x" value="${Number(
+                    selCam.x
+                  )}" />
+                </div>
+                <div>
+                  <label class="field-label">Origin Y</label>
+                  <input type="number" class="num-input fp-cam-field" data-key="y" value="${Number(
+                    selCam.y
+                  )}" />
+                </div>
+                <div>
+                  <label class="field-label">Heading (°)</label>
+                  <input type="number" class="num-input fp-cam-field" data-key="heading_deg" value="${Number(
+                    selCam.heading_deg
+                  )}" />
+                </div>
+                <div>
+                  <label class="field-label">FOV (°)</label>
+                  <input type="number" class="num-input fp-cam-field" data-key="fov_deg" min="20" max="180" value="${Number(
+                    selCam.fov_deg
+                  )}" />
+                </div>
+                <div>
+                  <label class="field-label">Range (px)</label>
+                  <input type="number" class="num-input fp-cam-field" data-key="range_px" min="40" max="700" value="${Number(
+                    selCam.range_px
+                  )}" />
+                </div>
+              </div>
+              <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:10px;font-size:11.5px;color:#cbd5e1;">
+                <div><strong>Host Room:</strong> <span style="color:#38bdf8;">${this._escape(
+                  selCam.host_room || selCam.primary_room || ""
+                )}</span></div>
+                ${
+                  (selCam.spills_into || []).length > 0
+                    ? `<div style="margin-top:4px;"><strong>Spills Into:</strong> <span style="color:#fbbf24;">${this._escape(
+                        (selCam.spills_into || []).join(", ")
+                      )}</span></div>`
+                    : ""
+                }
+                <div style="margin-top:4px;"><strong>Coverage Notes:</strong> ${this._escape(
+                  selCam.notes || "Covers primary room."
+                )}</div>
+              </div>
+            `
+            }
+          </div>
+
+          <!-- Selected Room Box & Compiled Topology Preview -->
+          <div class="panel-card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">📦 Selected Room Topology: ${this._escape(selBoxName)}</h3>
+                <div class="card-subtitle">Compiled linkages &amp; Wasp-in-a-Box seal eligibility from 2D floorplan</div>
+              </div>
+            </div>
+            ${
+              !selBox
+                ? ""
+                : `
+              <div class="form-grid-4" style="margin-bottom:10px;">
+                <div>
+                  <label class="field-label">Box X</label>
+                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+                    selBoxName
+                  )}" data-key="x" value="${Number(selBox.x)}" />
+                </div>
+                <div>
+                  <label class="field-label">Box Y</label>
+                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+                    selBoxName
+                  )}" data-key="y" value="${Number(selBox.y)}" />
+                </div>
+                <div>
+                  <label class="field-label">Width</label>
+                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+                    selBoxName
+                  )}" data-key="width" value="${Number(selBox.width ?? selBox.w ?? 200)}" />
+                </div>
+                <div>
+                  <label class="field-label">Height</label>
+                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+                    selBoxName
+                  )}" data-key="height" value="${Number(selBox.height ?? selBox.h ?? 150)}" />
+                </div>
+              </div>
+              <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:10px;font-size:11.5px;line-height:1.5;">
+                <div>
+                  <strong>Recommended Mode:</strong>
+                  <span style="color:${
+                    sealAnalysis[selBoxName]?.can_be_bounded ? "#c084fc" : "#38bdf8"
+                  };font-weight:700;">
+                    ${
+                      sealAnalysis[selBoxName]?.can_be_bounded
+                        ? "BOUNDED (All Exits Monitored by Door Sensors)"
+                        : "OPEN (Has Open Passages / Stairs / Unmonitored Doors)"
+                    }
+                  </span>
+                </div>
+                ${
+                  (sealAnalysis[selBoxName]?.unsealed_exits || []).length > 0
+                    ? `<div style="margin-top:4px;color:#94a3b8;"><strong>Unsealed Exits:</strong> ${this._escape(
+                        (sealAnalysis[selBoxName]?.unsealed_exits || []).join(", ")
+                      )}</div>`
+                    : ""
+                }
+                <div style="margin-top:6px;">
+                  <strong>Connected Hand-Off Rooms (${
+                    (connMap[selBoxName] || []).length
+                  }):</strong>
+                  <div class="chip-list" style="margin-top:4px;margin-bottom:0;">
+                    ${
+                      (connMap[selBoxName] || []).length === 0
+                        ? `<span style="color:#64748b;">None</span>`
+                        : (connMap[selBoxName] || [])
+                            .map(
+                              (rn) =>
+                                `<span class="entity-chip" style="border-color:#10b981;color:#6ee7b7;">🔗 ${this._escape(
+                                  rn
+                                )}</span>`
+                            )
+                            .join("")
+                    }
+                  </div>
+                </div>
+              </div>
+            `
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Card: Automated Ambiguity, Camera Spillover & Blind-Spot Report -->
+      <div class="panel-card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">🔍 Automated Spatial Ambiguity, Camera Cone Spillover &amp; Blind-Spot Report (${
+              ambiguities.length
+            } Findings)</h3>
+            <div class="card-subtitle">
+              Derived directly from the 2D room boxes, passage linkages, and camera view cones above. Clicking <strong>⚡ Compile Floorplan &rarr; Apply Linkages &amp; Rules</strong> automatically configures these mitigations across all rooms.
+            </div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          ${ambiguities
+            .map((amb) => {
+              const cat = amb.category || amb.type || "";
+              const borderColor =
+                cat === "camera_spillover"
+                  ? "#f59e0b"
+                  : cat === "unsealed_perimeter" || cat === "unsealed_boundary"
+                  ? "#38bdf8"
+                  : cat === "vertical_ble_bleed"
+                  ? "#a855f7"
+                  : "#f43f5e";
+              const badgeLabel =
+                cat === "camera_spillover"
+                  ? "📐 CAMERA CONE SPILLOVER"
+                  : cat === "unsealed_perimeter" || cat === "unsealed_boundary"
+                  ? "🔓 UNSEALED EXIT PATHWAY"
+                  : cat === "vertical_ble_bleed"
+                  ? "📶 VERTICAL BLE STACK"
+                  : "⚠️ BLIND POCKET / SENSOR GAP";
+              const titleText = amb.title || amb.room || (amb.rooms || []).join(" ↔ ");
+              return `
+                <div style="background:#090d16;border:1px solid #1e293b;border-left:3px solid ${borderColor};border-radius:8px;padding:10px 12px;font-size:11.5px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px;">
+                    <strong style="color:#f8fafc;">${badgeLabel}: ${this._escape(titleText)}</strong>
+                    <span style="font-size:10px;color:#94a3b8;font-family:monospace;">${this._escape(
+                      amb.camera_id || amb.camera_entity || amb.severity || ""
+                    )}</span>
+                  </div>
+                  <div style="color:#cbd5e1;line-height:1.45;margin-bottom:4px;">${this._escape(
+                    amb.description
+                  )}</div>
+                  <div style="color:#34d399;font-size:11px;"><strong>Rule Mitigation:</strong> ${this._escape(
+                    amb.resolution || amb.recommendation || ""
+                  )}</div>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      </div>
+    `;
+  }
+
   _bindEvents() {
     const root = this.shadowRoot;
     const presets = (this._overview && this._overview.presets) || {};
@@ -2215,8 +2988,95 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig));
           }
           this.runReplay();
+        } else if (v === "floorplan") {
+          if (!this._floorplan) {
+            this.loadFloorplan();
+          } else {
+            this.render();
+          }
         } else {
           this.render();
+        }
+      });
+    });
+
+    // Floorplan view events
+    root.querySelectorAll(".mode-btn[data-floor-id]").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._selectedFloorId = el.getAttribute("data-floor-id") || "main";
+        this._selectedCamEntity = null;
+        this.render();
+      });
+    });
+    root.querySelector("#btn-fp-save")?.addEventListener("click", () =>
+      this.saveOrCompileFloorplan("save")
+    );
+    root.querySelector("#btn-fp-reset")?.addEventListener("click", () =>
+      this.saveOrCompileFloorplan("reset")
+    );
+    root.querySelector("#btn-fp-compile")?.addEventListener("click", () =>
+      this.saveOrCompileFloorplan("compile_and_apply")
+    );
+    root.querySelector("#fp-cam-select")?.addEventListener("change", (e) => {
+      this._selectedCamEntity = e.target.value;
+      this.render();
+    });
+    root.querySelectorAll(".fp-cam-group").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._selectedCamEntity = el.getAttribute("data-cam-entity");
+        this.render();
+      });
+    });
+    root.querySelectorAll(".fp-room-box").forEach((el) => {
+      el.addEventListener("click", () => {
+        const rname = el.getAttribute("data-room-name");
+        const room = (this._overview?.rooms || []).find((r) => r.room_name === rname);
+        if (room) {
+          this._selectRoomObject(room, true);
+        }
+      });
+    });
+    root.querySelectorAll(".fp-cam-field").forEach((el) => {
+      el.addEventListener("change", () => {
+        const key = el.getAttribute("data-key");
+        const cams = this._floorplan?.cameras || [];
+        const cam = cams.find((c) => (c.id || c.camera_entity) === this._selectedCamEntity);
+        if (!cam || !key) return;
+        cam[key] = Number(el.value);
+        this.render();
+      });
+    });
+    root.querySelectorAll(".fp-box-field").forEach((el) => {
+      el.addEventListener("change", () => {
+        const rname = el.getAttribute("data-room");
+        const key = el.getAttribute("data-key");
+        const boxes = this._floorplan?.rooms || [];
+        const box = boxes.find((b) => (b.name || b.room_name) === rname);
+        if (!box || !key) return;
+        box[key] = Number(el.value);
+        this.render();
+      });
+    });
+    root.querySelector("#btn-open-floorplan-tab")?.addEventListener("click", () => {
+      this._studioView = "floorplan";
+      this.render();
+    });
+    root.querySelector("#btn-add-connected-room")?.addEventListener("click", () => {
+      const val = root.querySelector("#add-connected-room-input")?.value?.trim();
+      if (!this._draftConfig.connected_rooms) this._draftConfig.connected_rooms = [];
+      if (val && !this._draftConfig.connected_rooms.includes(val)) {
+        this._draftConfig.connected_rooms.push(val);
+        this._dirty = true;
+        this.refreshPreview();
+      }
+    });
+    root.querySelectorAll(".del-connected-room").forEach((el) => {
+      el.addEventListener("click", () => {
+        const idx = Number(el.getAttribute("data-idx"));
+        if (Array.isArray(this._draftConfig.connected_rooms)) {
+          this._draftConfig.connected_rooms.splice(idx, 1);
+          this._dirty = true;
+          this.refreshPreview();
         }
       });
     });
