@@ -1,5 +1,5 @@
 /**
- * Presence Detection Designer — Native Home Assistant Visual Design Studio & .storage Panel
+ * Presence Detection Designer — Clean Home Assistant Material Design Panel
  * Custom Element: <presence-detection-designer-panel>
  */
 
@@ -14,7 +14,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._previewData = null;
     this._dirty = false;
     this._roomSearch = "";
-    this._roomFilter = "all";
+    this._roomFilter = "all"; // "all" | "occupied" | "vacant"
+    this._studioView = "design"; // "design" | "floorplan" | "statistics" | "replay"
+    this._showAdvanced = false;
+    this._advTab = "tuning"; // "tuning" | "truth" | "yaml" | "revisions"
     this._rightTab = "yaml"; // "yaml" | "ha_yaml" | "nl" | "guide"
     this._nlPrompt = "";
     this._nlOutput = "";
@@ -22,11 +25,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._revisionNote = "";
     this._showGlobalModal = false;
     this._globalDraft = null;
-    this._studioView = "design"; // "design" | "floorplan" | "statistics" | "replay"
     this._floorplan = null;
     this._compiledTopology = null;
     this._selectedFloorId = "main";
     this._selectedCamEntity = null;
+    this._showFloorplanInspector = false;
     this._historyHours = 6;
     this._statsData = null;
     this._replayData = null;
@@ -59,7 +62,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._toastTimer = setTimeout(() => {
       this._toast = null;
       this.renderToastOnly();
-    }, 4000);
+    }, 3500);
   }
 
   renderToastOnly() {
@@ -71,11 +74,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     }
     const bg =
       this._toast.type === "error"
-        ? "#ef4444"
+        ? "var(--error-color, #dc2626)"
         : this._toast.type === "success"
-        ? "#10b981"
-        : "#3b82f6";
-    el.innerHTML = `<div style="background:${bg};color:#fff;padding:10px 18px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.35);font-weight:600;font-size:13px;">${this._escape(
+        ? "var(--success-color, #16a34a)"
+        : "var(--primary-color, #0284c7)";
+    el.innerHTML = `<div style="background:${bg};color:#fff;padding:10px 18px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.18);font-weight:500;font-size:13px;">${this._escape(
       this._toast.message
     )}</div>`;
   }
@@ -126,7 +129,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         this._selectRoomObject(targetRoom, false);
       }
     } catch (err) {
-      this.showToast(`Failed to load overview: ${err.message}`, "error");
+      this.showToast(`Failed to load rooms: ${err.message}`, "error");
     } finally {
       this._loading = false;
       this.render();
@@ -222,16 +225,16 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this.render();
       if (action === "compile_and_apply") {
         this.showToast(
-          `Compiled floorplan topology & applied linkages/spillover rules to ${(res?.updated_rooms || []).length} rooms!`,
+          `Updated room connections and camera coverage rules across ${(res?.updated_rooms || []).length} rooms`,
           "success"
         );
       } else if (action === "reset") {
-        this.showToast("Reset floorplan layout to default house geometry", "info");
+        this.showToast("Reset floorplan to default layout", "info");
       } else {
-        this.showToast("Saved 2D floorplan & camera view cones to .storage", "success");
+        this.showToast("Saved floorplan layout", "success");
       }
     } catch (err) {
-      this.showToast(`Floorplan action failed: ${err.message}`, "error");
+      this.showToast(`Floorplan update failed: ${err.message}`, "error");
     }
   }
 
@@ -245,7 +248,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._statsData = res;
       this.render();
     } catch (err) {
-      this.showToast(`Failed to load statistics: ${err.message}`, "error");
+      this.showToast(`Failed to load history: ${err.message}`, "error");
     }
   }
 
@@ -263,14 +266,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._replayData = res;
       this.render();
     } catch (err) {
-      this.showToast(`Replay simulation failed: ${err.message}`, "error");
+      this.showToast(`Simulation failed: ${err.message}`, "error");
     }
   }
 
   async applyReplayCandidate() {
     if (!this._selectedRoomId || !this._replayCandidate) return;
     this._draftConfig = JSON.parse(JSON.stringify(this._replayCandidate));
-    this._revisionNote = `Applied tuned configuration from ${this._historyHours}h Replay Simulator`;
+    this._revisionNote = `Applied from ${this._historyHours}h Replay Simulator`;
     await this.saveCurrentRoom();
     await this.runReplay();
   }
@@ -299,12 +302,28 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   async saveCurrentRoom() {
     if (!this._selectedRoomId || !this._draftConfig) return;
     try {
+      // Automatically keep trigger_entities synced with main/reliable sensors
+      const obs = this._draftConfig.bayesian_observations || [];
+      const autoTriggers = [...(this._draftConfig.trigger_entities || [])];
+      for (const o of obs) {
+        const preset = o.preset || o.weight || "moderate";
+        if (
+          (preset === "decisive" || preset === "strong") &&
+          o.entity_id &&
+          o.entity_id.startsWith("binary_sensor.") &&
+          !autoTriggers.includes(o.entity_id)
+        ) {
+          autoTriggers.push(o.entity_id);
+        }
+      }
+      this._draftConfig.trigger_entities = autoTriggers;
+
       const res = await this._apiCall(
         "POST",
         `/api/presence_detection_designer/room/${this._selectedRoomId}`,
         {
           config: this._draftConfig,
-          note: this._revisionNote.trim() || "Updated via Visual Design Studio",
+          note: this._revisionNote.trim() || "Saved room settings",
         }
       );
       if (res && res.room && this._overview && Array.isArray(this._overview.rooms)) {
@@ -312,7 +331,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         if (idx >= 0) this._overview.rooms[idx] = res.room;
         this._selectRoomObject(res.room, true);
       }
-      this.showToast(`Saved ${this._draftConfig.room_name} to .storage & hot-updated coordinator`, "success");
+      this.showToast(`Saved ${this._draftConfig.room_name}`, "success");
     } catch (err) {
       this.showToast(`Save failed: ${err.message}`, "error");
     }
@@ -321,30 +340,22 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   async applyYamlDraft() {
     if (!this._selectedRoomId || !this._yamlDraft.trim()) return;
     try {
-      const res = await this._apiCall(
-        "POST",
-        "/api/presence_detection_designer/preview_bayesian",
-        { yaml_config: this._yamlDraft }
-      );
       const saved = await this._apiCall(
         "POST",
         `/api/presence_detection_designer/room/${this._selectedRoomId}`,
         {
           yaml_config: this._yamlDraft,
-          note: "Updated via Designer YAML editor",
+          note: "Updated via YAML editor",
         }
       );
       if (saved && saved.room) {
         const idx = this._overview.rooms.findIndex((r) => r.entry_id === this._selectedRoomId);
         if (idx >= 0) this._overview.rooms[idx] = saved.room;
         this._selectRoomObject(saved.room, true);
-      } else if (res) {
-        this._previewData = res;
-        this.render();
       }
-      this.showToast("Applied YAML configuration to room", "success");
+      this.showToast("Applied YAML configuration", "success");
     } catch (err) {
-      this.showToast(`YAML parse error: ${err.message}`, "error");
+      this.showToast(`YAML error: ${err.message}`, "error");
     }
   }
 
@@ -360,10 +371,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const idx = this._overview.rooms.findIndex((r) => r.entry_id === this._selectedRoomId);
         if (idx >= 0) this._overview.rooms[idx] = res.room;
         this._selectRoomObject(res.room, true);
-        this.showToast("Restored room configuration from .storage revision", "success");
+        this.showToast("Restored previous room configuration", "success");
       }
     } catch (err) {
-      this.showToast(`Rollback failed: ${err.message}`, "error");
+      this.showToast(`Restore failed: ${err.message}`, "error");
     }
   }
 
@@ -384,7 +395,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           this.render();
         }
       }
-      this.showToast(`Executed ${action}`, "success");
+      this.showToast("Updated room state", "success");
     } catch (err) {
       this.showToast(`Action failed: ${err.message}`, "error");
     }
@@ -408,11 +419,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         this._dirty = true;
         this._nlOutput = res.natural_language || "Generated updated rules.";
         await this.refreshPreview();
-        this.showToast("Translated natural language into Bayesian rules (Review & Save)", "success");
+        this.showToast("Generated room rules from description", "success");
       } else if (res) {
         this._nlOutput = res.natural_language || res.rule_guide || "";
         this.render();
-        this.showToast("Generated plain-English explanation", "success");
       }
     } catch (err) {
       this.showToast(`Translation failed: ${err.message}`, "error");
@@ -432,7 +442,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       }
       this._showGlobalModal = false;
       this.render();
-      this.showToast("Saved shared global settings to .storage", "success");
+      this.showToast("Saved global settings", "success");
     } catch (err) {
       this.showToast(`Failed to save global settings: ${err.message}`, "error");
     }
@@ -446,49 +456,76 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       .replace(/"/g, "&quot;");
   }
 
-  _syncTriggersFromStrongObservations() {
-    if (!this._draftConfig) return;
-    const obs = this._draftConfig.bayesian_observations || [];
-    const triggers = [];
-    for (const o of obs) {
-      const preset = o.preset || o.weight || "moderate";
-      if ((preset === "decisive" || preset === "strong") && o.entity_id && o.entity_id.startsWith("binary_sensor.")) {
-        if (!triggers.includes(o.entity_id)) triggers.push(o.entity_id);
-      }
-    }
-    this._draftConfig.trigger_entities = triggers;
-    this._dirty = true;
-    this.render();
-    this.showToast(`Synced ${triggers.length} decisive/strong binary sensors to Instant Triggers`, "info");
+  _formatDuration(sec) {
+    const s = Math.max(0, Math.round(Number(sec || 0)));
+    if (s === 0) return "0s";
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    if (m === 0) return `${rem}s`;
+    if (rem === 0) return `${m}m`;
+    return `${m}m ${rem}s`;
   }
 
-  _addHouseholdBleTrackers() {
-    if (!this._draftConfig) return;
-    const rname = this._draftConfig.room_name || "Room";
-    const trackers =
-      (this._overview &&
-        this._overview.global_settings &&
-        this._overview.global_settings.ble_trackers) || [
-        "sensor.steve_s_s25_ble_area",
-        "sensor.tab_s10_lite_ble_area",
-      ];
-    const obs = this._draftConfig.bayesian_observations || [];
-    trackers.forEach((eid, idx) => {
-      if (!obs.some((o) => o.entity_id === eid)) {
-        obs.push({
-          entity_id: eid,
-          label: idx === 0 ? `Primary BLE in ${rname}` : `Secondary BLE in ${rname}`,
-          preset: idx === 0 ? "moderate" : "supporting",
-          prob_given_true: idx === 0 ? 0.72 : 0.35,
-          prob_given_false: idx === 0 ? 0.12 : 0.22,
-          operator: "equals",
-          state: rname,
-        });
+  _friendlyRoleGroup(obs) {
+    const p = String(obs.preset || obs.weight || "moderate").toLowerCase();
+    if (obs.corroboration_only || p === "weak_hint") return "keepalive";
+    if (p === "decisive" || p === "strong") return "primary";
+    return "shared";
+  }
+
+  _applyFriendlyRoleGroup(obs, group, presets) {
+    if (group === "primary") {
+      obs.preset = "decisive";
+      obs.corroboration_only = false;
+      const d = presets.decisive || { prob_given_true: 0.94, prob_given_false: 0.03 };
+      obs.prob_given_true = d.prob_given_true;
+      obs.prob_given_false = d.prob_given_false;
+    } else if (group === "keepalive") {
+      obs.preset = "supporting";
+      obs.corroboration_only = true;
+      obs.prob_given_true = 0.25;
+      obs.prob_given_false = 0.22;
+    } else {
+      obs.preset = "moderate";
+      obs.corroboration_only = false;
+      const d = presets.moderate || { prob_given_true: 0.72, prob_given_false: 0.12 };
+      obs.prob_given_true = d.prob_given_true;
+      obs.prob_given_false = d.prob_given_false;
+    }
+  }
+
+  _roomStatusSummary(r) {
+    if (!r) return { dotClass: "clear", label: "Clear", detail: "No activity detected" };
+    const state = String(r.box_state || "idle_clear");
+    const countdown = Number(r.vacating_countdown || 0);
+    if (r.is_present) {
+      if (state === "timer_active" && countdown > 0) {
+        return {
+          dotClass: "clearing",
+          label: `Clearing (${this._formatDuration(countdown)})`,
+          detail: `Clearing in ${this._formatDuration(countdown)} unless motion resumes`,
+        };
       }
-    });
-    this._draftConfig.bayesian_observations = obs;
-    this._dirty = true;
-    this.refreshPreview();
+      if (state === "occupied_sealed") {
+        return {
+          dotClass: "occupied",
+          label: "Occupied (Doors closed)",
+          detail: "Occupied and held while room doors remain closed",
+        };
+      }
+      return {
+        dotClass: "occupied",
+        label: "Occupied",
+        detail: r.last_triggered_by
+          ? `Triggered by ${r.last_triggered_by}`
+          : "Active sensor detection in room",
+      };
+    }
+    return {
+      dotClass: "clear",
+      label: "Clear",
+      detail: r.last_cleared_by ? `Last cleared by ${r.last_cleared_by}` : "Room is currently unoccupied",
+    };
   }
 
   render() {
@@ -498,10 +535,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const presets = (this._overview && this._overview.presets) || {};
     const occupiedCount = rooms.filter((r) => r.is_present).length;
 
+    const entityNameMap = {};
+    entities.forEach((e) => {
+      entityNameMap[e.entity_id] = e.name || e.entity_id;
+    });
+
     const filteredRooms = rooms.filter((r) => {
       if (this._roomFilter === "occupied" && !r.is_present) return false;
       if (this._roomFilter === "vacant" && r.is_present) return false;
-      if (this._roomFilter === "bounded" && r.mode !== "bounded") return false;
       if (
         this._roomSearch &&
         !r.room_name.toLowerCase().includes(this._roomSearch.toLowerCase())
@@ -514,509 +555,484 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const selRoom = this.selectedRoom;
     const cfg = this._draftConfig || {};
     const prev = this._previewData || {};
-    const comb = prev.combinatorics || {};
     const activeMap = {};
     (prev.active_observations || []).forEach((o) => {
       activeMap[`${o.entity_id}|${o.label}`] = o;
       activeMap[o.entity_id] = o;
     });
-    const inactiveMap = {};
-    (prev.inactive_observations || []).forEach((o) => {
-      inactiveMap[`${o.entity_id}|${o.label}`] = o;
-      inactiveMap[o.entity_id] = o;
-    });
-
-    const priorPct = Math.round(Number(cfg.bayesian_prior ?? 0.2) * 100);
-    const threshPct = Math.round(Number(cfg.bayesian_threshold ?? 0.75) * 100);
-    const livePct = Number(prev.probability_pct ?? (selRoom ? selRoom.bayesian_probability_pct : 0)).toFixed(1);
-    const isOccupied = selRoom ? selRoom.is_present : false;
 
     this.shadowRoot.innerHTML = `
       <style>
         :host {
+          --ha-bg: var(--primary-background-color, #f5f6f8);
+          --ha-card: var(--card-background-color, #ffffff);
+          --ha-subtle: var(--secondary-background-color, #f8fafc);
+          --ha-text: var(--primary-text-color, #1e293b);
+          --ha-muted: var(--secondary-text-color, #64748b);
+          --ha-divider: var(--divider-color, #e2e8f0);
+          --ha-primary: var(--primary-color, #0284c7);
+          --ha-success: var(--success-color, #16a34a);
+          --ha-warning: var(--warning-color, #d97706);
+          --ha-danger: var(--error-color, #dc2626);
           display: block;
           min-height: 100vh;
-          background: var(--primary-background-color, #0b1120);
-          color: var(--primary-text-color, #f1f5f9);
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+          background: var(--ha-bg);
+          color: var(--ha-text);
+          font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           box-sizing: border-box;
         }
         * { box-sizing: border-box; }
-        .topbar {
+
+        /* Clean Home Assistant Top App Bar */
+        .app-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 14px 22px;
-          background: #111827;
-          border-bottom: 1px solid #1e293b;
+          padding: 0 24px;
+          height: 56px;
+          background: var(--ha-card);
+          border-bottom: 1px solid var(--ha-divider);
           position: sticky;
           top: 0;
           z-index: 20;
         }
-        .brand {
+        .header-left {
           display: flex;
-          align-items: center;
+          align-items: baseline;
           gap: 12px;
         }
-        .brand-icon {
-          width: 36px;
-          height: 36px;
-          border-radius: 10px;
-          background: linear-gradient(135deg, #3b82f6, #10b981);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: 800;
-          color: #fff;
-          font-size: 16px;
-        }
-        .brand h1 {
+        .header-title {
+          font-size: 18px;
+          font-weight: 500;
           margin: 0;
-          font-size: 17px;
-          font-weight: 700;
-          color: #f8fafc;
+          color: var(--ha-text);
         }
-        .brand-sub {
-          font-size: 12px;
-          color: #94a3b8;
+        .header-summary {
+          font-size: 13px;
+          color: var(--ha-muted);
         }
-        .top-pills {
+        .nav-tabs {
           display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
+          height: 56px;
+          gap: 4px;
         }
-        .stat-pill {
-          background: #1e293b;
-          border: 1px solid #334155;
-          padding: 6px 12px;
-          border-radius: 999px;
-          font-size: 12px;
-          color: #cbd5e1;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-        .stat-pill strong { color: #38bdf8; }
-        .btn {
-          background: #1e293b;
-          color: #e2e8f0;
-          border: 1px solid #334155;
-          padding: 7px 13px;
-          border-radius: 7px;
-          font-size: 12px;
-          font-weight: 600;
+        .nav-tab {
+          background: none;
+          border: none;
+          border-bottom: 2px solid transparent;
+          padding: 0 16px;
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--ha-muted);
           cursor: pointer;
-          transition: all 0.15s;
+          transition: color 0.15s, border-color 0.15s;
         }
-        .btn:hover { background: #334155; border-color: #475569; }
-        .btn-primary {
-          background: #2563eb;
-          border-color: #3b82f6;
-          color: #fff;
+        .nav-tab:hover {
+          color: var(--ha-text);
         }
-        .btn-primary:hover { background: #1d4ed8; }
-        .btn-success {
-          background: #059669;
-          border-color: #10b981;
-          color: #fff;
+        .nav-tab.active {
+          color: var(--ha-primary);
+          border-bottom-color: var(--ha-primary);
         }
-        .btn-success:hover { background: #047857; }
-        .btn-sm { padding: 4px 9px; font-size: 11px; }
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
 
-        .studio-grid {
+        /* Standard Buttons & Inputs */
+        .btn {
+          background: var(--ha-card);
+          color: var(--ha-text);
+          border: 1px solid var(--ha-divider);
+          padding: 7px 14px;
+          border-radius: 8px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.12s, border-color 0.12s;
+        }
+        .btn:hover {
+          background: var(--ha-subtle);
+        }
+        .btn-primary {
+          background: var(--ha-primary);
+          border-color: var(--ha-primary);
+          color: #ffffff;
+        }
+        .btn-primary:hover {
+          filter: brightness(0.94);
+          background: var(--ha-primary);
+        }
+        .btn-text {
+          background: transparent;
+          border: none;
+          color: var(--ha-muted);
+          padding: 6px 10px;
+          border-radius: 6px;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .btn-text:hover {
+          background: var(--ha-subtle);
+          color: var(--ha-text);
+        }
+        .btn-danger-text {
+          background: transparent;
+          border: none;
+          color: var(--ha-muted);
+          padding: 6px 10px;
+          border-radius: 6px;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .btn-danger-text:hover {
+          color: var(--ha-danger);
+          background: rgba(220, 38, 38, 0.08);
+        }
+        .btn-sm {
+          padding: 5px 10px;
+          font-size: 12px;
+        }
+
+        .input, .select {
+          background: var(--ha-card);
+          color: var(--ha-text);
+          border: 1px solid var(--ha-divider);
+          border-radius: 8px;
+          padding: 8px 11px;
+          font-size: 13px;
+          width: 100%;
+        }
+        .input:focus, .select:focus {
+          outline: none;
+          border-color: var(--ha-primary);
+        }
+
+        /* Layout Workspace */
+        .workspace {
           display: grid;
-          grid-template-columns: 280px 1fr 410px;
-          gap: 16px;
-          padding: 16px 20px;
+          grid-template-columns: 270px minmax(0, 1fr);
+          gap: 24px;
+          max-width: 1380px;
+          margin: 0 auto;
+          padding: 20px 24px 48px;
           align-items: start;
         }
-        @media (max-width: 1360px) {
-          .studio-grid { grid-template-columns: 250px 1fr; }
-          .col-right { grid-column: 1 / -1; }
-        }
         @media (max-width: 900px) {
-          .studio-grid { grid-template-columns: 1fr; }
-        }
-
-        .panel-card {
-          background: #111827;
-          border: 1px solid #1e293b;
-          border-radius: 12px;
-          padding: 15px;
-          margin-bottom: 14px;
-        }
-        .card-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 12px;
-          gap: 8px;
-        }
-        .card-title {
-          font-size: 14px;
-          font-weight: 700;
-          color: #f8fafc;
-          margin: 0;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .card-subtitle {
-          font-size: 11px;
-          color: #94a3b8;
-          margin-top: 2px;
+          .workspace {
+            grid-template-columns: 1fr;
+          }
         }
 
         /* Left Sidebar Room List */
-        .search-input, .text-input, .select-input, .num-input {
-          background: #0b1120;
-          color: #f1f5f9;
-          border: 1px solid #334155;
-          border-radius: 7px;
-          padding: 7px 10px;
-          font-size: 12px;
-          width: 100%;
+        .sidebar-card {
+          background: var(--ha-card);
+          border: 1px solid var(--ha-divider);
+          border-radius: 12px;
+          overflow: hidden;
         }
-        .search-input:focus, .text-input:focus, .select-input:focus, .num-input:focus {
-          outline: none;
-          border-color: #38bdf8;
+        .sidebar-top {
+          padding: 12px;
+          border-bottom: 1px solid var(--ha-divider);
         }
-        .filter-tabs {
+        .seg-group {
           display: flex;
-          gap: 4px;
-          margin: 8px 0 12px;
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-radius: 8px;
+          padding: 2px;
+          margin-top: 8px;
         }
-        .filter-tab {
+        .seg-btn {
           flex: 1;
-          text-align: center;
-          padding: 5px 4px;
-          font-size: 11px;
-          font-weight: 600;
+          border: none;
+          background: transparent;
+          color: var(--ha-muted);
+          padding: 5px 6px;
+          font-size: 12px;
+          font-weight: 500;
           border-radius: 6px;
           cursor: pointer;
-          background: #0b1120;
-          color: #94a3b8;
-          border: 1px solid #1e293b;
         }
-        .filter-tab.active {
-          background: #1e3a8a;
-          color: #93c5fd;
-          border-color: #3b82f6;
+        .seg-btn.active {
+          background: var(--ha-card);
+          color: var(--ha-text);
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
         }
         .room-list {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          max-height: calc(100vh - 210px);
+          max-height: calc(100vh - 190px);
           overflow-y: auto;
-          padding-right: 2px;
         }
-        .room-item {
-          background: #0f172a;
-          border: 1px solid #1e293b;
-          border-radius: 10px;
-          padding: 10px 12px;
-          cursor: pointer;
-          transition: all 0.14s;
-        }
-        .room-item:hover { border-color: #334155; background: #162033; }
-        .room-item.selected {
-          border-color: #38bdf8;
-          background: #172554;
-          box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3);
-        }
-        .room-item-top {
+        .room-row {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 6px;
-          margin-bottom: 6px;
+          padding: 11px 14px;
+          border-bottom: 1px solid var(--ha-divider);
+          cursor: pointer;
+          transition: background 0.12s;
         }
-        .room-item-name {
-          font-weight: 700;
-          font-size: 13px;
-          color: #f8fafc;
+        .room-row:last-child {
+          border-bottom: none;
         }
-        .occ-badge {
-          font-size: 10px;
-          font-weight: 700;
-          padding: 2px 7px;
-          border-radius: 999px;
-          text-transform: uppercase;
+        .room-row:hover {
+          background: var(--ha-subtle);
         }
-        .occ-badge.on {
-          background: rgba(16, 185, 129, 0.2);
-          color: #34d399;
-          border: 1px solid rgba(16, 185, 129, 0.45);
+        .room-row.selected {
+          background: rgba(2, 132, 199, 0.08);
+          border-left: 3px solid var(--ha-primary);
+          padding-left: 11px;
         }
-        .occ-badge.off {
-          background: rgba(100, 116, 139, 0.18);
-          color: #94a3b8;
-          border: 1px solid rgba(100, 116, 139, 0.3);
-        }
-        .prob-bar-bg {
-          height: 6px;
-          background: #090d16;
-          border-radius: 4px;
-          position: relative;
-          overflow: hidden;
-          margin-bottom: 5px;
-        }
-        .prob-bar-fill {
-          height: 100%;
-          border-radius: 4px;
-          transition: width 0.25s;
-        }
-        .room-item-meta {
+        .room-row-left {
           display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          color: #94a3b8;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+        .status-dot {
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+        .status-dot.occupied {
+          background: var(--ha-success);
+        }
+        .status-dot.clearing {
+          background: var(--ha-warning);
+        }
+        .status-dot.clear {
+          background: #94a3b8;
+          opacity: 0.45;
+        }
+        .room-row-name {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--ha-text);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .room-row-status {
+          font-size: 12px;
+          color: var(--ha-muted);
+          flex-shrink: 0;
+        }
+        .room-row-status.occupied {
+          color: var(--ha-success);
+          font-weight: 500;
+        }
+        .room-row-status.clearing {
+          color: var(--ha-warning);
+          font-weight: 500;
         }
 
-        /* Center Builder */
-        .form-grid-4 {
+        /* Content Cards */
+        .content-stack {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          max-width: 920px;
+        }
+        .content-stack.wide {
+          max-width: 100%;
+        }
+        .ha-card {
+          background: var(--ha-card);
+          border: 1px solid var(--ha-divider);
+          border-radius: 12px;
+          padding: 20px;
+        }
+        .card-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .card-title {
+          font-size: 16px;
+          font-weight: 500;
+          margin: 0;
+          color: var(--ha-text);
+        }
+        .card-desc {
+          font-size: 13px;
+          color: var(--ha-muted);
+          margin-top: 3px;
+          line-height: 1.4;
+        }
+
+        /* Clean List Rows inside Cards */
+        .list-divider {
+          border-top: 1px solid var(--ha-divider);
+        }
+        .sensor-row {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: minmax(180px, 1.3fr) minmax(210px, 1.3fr) auto;
+          gap: 12px;
+          align-items: center;
+          padding: 12px 0;
+          border-bottom: 1px solid var(--ha-divider);
+        }
+        .sensor-row:last-child {
+          border-bottom: none;
+        }
+        @media (max-width: 700px) {
+          .sensor-row {
+            grid-template-columns: 1fr;
+          }
+        }
+        .sensor-info {
+          display: flex;
+          align-items: center;
           gap: 10px;
+          min-width: 0;
         }
-        .form-grid-5 {
-          display: grid;
-          grid-template-columns: repeat(5, 1fr);
-          gap: 10px;
+        .sensor-title {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--ha-text);
         }
-        .field-label {
-          display: block;
-          font-size: 11px;
-          font-weight: 600;
-          color: #94a3b8;
-          margin-bottom: 4px;
-        }
-        .obs-table {
-          width: 100%;
-          border-collapse: collapse;
+        .sensor-sub {
           font-size: 12px;
-        }
-        .obs-table th {
-          text-align: left;
-          font-size: 11px;
-          color: #94a3b8;
-          padding: 6px 6px;
-          border-bottom: 1px solid #1e293b;
-        }
-        .obs-table td {
-          padding: 6px 5px;
-          border-bottom: 1px solid #1e293b;
-          vertical-align: middle;
-        }
-        .obs-status-pill {
-          display: inline-block;
-          padding: 3px 7px;
-          border-radius: 6px;
-          font-size: 10px;
-          font-weight: 700;
+          color: var(--ha-muted);
           white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
-        .obs-status-pill.active {
-          background: rgba(16, 185, 129, 0.2);
-          color: #34d399;
-          border: 1px solid rgba(16, 185, 129, 0.4);
-        }
-        .obs-status-pill.idle {
-          background: #0b1120;
-          color: #64748b;
-          border: 1px solid #1e293b;
-        }
-        .chip-list {
+
+        /* Chips */
+        .chip-row {
           display: flex;
           flex-wrap: wrap;
-          gap: 6px;
-          margin-bottom: 8px;
+          gap: 8px;
+          align-items: center;
         }
-        .entity-chip {
-          background: #1e293b;
-          border: 1px solid #334155;
-          color: #e2e8f0;
-          border-radius: 6px;
-          padding: 4px 8px;
-          font-size: 11px;
-          font-family: monospace;
+        .ha-chip {
           display: inline-flex;
           align-items: center;
           gap: 6px;
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-radius: 999px;
+          padding: 5px 12px;
+          font-size: 13px;
+          color: var(--ha-text);
         }
-        .entity-chip button {
+        .ha-chip button {
           background: none;
           border: none;
-          color: #f87171;
+          color: var(--ha-muted);
           cursor: pointer;
-          font-weight: 700;
+          font-size: 14px;
+          line-height: 1;
           padding: 0;
         }
+        .ha-chip button:hover {
+          color: var(--ha-danger);
+        }
 
-        /* Right Column: Gauge, Combinatorics, YAML & Revisions */
-        .gauge-box {
+        /* Setting Rows */
+        .setting-row {
           display: flex;
           align-items: center;
-          gap: 14px;
-          padding: 12px;
-          background: #0b1120;
-          border: 1px solid #1e293b;
-          border-radius: 10px;
-          margin-bottom: 12px;
-        }
-        .gauge-num {
-          font-size: 28px;
-          font-weight: 800;
-          line-height: 1;
-        }
-        .comb-section {
-          margin-top: 10px;
-        }
-        .comb-title {
-          font-size: 11px;
-          font-weight: 700;
-          color: #94a3b8;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          margin-bottom: 6px;
-        }
-        .comb-pill {
-          display: flex;
           justify-content: space-between;
-          align-items: center;
-          background: #0b1120;
-          border: 1px solid #1e293b;
-          border-radius: 7px;
-          padding: 6px 9px;
-          margin-bottom: 5px;
-          font-size: 11px;
+          gap: 16px;
+          padding: 14px 0;
+          border-bottom: 1px solid var(--ha-divider);
         }
-        .comb-pill.trigger { border-left: 3px solid #10b981; }
-        .comb-pill.pair { border-left: 3px solid #38bdf8; }
-        .comb-pill.safe { border-left: 3px solid #64748b; color: #94a3b8; }
+        .setting-row:first-of-type {
+          padding-top: 0;
+        }
+        .setting-row:last-of-type {
+          border-bottom: none;
+          padding-bottom: 0;
+        }
+        .setting-label {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--ha-text);
+        }
+        .setting-help {
+          font-size: 12.5px;
+          color: var(--ha-muted);
+          margin-top: 2px;
+        }
+
+        /* Expandable Advanced Drawer */
+        .advanced-toggle-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: var(--ha-card);
+          border: 1px solid var(--ha-divider);
+          border-radius: 12px;
+          padding: 14px 20px;
+          cursor: pointer;
+          user-select: none;
+        }
+        .advanced-toggle-bar:hover {
+          background: var(--ha-subtle);
+        }
+
+        .sub-tabs {
+          display: flex;
+          gap: 6px;
+          border-bottom: 1px solid var(--ha-divider);
+          padding-bottom: 12px;
+          margin-bottom: 16px;
+          flex-wrap: wrap;
+        }
+        .sub-tab {
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          color: var(--ha-muted);
+          padding: 6px 12px;
+          border-radius: 8px;
+          font-size: 12.5px;
+          font-weight: 500;
+          cursor: pointer;
+        }
+        .sub-tab.active {
+          background: var(--ha-primary);
+          border-color: var(--ha-primary);
+          color: #fff;
+        }
 
         .code-area {
           width: 100%;
-          min-height: 230px;
-          background: #090d16;
-          color: #e2e8f0;
-          border: 1px solid #334155;
+          min-height: 200px;
+          background: var(--ha-subtle);
+          color: var(--ha-text);
+          border: 1px solid var(--ha-divider);
           border-radius: 8px;
-          padding: 10px;
-          font-family: "JetBrains Mono", Consolas, monospace;
-          font-size: 11.5px;
-          line-height: 1.45;
+          padding: 12px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: 12px;
+          line-height: 1.5;
           resize: vertical;
         }
-        .rev-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 7px 9px;
-          background: #0b1120;
-          border: 1px solid #1e293b;
-          border-radius: 7px;
-          margin-bottom: 6px;
-          font-size: 11px;
-        }
+
+        /* Modal */
         .modal-backdrop {
           position: fixed;
           inset: 0;
-          background: rgba(0, 0, 0, 0.7);
+          background: rgba(15, 23, 42, 0.45);
           display: flex;
           align-items: center;
           justify-content: center;
           z-index: 100;
         }
         .modal-card {
-          background: #111827;
-          border: 1px solid #334155;
+          background: var(--ha-card);
+          border: 1px solid var(--ha-divider);
           border-radius: 12px;
-          width: 520px;
-          max-width: 94vw;
+          width: 480px;
+          max-width: 92vw;
           padding: 20px;
-        }
-        .mode-switcher {
-          display: flex;
-          background: #0b1120;
-          border: 1px solid #334155;
-          border-radius: 9px;
-          padding: 3px;
-          gap: 4px;
-        }
-        .mode-btn {
-          background: transparent;
-          color: #94a3b8;
-          border: none;
-          padding: 6px 13px;
-          border-radius: 6px;
-          font-size: 12px;
-          font-weight: 700;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-        .mode-btn.active {
-          background: #2563eb;
-          color: #fff;
-          box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
-        }
-        .kpi-grid-6 {
-          display: grid;
-          grid-template-columns: repeat(6, 1fr);
-          gap: 10px;
-          margin-bottom: 14px;
-        }
-        @media (max-width: 1280px) {
-          .kpi-grid-6 { grid-template-columns: repeat(3, 1fr); }
-        }
-        .kpi-card {
-          background: #0b1120;
-          border: 1px solid #1e293b;
-          border-radius: 10px;
-          padding: 11px 13px;
-        }
-        .kpi-label {
-          font-size: 10.5px;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          color: #94a3b8;
-          font-weight: 600;
-        }
-        .kpi-val {
-          font-size: 21px;
-          font-weight: 800;
-          margin-top: 4px;
-          color: #f8fafc;
-        }
-        .kpi-sub {
-          font-size: 11px;
-          color: #64748b;
-          margin-top: 2px;
-        }
-        .swimlane-row {
-          display: grid;
-          grid-template-columns: 240px 1fr 90px;
-          align-items: center;
-          gap: 10px;
-          padding: 6px 0;
-          border-bottom: 1px solid #1e293b;
-          font-size: 11.5px;
-        }
-        .swimlane-track {
-          position: relative;
-          height: 18px;
-          background: #090d16;
-          border: 1px solid #1e293b;
-          border-radius: 5px;
-          overflow: hidden;
-        }
-        .swimlane-seg {
-          position: absolute;
-          top: 2px;
-          bottom: 2px;
-          border-radius: 3px;
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
         }
       </style>
 
@@ -1033,655 +1049,91 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           .join("")}
       </datalist>
 
-      <div class="topbar">
-        <div class="brand">
-          <div class="brand-icon">PDD</div>
-          <div>
-            <h1>Presence Detection Designer</h1>
-            <div class="brand-sub">Visual Bayesian Fusion Studio, Timeline Analytics &amp; Replay Simulator (v1.2.0)</div>
-          </div>
+      <!-- Clean Home Assistant Header Bar -->
+      <div class="app-header">
+        <div class="header-left">
+          <h1 class="header-title">Presence Detection</h1>
+          <span class="header-summary">${occupiedCount} of ${rooms.length} rooms occupied</span>
         </div>
 
-        <div class="mode-switcher">
-          <button class="mode-btn ${this._studioView === "design" ? "active" : ""}" data-studio-view="design">🎨 Design Studio</button>
-          <button class="mode-btn ${this._studioView === "floorplan" ? "active" : ""}" data-studio-view="floorplan">🗺️ Floorplan &amp; Coverage</button>
-          <button class="mode-btn ${this._studioView === "statistics" ? "active" : ""}" data-studio-view="statistics">📈 Statistics &amp; Timeline</button>
-          <button class="mode-btn ${this._studioView === "replay" ? "active" : ""}" data-studio-view="replay">⏮️ Replay &amp; Tuning Simulator</button>
+        <div class="nav-tabs">
+          <button class="nav-tab ${this._studioView === "design" ? "active" : ""}" data-studio-view="design">Rooms</button>
+          <button class="nav-tab ${this._studioView === "floorplan" ? "active" : ""}" data-studio-view="floorplan">Floorplan</button>
+          <button class="nav-tab ${
+            this._studioView === "statistics" || this._studioView === "replay" ? "active" : ""
+          }" data-studio-view="statistics">Activity History</button>
         </div>
 
-        <div class="top-pills">
-          ${
-            this._studioView === "statistics" || this._studioView === "replay"
-              ? `<div class="mode-switcher" style="margin-right:4px;">
-                  ${[
-                    { h: 1, label: "1h" },
-                    { h: 6, label: "6h" },
-                    { h: 24, label: "24h" },
-                    { h: 168, label: "7d" },
-                  ]
-                    .map(
-                      (w) =>
-                        `<button class="mode-btn ${
-                          Number(this._historyHours) === w.h ? "active" : ""
-                        }" data-history-hours="${w.h}" style="padding:4px 9px;font-size:11px;">${
-                          w.label
-                        }</button>`
-                    )
-                    .join("")}
-                </div>`
-              : ""
-          }
-          <div class="stat-pill">Occupied: <strong>${occupiedCount} / ${rooms.length}</strong></div>
-          <div class="stat-pill">Storage: <strong>.storage/presence_detection_designer</strong></div>
-          <button class="btn" id="btn-open-global">⚙ Global .storage Settings</button>
-          <button class="btn" id="btn-refresh-overview">↻ Refresh States</button>
+        <div class="header-actions">
+          <button class="btn btn-sm" id="btn-refresh-overview">Refresh</button>
         </div>
       </div>
 
-      <div class="studio-grid">
-        <!-- LEFT COLUMN: 14-Room Navigator -->
-        <div class="col-left">
-          <div class="panel-card">
-            <div class="card-header">
-              <h2 class="card-title">Rooms (${filteredRooms.length})</h2>
-            </div>
+      <div class="workspace">
+        <!-- LEFT SIDEBAR: Simple Room List -->
+        <div class="sidebar-card">
+          <div class="sidebar-top">
             <input
               type="text"
-              class="search-input"
+              class="input"
               id="room-search-input"
-              placeholder="Filter rooms..."
+              placeholder="Search rooms..."
               value="${this._escape(this._roomSearch)}"
             />
-            <div class="filter-tabs">
-              ${["all", "occupied", "vacant", "bounded"]
+            <div class="seg-group">
+              ${[
+                { id: "all", label: "All" },
+                { id: "occupied", label: "Occupied" },
+                { id: "vacant", label: "Clear" },
+              ]
                 .map(
                   (f) => `
-                <div class="filter-tab ${this._roomFilter === f ? "active" : ""}" data-filter="${f}">
-                  ${f.toUpperCase()}
-                </div>`
+                <button class="seg-btn ${this._roomFilter === f.id ? "active" : ""}" data-filter="${f.id}">
+                  ${f.label}
+                </button>`
                 )
                 .join("")}
             </div>
-            <div class="room-list">
-              ${filteredRooms
-                .map((r) => {
-                  const pct = Number(r.bayesian_probability_pct || 0);
-                  const thresh = Number(r.bayesian_threshold_pct || 75);
-                  const barColor = r.is_present
-                    ? "#10b981"
-                    : pct >= thresh * 0.75
-                    ? "#f59e0b"
-                    : "#3b82f6";
-                  return `
-                  <div class="room-item ${
+          </div>
+
+          <div class="room-list">
+            ${filteredRooms
+              .map((r) => {
+                const st = this._roomStatusSummary(r);
+                return `
+                  <div class="room-row ${
                     r.entry_id === this._selectedRoomId ? "selected" : ""
                   }" data-room-id="${this._escape(r.entry_id)}">
-                    <div class="room-item-top">
-                      <span class="room-item-name">${this._escape(r.room_name)}</span>
-                      <span class="occ-badge ${r.is_present ? "on" : "off"}">
-                        ${r.is_present ? "Occupied" : "Vacant"}
-                      </span>
+                    <div class="room-row-left">
+                      <span class="status-dot ${st.dotClass}"></span>
+                      <span class="room-row-name">${this._escape(r.room_name)}</span>
                     </div>
-                    <div class="prob-bar-bg">
-                      <div class="prob-bar-fill" style="width:${Math.min(
-                        100,
-                        pct
-                      )}%;background:${barColor};"></div>
-                    </div>
-                    <div class="room-item-meta">
-                      <span><strong>${pct.toFixed(1)}%</strong> / ${thresh.toFixed(0)}%</span>
-                      <span>${this._escape(r.box_state)} · ${(r.active_observations || []).length} active</span>
-                    </div>
+                    <span class="room-row-status ${st.dotClass}">${this._escape(st.label)}</span>
                   </div>`;
-                })
-                .join("")}
-            </div>
+              })
+              .join("")}
           </div>
         </div>
 
+        <!-- MAIN WORKSPACE -->
         ${
           this._studioView === "floorplan"
-            ? `<div style="grid-column: 2 / -1;">${this._renderFloorplanPane(selRoom)}</div>`
+            ? `<div class="content-stack wide">${this._renderFloorplanPane(selRoom)}</div>`
             : this._studioView === "statistics"
-            ? `<div style="grid-column: 2 / -1;">${this._renderStatisticsPane(selRoom)}</div>`
+            ? `<div class="content-stack wide">${this._renderStatisticsPane(selRoom)}</div>`
             : this._studioView === "replay"
-            ? `<div style="grid-column: 2 / -1;">${this._renderReplayPane(selRoom, presets)}</div>`
-            : `
-        <!-- CENTER COLUMN: Interactive Room & Bayesian Weight Builder -->
-        <div class="col-center">
-          ${
-            !selRoom
-              ? `<div class="panel-card">Select a room to configure.</div>`
-              : `
-            <!-- Header & Save Bar -->
-            <div class="panel-card">
-              <div class="card-header" style="flex-wrap:wrap;">
-                <div>
-                  <h2 class="card-title" style="font-size:18px;">
-                    ${this._escape(cfg.room_name || selRoom.room_name)}
-                    ${
-                      this._dirty
-                        ? `<span style="background:#f59e0b;color:#000;font-size:10px;padding:2px 7px;border-radius:999px;">Unsaved Changes</span>`
-                        : `<span style="background:#1e293b;color:#94a3b8;font-size:10px;padding:2px 7px;border-radius:999px;">Synced in .storage</span>`
-                    }
-                  </h2>
-                  <div class="card-subtitle">${this._escape(
-                    selRoom.natural_language_explanation
-                  )}</div>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                  <button class="btn btn-sm" id="btn-room-refresh">↻ Eval Now</button>
-                  <button class="btn btn-sm" id="btn-room-verify">📷 Vision Check</button>
-                  <button class="btn btn-sm" id="btn-room-override">
-                    ${selRoom.override ? "🔓 Clear Override" : "🔒 Lock Override"}
-                  </button>
-                  <input
-                    type="text"
-                    class="text-input"
-                    id="input-rev-note"
-                    placeholder="Revision note (optional)..."
-                    style="width:170px;"
-                    value="${this._escape(this._revisionNote)}"
-                  />
-                  <button class="btn btn-success" id="btn-save-room">💾 Save to .storage</button>
-                </div>
-              </div>
-
-              <div class="form-grid-4" style="margin-top:12px;">
-                <div>
-                  <label class="field-label">Room Name</label>
-                  <input type="text" class="text-input" id="cfg-room-name" value="${this._escape(
-                    cfg.room_name || ""
-                  )}" />
-                </div>
-                <div>
-                  <label class="field-label">Home Assistant Area</label>
-                  <select class="select-input" id="cfg-area-id">
-                    <option value="">— None —</option>
-                    ${areas
-                      .map(
-                        (a) =>
-                          `<option value="${this._escape(a.id)}" ${
-                            cfg.area_id === a.id ? "selected" : ""
-                          }>${this._escape(a.name)}</option>`
-                      )
-                      .join("")}
-                  </select>
-                </div>
-                <div>
-                  <label class="field-label">Perimeter Mode</label>
-                  <select class="select-input" id="cfg-mode">
-                    <option value="open" ${cfg.mode === "open" ? "selected" : ""}>Open Area (Timer-based)</option>
-                    <option value="bounded" ${cfg.mode === "bounded" ? "selected" : ""}>Bounded (Wasp-in-a-Box Door Latch)</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="field-label">Camera Entity (Vision AI)</label>
-                  <input type="text" class="text-input" id="cfg-camera-entity" list="pdd-all-entities" value="${this._escape(
-                    cfg.camera_entity || ""
-                  )}" placeholder="camera.master_bedroom" />
-                </div>
-              </div>
-
-              <div class="form-grid-5" style="margin-top:12px;">
-                <div>
-                  <label class="field-label">Baseline Prior: <strong style="color:#38bdf8;">${priorPct}%</strong></label>
-                  <input type="range" min="5" max="50" step="1" id="cfg-prior-slider" value="${priorPct}" style="width:100%;" />
-                </div>
-                <div>
-                  <label class="field-label">Occupied Threshold: <strong style="color:#10b981;">${threshPct}%</strong></label>
-                  <input type="range" min="50" max="95" step="1" id="cfg-thresh-slider" value="${threshPct}" style="width:100%;" />
-                </div>
-                <div>
-                  <label class="field-label">Inactivity Timeout (s)</label>
-                  <input type="number" class="num-input" id="cfg-inactivity-timeout" value="${Number(
-                    cfg.inactivity_timeout ?? 240
-                  )}" />
-                </div>
-                <div>
-                  <label class="field-label">Door Grace Timeout (s)</label>
-                  <input type="number" class="num-input" id="cfg-grace-timeout" value="${Number(
-                    cfg.grace_timeout ?? 60
-                  )}" />
-                </div>
-                <div>
-                  <label class="field-label">Vision Extend Timeout (s)</label>
-                  <input type="number" class="num-input" id="cfg-extend-timeout" value="${Number(
-                    cfg.extend_timeout ?? 300
-                  )}" />
-                </div>
-              </div>
-            </div>
-
-            <!-- Bayesian Observations Table -->
-            <div class="panel-card">
-              <div class="card-header" style="flex-wrap:wrap;">
-                <div>
-                  <h3 class="card-title">Bayesian Sensor Observations (${
-                    (cfg.bayesian_observations || []).length
-                  })</h3>
-                  <div class="card-subtitle">
-                    Configure how each sensor shifts room probability from the ${priorPct}% baseline toward the ${threshPct}% threshold.
-                  </div>
-                </div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                  <button class="btn btn-sm" id="btn-add-ble">+ Household BLE</button>
-                  <button class="btn btn-sm" id="btn-sync-triggers">⚡ Sync Instant Triggers</button>
-                  <button class="btn btn-primary btn-sm" id="btn-add-obs">+ Add Observation</button>
-                </div>
-              </div>
-
-              <div style="overflow-x:auto;">
-                <table class="obs-table">
-                  <thead>
-                    <tr>
-                      <th>Live Status</th>
-                      <th>Entity ID &amp; Label</th>
-                      <th>Reliability Preset</th>
-                      <th>P(E|Occ)</th>
-                      <th>P(E|Vac)</th>
-                      <th>Operator &amp; Target State</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${(cfg.bayesian_observations || [])
-                      .map((obs, idx) => {
-                        const key = `${obs.entity_id}|${obs.label}`;
-                        const act = activeMap[key] || activeMap[obs.entity_id];
-                        const presetVal = obs.preset || obs.weight || "moderate";
-                        const pDefaults = presets[presetVal] || {
-                          prob_given_true: 0.72,
-                          prob_given_false: 0.12,
-                        };
-                        const pTrue = Number(obs.prob_given_true ?? pDefaults.prob_given_true);
-                        const pFalse = Number(obs.prob_given_false ?? pDefaults.prob_given_false);
-                        const p0 = Math.max(0.01, Math.min(0.99, Number(cfg.bayesian_prior ?? 0.2)));
-                        const soloOdds = (p0 / (1 - p0)) * (Math.max(0.001, pTrue) / Math.max(0.001, pFalse));
-                        const soloPct = ((soloOdds / (1 + soloOdds)) * 100).toFixed(1);
-                        const deltaPct = act
-                          ? Number(act.probability_delta_pct ?? act.contribution_pct ?? 0).toFixed(1)
-                          : "0.0";
-                        return `
-                        <tr data-obs-idx="${idx}">
-                          <td>
-                            ${
-                              act
-                                ? `<span class="obs-status-pill active">ON (+${deltaPct}%)</span>`
-                                : `<span class="obs-status-pill idle">idle (${soloPct}% solo)</span>`
-                            }
-                          </td>
-                          <td style="min-width:210px;">
-                            <input
-                              type="text"
-                              class="text-input obs-field"
-                              data-idx="${idx}"
-                              data-key="entity_id"
-                              list="pdd-all-entities"
-                              placeholder="binary_sensor.motion"
-                              value="${this._escape(obs.entity_id || "")}"
-                              style="margin-bottom:4px;font-family:monospace;font-size:11px;"
-                            />
-                            <input
-                              type="text"
-                              class="text-input obs-field"
-                              data-idx="${idx}"
-                              data-key="label"
-                              placeholder="Friendly sensor label"
-                              value="${this._escape(obs.label || "")}"
-                            />
-                          </td>
-                          <td style="min-width:125px;">
-                            <select class="select-input obs-preset" data-idx="${idx}">
-                              ${["decisive", "strong", "moderate", "supporting", "custom"]
-                                .map(
-                                  (p) =>
-                                    `<option value="${p}" ${
-                                      presetVal === p ? "selected" : ""
-                                    }>${p.toUpperCase()}</option>`
-                                )
-                                .join("")}
-                            </select>
-                          </td>
-                          <td style="width:76px;">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0.01"
-                              max="0.99"
-                              class="num-input obs-prob"
-                              data-idx="${idx}"
-                              data-key="prob_given_true"
-                              value="${Number(pTrue).toFixed(2)}"
-                            />
-                          </td>
-                          <td style="width:76px;">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0.01"
-                              max="0.99"
-                              class="num-input obs-prob"
-                              data-idx="${idx}"
-                              data-key="prob_given_false"
-                              value="${Number(pFalse).toFixed(2)}"
-                            />
-                          </td>
-                          <td style="min-width:165px;">
-                            <div style="display:flex;gap:4px;">
-                              <select class="select-input obs-field" data-idx="${idx}" data-key="operator" style="width:82px;">
-                                ${["equals", "in", "greater_than", "less_than", "not_equals"]
-                                  .map(
-                                    (op) =>
-                                      `<option value="${op}" ${
-                                        (obs.operator || "equals") === op ? "selected" : ""
-                                      }>${op}</option>`
-                                  )
-                                  .join("")}
-                              </select>
-                              <input
-                                type="text"
-                                class="text-input obs-field"
-                                data-idx="${idx}"
-                                data-key="state"
-                                value="${this._escape(obs.state ?? "on")}"
-                                style="width:85px;"
-                              />
-                            </div>
-                          </td>
-                          <td>
-                            <button class="btn btn-sm obs-del" data-idx="${idx}" style="color:#f87171;">✕</button>
-                          </td>
-                        </tr>`;
-                      })
-                      .join("")}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <!-- Wasp-in-a-Box Boundaries, Instant Triggers & Sustaining Conditions -->
-            <div class="panel-card">
-              <h3 class="card-title" style="margin-bottom:10px;">Wasp-in-a-Box Doors, Instant Triggers &amp; Sustaining Conditions</h3>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;">
-                <div>
-                  <label class="field-label">Boundary Doors (Seal room when closed)</label>
-                  <div class="chip-list">
-                    ${(cfg.boundary_entities || [])
-                      .map(
-                        (eid, i) => `
-                      <span class="entity-chip">${this._escape(eid)}
-                        <button class="del-boundary" data-idx="${i}">×</button>
-                      </span>`
-                      )
-                      .join("")}
-                  </div>
-                  <div style="display:flex;gap:6px;">
-                    <input type="text" class="text-input" id="add-boundary-input" list="pdd-all-entities" placeholder="binary_sensor.room_door" />
-                    <button class="btn btn-sm" id="btn-add-boundary">+ Add</button>
-                  </div>
-                </div>
-
-                <div>
-                  <label class="field-label">Instant Trigger Entities (Decisive/Strong sensors)</label>
-                  <div class="chip-list">
-                    ${(cfg.trigger_entities || [])
-                      .map(
-                        (eid, i) => `
-                      <span class="entity-chip">${this._escape(eid)}
-                        <button class="del-trigger" data-idx="${i}">×</button>
-                      </span>`
-                      )
-                      .join("")}
-                  </div>
-                  <div style="display:flex;gap:6px;">
-                    <input type="text" class="text-input" id="add-trigger-input" list="pdd-all-entities" placeholder="binary_sensor.zone_person_occupancy" />
-                    <button class="btn btn-sm" id="btn-add-trigger">+ Add</button>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                  <label class="field-label" style="margin:0;">Sustaining Conditions (Hold presence while active)</label>
-                  <button class="btn btn-sm" id="btn-add-condition">+ Add Condition</button>
-                </div>
-                ${(cfg.sustaining_conditions || [])
-                  .map(
-                    (c, idx) => `
-                  <div style="display:grid;grid-template-columns:1.4fr 1.2fr 110px 90px 32px;gap:6px;margin-bottom:6px;">
-                    <input type="text" class="text-input cond-field" data-idx="${idx}" data-key="entity_id" list="pdd-all-entities" placeholder="media_player.tv" value="${this._escape(
-                      c.entity_id || ""
-                    )}" />
-                    <input type="text" class="text-input cond-field" data-idx="${idx}" data-key="label" placeholder="Label" value="${this._escape(
-                      c.label || ""
-                    )}" />
-                    <select class="select-input cond-field" data-idx="${idx}" data-key="operator">
-                      ${["equals", "greater_than", "less_than", "not_equals", "in"]
-                        .map(
-                          (op) =>
-                            `<option value="${op}" ${
-                              (c.operator || "equals") === op ? "selected" : ""
-                            }>${op}</option>`
-                        )
-                        .join("")}
-                    </select>
-                    <input type="text" class="text-input cond-field" data-idx="${idx}" data-key="state" value="${this._escape(
-                      c.state ?? "on"
-                    )}" />
-                    <button class="btn btn-sm cond-del" data-idx="${idx}" style="color:#f87171;">✕</button>
-                  </div>`
-                  )
-                  .join("")}
-              </div>
-
-              <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e293b;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                  <label class="field-label" style="margin:0;">Connected Adjacent Rooms (Cross-Room Timer Hand-Off — Zeroes Countdown on Adjacent Entry)</label>
-                  <button class="btn btn-sm" id="btn-open-floorplan-tab" style="color:#38bdf8;">🗺️ Edit in Floorplan</button>
-                </div>
-                <div class="chip-list">
-                  ${(cfg.connected_rooms || []).length === 0
-                    ? `<span style="font-size:11px;color:#64748b;">No connected rooms linked yet. Use the 🗺️ Floorplan &amp; Coverage tab or add below.</span>`
-                    : (cfg.connected_rooms || [])
-                        .map(
-                          (rname, i) => `
-                        <span class="entity-chip" style="border-color:#38bdf8;color:#bae6fd;">🔗 ${this._escape(rname)}
-                          <button class="del-connected-room" data-idx="${i}">×</button>
-                        </span>`
-                        )
-                        .join("")}
-                </div>
-                <div style="display:flex;gap:6px;max-width:360px;">
-                  <select class="select-input" id="add-connected-room-input">
-                    <option value="">— Select adjacent room —</option>
-                    ${rooms
-                      .filter((r) => r.room_name !== (cfg.room_name || selRoom.room_name))
-                      .map(
-                        (r) =>
-                          `<option value="${this._escape(r.room_name)}">${this._escape(
-                            r.room_name
-                          )}</option>`
-                      )
-                      .join("")}
-                  </select>
-                  <button class="btn btn-sm" id="btn-add-connected-room">+ Link Room</button>
-                </div>
-              </div>
-            </div>
-          `
-          }
-        </div>
-
-        <!-- RIGHT COLUMN: Live Combinatorics, NL <-> YAML Studio & .storage Revisions -->
-        <div class="col-right">
-          ${
-            !selRoom
-              ? ""
-              : `
-            <!-- Live Probability & Threshold Combinatorics Matrix -->
-            <div class="panel-card">
-              <div class="card-header">
-                <h3 class="card-title">Live Bayesian Combinatorics</h3>
-                <span class="occ-badge ${isOccupied ? "on" : "off"}">
-                  ${isOccupied ? "Occupied" : "Vacant"}
-                </span>
-              </div>
-
-              <div class="gauge-box">
-                <div>
-                  <div class="gauge-num" style="color:${
-                    Number(livePct) >= threshPct ? "#10b981" : "#38bdf8"
-                  };">${livePct}%</div>
-                  <div style="font-size:10px;color:#94a3b8;margin-top:2px;">
-                    Threshold: ${threshPct}% · Prior: ${priorPct}%
-                  </div>
-                </div>
-                <div style="font-size:11.5px;color:#cbd5e1;line-height:1.4;">
-                  ${this._escape(prev.natural_language_summary || selRoom.natural_language_summary)}
-                </div>
-              </div>
-
-              <div class="comb-section">
-                <div class="comb-title">✓ Solo Triggers (&ge; ${threshPct}% Alone)</div>
-                ${
-                  (comb.solo_triggers || []).length === 0
-                    ? `<div style="font-size:11px;color:#64748b;">No single sensor crosses ${threshPct}% alone.</div>`
-                    : (comb.solo_triggers || [])
-                        .map(
-                          (s) => `
-                        <div class="comb-pill trigger">
-                          <span><strong>${this._escape(s.label)}</strong> <small style="color:#94a3b8;">(${this._escape(
-                            s.preset
-                          )})</small></span>
-                          <strong style="color:#34d399;">${s.posterior_pct}%</strong>
-                        </div>`
-                        )
-                        .join("")
-                }
-              </div>
-
-              <div class="comb-section">
-                <div class="comb-title">⚡ Corroborated Pairs Crossing ${threshPct}%</div>
-                ${
-                  (comb.pair_triggers || []).length === 0
-                    ? `<div style="font-size:11px;color:#64748b;">No 2-sensor sub-threshold pairs cross ${threshPct}%.</div>`
-                    : (comb.pair_triggers || [])
-                        .slice(0, 6)
-                        .map(
-                          (p) => `
-                        <div class="comb-pill pair">
-                          <span>${this._escape(p.labels)}</span>
-                          <strong style="color:#38bdf8;">${p.posterior_pct}%</strong>
-                        </div>`
-                        )
-                        .join("")
-                }
-              </div>
-
-              <div class="comb-section">
-                <div class="comb-title">🛡 Blocked Sub-Threshold Pairs (&lt; ${threshPct}%)</div>
-                ${
-                  (comb.pair_sub_threshold || []).length === 0
-                    ? `<div style="font-size:11px;color:#64748b;">None</div>`
-                    : (comb.pair_sub_threshold || [])
-                        .slice(0, 4)
-                        .map(
-                          (p) => `
-                        <div class="comb-pill safe">
-                          <span>${this._escape(p.labels)}</span>
-                          <span>${p.posterior_pct}%</span>
-                        </div>`
-                        )
-                        .join("")
-                }
-              </div>
-            </div>
-
-            <!-- Bidirectional NL <-> YAML Studio -->
-            <div class="panel-card">
-              <div class="card-header">
-                <h3 class="card-title">NL &harr; YAML Studio</h3>
-              </div>
-              <div class="filter-tabs" style="margin-top:0;">
-                <div class="filter-tab ${this._rightTab === "yaml" ? "active" : ""}" data-rtab="yaml">Designer YAML</div>
-                <div class="filter-tab ${this._rightTab === "ha_yaml" ? "active" : ""}" data-rtab="ha_yaml">HA Bayesian</div>
-                <div class="filter-tab ${this._rightTab === "nl" ? "active" : ""}" data-rtab="nl">AI Translator</div>
-                <div class="filter-tab ${this._rightTab === "guide" ? "active" : ""}" data-rtab="guide">Rule Guide</div>
-              </div>
-
-              ${
-                this._rightTab === "yaml"
-                  ? `
-                <textarea class="code-area" id="yaml-draft-editor">${this._escape(
-                  this._yamlDraft
-                )}</textarea>
-                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
-                  <button class="btn btn-primary btn-sm" id="btn-apply-yaml">Apply YAML to Room</button>
-                </div>`
-                  : this._rightTab === "ha_yaml"
-                  ? `
-                <textarea class="code-area" readonly>${this._escape(
-                  prev.ha_bayesian_yaml || ""
-                )}</textarea>`
-                  : this._rightTab === "guide"
-                  ? `
-                <textarea class="code-area" readonly>${this._escape(
-                  prev.rule_guide || ""
-                )}</textarea>`
-                  : `
-                <label class="field-label">Describe desired room behavior in plain English:</label>
-                <textarea class="code-area" id="nl-prompt-input" style="min-height:95px;" placeholder="e.g. Require either a Frigate bed/walkway zone or both Master Bedroom motion and Steve's S25+ BLE to mark Master Bedroom occupied...">${this._escape(
-                  this._nlPrompt
-                )}</textarea>
-                <div style="display:flex;gap:6px;margin:8px 0;">
-                  <button class="btn btn-primary btn-sm" id="btn-nl-to-yaml">✨ Generate Rules from NL</button>
-                  <button class="btn btn-sm" id="btn-yaml-to-nl">📖 Explain Current Rules</button>
-                </div>
-                ${
-                  this._nlOutput
-                    ? `<div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:10px;font-size:11.5px;white-space:pre-wrap;color:#cbd5e1;max-height:180px;overflow-y:auto;">${this._escape(
-                        this._nlOutput
-                      )}</div>`
-                    : ""
-                }`
-              }
-            </div>
-
-            <!-- .storage Revision History -->
-            <div class="panel-card">
-              <div class="card-header">
-                <h3 class="card-title">.storage Revision History (${
-                  (selRoom.revisions || []).length
-                })</h3>
-              </div>
-              ${
-                (selRoom.revisions || []).length === 0
-                  ? `<div style="font-size:11.5px;color:#64748b;">No prior revisions saved yet for this room. Saving changes automatically records a rollback snapshot in <code>.storage</code>.</div>`
-                  : (selRoom.revisions || [])
-                      .map(
-                        (rev) => `
-                      <div class="rev-row">
-                        <div>
-                          <div style="font-weight:600;color:#e2e8f0;">${this._escape(
-                            rev.note || "Saved config"
-                          )}</div>
-                          <div style="color:#64748b;font-size:10px;">${this._escape(
-                            rev.timestamp
-                          )}</div>
-                        </div>
-                        <button class="btn btn-sm btn-rollback" data-rev-idx="${
-                          rev.index
-                        }">↺ Restore</button>
-                      </div>`
-                      )
-                      .join("")
-              }
-            </div>
-          `
-          }
-        </div>
-        `
+            ? `<div class="content-stack wide">${this._renderReplayPane(selRoom, presets)}</div>`
+            : `<div class="content-stack">${this._renderSimpleRoomEditor(
+                selRoom,
+                cfg,
+                prev,
+                rooms,
+                areas,
+                entities,
+                entityNameMap,
+                presets,
+                activeMap
+              )}</div>`
         }
       </div>
 
@@ -1690,19 +1142,19 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           ? `
         <div class="modal-backdrop" id="global-modal-backdrop">
           <div class="modal-card">
-            <div class="card-header">
-              <h3 class="card-title" style="font-size:16px;">Shared Global Settings (.storage)</h3>
-              <button class="btn btn-sm" id="btn-close-global">✕</button>
+            <div class="card-head">
+              <h3 class="card-title">Global AI &amp; Tracker Settings</h3>
+              <button class="btn-text" id="btn-close-global">✕</button>
             </div>
-            <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;flex-direction:column;gap:12px;">
               <div>
-                <label class="field-label">Default LLM Provider Type</label>
-                <select class="select-input" id="gl-provider">
+                <div class="setting-label" style="margin-bottom:4px;">Vision AI Provider</div>
+                <select class="select" id="gl-provider">
                   <option value="vision_api" ${
                     (this._globalDraft?.llm_provider_type || "vision_api") === "vision_api"
                       ? "selected"
                       : ""
-                  }>OpenAI-Compatible Vision / Chat API (LiteLLM)</option>
+                  }>OpenAI-Compatible Vision API (LiteLLM)</option>
                   <option value="conversation" ${
                     this._globalDraft?.llm_provider_type === "conversation" ? "selected" : ""
                   }>Home Assistant Conversation Agent</option>
@@ -1712,34 +1164,34 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 </select>
               </div>
               <div>
-                <label class="field-label">Shared LLM API URL</label>
-                <input type="text" class="text-input" id="gl-api-url" value="${this._escape(
+                <div class="setting-label" style="margin-bottom:4px;">API Endpoint URL</div>
+                <input type="text" class="input" id="gl-api-url" value="${this._escape(
                   this._globalDraft?.llm_api_url || ""
                 )}" placeholder="http://10.0.0.10:8448/v1/chat/completions" />
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
-                  <label class="field-label">Shared LLM Model</label>
-                  <input type="text" class="text-input" id="gl-model" value="${this._escape(
+                  <div class="setting-label" style="margin-bottom:4px;">Model Name</div>
+                  <input type="text" class="input" id="gl-model" value="${this._escape(
                     this._globalDraft?.llm_model || "gemini-2.5-flash"
                   )}" />
                 </div>
                 <div>
-                  <label class="field-label">HA Conversation Agent ID</label>
-                  <input type="text" class="text-input" id="gl-agent-id" value="${this._escape(
+                  <div class="setting-label" style="margin-bottom:4px;">HA Conversation Agent</div>
+                  <input type="text" class="input" id="gl-agent-id" value="${this._escape(
                     this._globalDraft?.llm_agent_id || ""
                   )}" placeholder="conversation.google_ai_conversation" />
                 </div>
               </div>
               <div>
-                <label class="field-label">Household BLE Area Trackers (comma-separated)</label>
-                <input type="text" class="text-input" id="gl-ble" value="${this._escape(
+                <div class="setting-label" style="margin-bottom:4px;">Household BLE Area Trackers</div>
+                <input type="text" class="input" id="gl-ble" value="${this._escape(
                   (this._globalDraft?.ble_trackers || []).join(", ")
                 )}" />
               </div>
               <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
                 <button class="btn" id="btn-cancel-global">Cancel</button>
-                <button class="btn btn-primary" id="btn-save-global">Save Global Settings</button>
+                <button class="btn btn-primary" id="btn-save-global">Save</button>
               </div>
             </div>
           </div>
@@ -1752,7 +1204,616 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._bindEvents();
   }
 
-  _buildStepSvgPaths(series, width = 940, height = 185) {
+  _renderSimpleRoomEditor(
+    selRoom,
+    cfg,
+    prev,
+    rooms,
+    areas,
+    entities,
+    entityNameMap,
+    presets,
+    activeMap
+  ) {
+    if (!selRoom) {
+      return `<div class="ha-card">Select a room on the left to view or edit its settings.</div>`;
+    }
+
+    const st = this._roomStatusSummary(selRoom);
+    const observations = cfg.bayesian_observations || [];
+    const conditions = cfg.sustaining_conditions || [];
+    const connectedRooms = cfg.connected_rooms || [];
+    const boundaries = cfg.boundary_entities || [];
+    const hasDoorSeal = cfg.mode === "bounded";
+    const timeoutSec = Number(cfg.inactivity_timeout ?? 180);
+    const timeoutMinText = this._formatDuration(timeoutSec);
+
+    return `
+      <!-- 1. Compact Status & Action Header Card -->
+      <div class="ha-card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <span class="status-dot ${st.dotClass}" style="width:12px;height:12px;"></span>
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <h2 style="margin:0;font-size:20px;font-weight:500;">${this._escape(
+                cfg.room_name || selRoom.room_name
+              )}</h2>
+              <span style="font-size:12.5px;font-weight:500;padding:2px 10px;border-radius:999px;background:var(--ha-subtle);border:1px solid var(--ha-divider);color:${
+                st.dotClass === "occupied"
+                  ? "var(--ha-success)"
+                  : st.dotClass === "clearing"
+                  ? "var(--ha-warning)"
+                  : "var(--ha-muted)"
+              };">
+                ${this._escape(st.label)}
+              </span>
+              ${
+                this._dirty
+                  ? `<span style="font-size:12px;color:var(--ha-warning);font-weight:500;">• Unsaved changes</span>`
+                  : ""
+              }
+            </div>
+            <div style="font-size:13px;color:var(--ha-muted);margin-top:3px;">
+              ${this._escape(st.detail)}
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn" id="btn-room-override">
+            ${selRoom.override ? "Release Manual Hold" : "Hold Occupied"}
+          </button>
+          <button class="btn" id="btn-room-refresh">Recalculate</button>
+          <button class="btn btn-primary" id="btn-save-room">Save Changes</button>
+        </div>
+      </div>
+
+      <!-- 2. Card 1: Presence & Motion Sensors -->
+      <div class="ha-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">Presence &amp; Motion Sensors</h3>
+            <div class="card-desc">
+              Choose which sensors detect people in this room and whether they can trigger occupancy on their own or need confirmation from another sensor.
+            </div>
+          </div>
+        </div>
+
+        <div class="list-divider">
+          ${
+            observations.length === 0
+              ? `<div style="padding:16px 0;font-size:13px;color:var(--ha-muted);">No sensors added to this room yet.</div>`
+              : observations
+                  .map((obs, idx) => {
+                    const key = `${obs.entity_id}|${obs.label}`;
+                    const isAct = Boolean(activeMap[key] || activeMap[obs.entity_id]);
+                    const friendlyName =
+                      obs.label || entityNameMap[obs.entity_id] || obs.entity_id || "Sensor";
+                    const roleGroup = this._friendlyRoleGroup(obs);
+                    return `
+                    <div class="sensor-row" data-obs-idx="${idx}">
+                      <div class="sensor-info">
+                        <span class="status-dot ${isAct ? "occupied" : "clear"}" title="${
+                      isAct ? "Currently active" : "Clear"
+                    }"></span>
+                        <div style="min-width:0;">
+                          <div class="sensor-title">${this._escape(friendlyName)}</div>
+                          <div class="sensor-sub">${this._escape(obs.entity_id)}${
+                      obs.state && obs.state !== "on" ? ` = ${this._escape(obs.state)}` : ""
+                    }</div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <select class="select obs-role-simple" data-idx="${idx}">
+                          <option value="primary" ${
+                            roleGroup === "primary" ? "selected" : ""
+                          }>Main room sensor (triggers room alone)</option>
+                          <option value="shared" ${
+                            roleGroup === "shared" ? "selected" : ""
+                          }>Shared / hallway view (needs confirmation)</option>
+                          <option value="keepalive" ${
+                            roleGroup === "keepalive" ? "selected" : ""
+                          }>Keep-alive only (extends timer once occupied)</option>
+                        </select>
+                      </div>
+
+                      <div style="text-align:right;">
+                        <button class="btn-danger-text obs-del" data-idx="${idx}">Remove</button>
+                      </div>
+                    </div>`;
+                  })
+                  .join("")
+          }
+        </div>
+
+        <div style="display:grid;grid-template-columns:1.3fr 1.2fr auto;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--ha-divider);align-items:center;">
+          <input
+            type="text"
+            class="input"
+            id="simple-add-obs-entity"
+            list="pdd-all-entities"
+            placeholder="Add sensor (e.g. binary_sensor.living_room_motion)..."
+          />
+          <select class="select" id="simple-add-obs-role">
+            <option value="primary">Main room sensor (triggers room alone)</option>
+            <option value="shared" selected>Shared / hallway view (needs confirmation)</option>
+            <option value="keepalive">Keep-alive only (extends timer once occupied)</option>
+          </select>
+          <button class="btn" id="btn-simple-add-obs">+ Add Sensor</button>
+        </div>
+      </div>
+
+      <!-- 3. Card 2: Keep Occupied While Active (TV, Media, Appliances) -->
+      <div class="ha-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">Keep Occupied While Active</h3>
+            <div class="card-desc">
+              Prevent the room from clearing when someone is sitting still watching TV, listening to music, or using a device.
+            </div>
+          </div>
+        </div>
+
+        <div class="list-divider">
+          ${
+            conditions.length === 0
+              ? `<div style="padding:14px 0;font-size:13px;color:var(--ha-muted);">No keep-occupied media or appliance rules configured.</div>`
+              : conditions
+                  .map(
+                    (c, idx) => `
+                  <div style="display:grid;grid-template-columns:1.4fr 120px 120px auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--ha-divider);">
+                    <input
+                      type="text"
+                      class="input cond-field"
+                      data-idx="${idx}"
+                      data-key="entity_id"
+                      list="pdd-all-entities"
+                      placeholder="media_player.living_room_tv"
+                      value="${this._escape(c.entity_id || "")}"
+                    />
+                    <select class="select cond-field" data-idx="${idx}" data-key="operator">
+                      <option value="equals" ${(c.operator || "equals") === "equals" ? "selected" : ""}>is</option>
+                      <option value="not_equals" ${c.operator === "not_equals" ? "selected" : ""}>is not</option>
+                      <option value="greater_than" ${c.operator === "greater_than" ? "selected" : ""}>above</option>
+                      <option value="less_than" ${c.operator === "less_than" ? "selected" : ""}>below</option>
+                    </select>
+                    <input
+                      type="text"
+                      class="input cond-field"
+                      data-idx="${idx}"
+                      data-key="state"
+                      placeholder="playing"
+                      value="${this._escape(c.state ?? "playing")}"
+                    />
+                    <button class="btn-danger-text cond-del" data-idx="${idx}">Remove</button>
+                  </div>`
+                  )
+                  .join("")
+          }
+        </div>
+
+        <div style="margin-top:12px;">
+          <button class="btn btn-sm" id="btn-add-condition">+ Add Keep-Occupied Rule</button>
+        </div>
+      </div>
+
+      <!-- 4. Card 3: Clearing & Room Connections -->
+      <div class="ha-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">Clearing &amp; Room Connections</h3>
+            <div class="card-desc">
+              Control how long the room stays occupied after activity stops, and which neighboring rooms immediately clear the countdown when someone walks out.
+            </div>
+          </div>
+        </div>
+
+        <div class="list-divider">
+          <!-- Clear Delay -->
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Clear after inactivity</div>
+              <div class="setting-help">How long to wait after all sensors stop seeing activity (${timeoutMinText}).</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;width:150px;">
+              <input
+                type="number"
+                class="input"
+                id="cfg-inactivity-timeout"
+                min="15"
+                max="3600"
+                step="15"
+                value="${timeoutSec}"
+              />
+              <span style="font-size:13px;color:var(--ha-muted);">sec</span>
+            </div>
+          </div>
+
+          <!-- Adjacent Rooms Hand-Off -->
+          <div class="setting-row" style="align-items:flex-start;flex-direction:column;">
+            <div style="width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+              <div>
+                <div class="setting-label">Connected adjacent rooms</div>
+                <div class="setting-help">
+                  If this room is only counting down and someone is detected in a connected room, clear the countdown immediately.
+                </div>
+              </div>
+              <button class="btn btn-sm" id="btn-open-floorplan-tab">Edit on Floorplan</button>
+            </div>
+
+            <div class="chip-row" style="margin-top:8px;">
+              ${
+                connectedRooms.length === 0
+                  ? `<span style="font-size:13px;color:var(--ha-muted);">No adjacent rooms linked.</span>`
+                  : connectedRooms
+                      .map(
+                        (rname, i) => `
+                      <span class="ha-chip">
+                        ${this._escape(rname)}
+                        <button class="del-connected-room" data-idx="${i}" title="Unlink room">×</button>
+                      </span>`
+                      )
+                      .join("")
+              }
+              <div style="display:inline-flex;gap:6px;align-items:center;">
+                <select class="select" id="add-connected-room-input" style="width:190px;padding:5px 10px;">
+                  <option value="">+ Link adjacent room...</option>
+                  ${rooms
+                    .filter(
+                      (r) =>
+                        r.room_name !== (cfg.room_name || selRoom.room_name) &&
+                        !connectedRooms.includes(r.room_name)
+                    )
+                    .map(
+                      (r) =>
+                        `<option value="${this._escape(r.room_name)}">${this._escape(
+                          r.room_name
+                        )}</option>`
+                    )
+                    .join("")}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Closed Door Latch Toggle -->
+          <div class="setting-row" style="align-items:flex-start;flex-direction:column;">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+              <input
+                type="checkbox"
+                id="cfg-bounded-toggle"
+                ${hasDoorSeal ? "checked" : ""}
+                style="width:16px;height:16px;"
+              />
+              <div>
+                <div class="setting-label">Closed doors trap occupancy in this room</div>
+                <div class="setting-help">
+                  Enable only if every exit from this room has a physical door contact sensor.
+                </div>
+              </div>
+            </label>
+
+            ${
+              hasDoorSeal
+                ? `
+              <div style="margin-top:12px;width:100%;padding:12px;background:var(--ha-subtle);border-radius:8px;border:1px solid var(--ha-divider);">
+                <div style="font-size:12.5px;font-weight:500;margin-bottom:8px;">Door contact sensors for this room</div>
+                <div class="chip-row" style="margin-bottom:10px;">
+                  ${
+                    boundaries.length === 0
+                      ? `<span style="font-size:12.5px;color:var(--ha-warning);">Add at least one door contact sensor below so the room can seal when closed.</span>`
+                      : boundaries
+                          .map(
+                            (eid, i) => `
+                          <span class="ha-chip">
+                            ${this._escape(eid)}
+                            <button class="del-boundary" data-idx="${i}">×</button>
+                          </span>`
+                          )
+                          .join("")
+                  }
+                </div>
+                <div style="display:flex;gap:8px;max-width:420px;">
+                  <input type="text" class="input" id="add-boundary-input" list="pdd-all-entities" placeholder="binary_sensor.room_door" />
+                  <button class="btn btn-sm" id="btn-add-boundary">Add Door</button>
+                </div>
+              </div>`
+                : ""
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Progressive Disclosure: Collapsible Advanced Settings & Diagnostics -->
+      <div class="advanced-toggle-bar" id="btn-toggle-advanced">
+        <div>
+          <div style="font-size:14px;font-weight:500;color:var(--ha-text);">
+            ${this._showAdvanced ? "▾ Hide Advanced Settings & Diagnostics" : "▸ Advanced Settings & Diagnostics"}
+          </div>
+          <div style="font-size:12.5px;color:var(--ha-muted);margin-top:2px;">
+            Bayesian weights, AI camera vision check, sensor combination truth table, YAML editor, and revision history
+          </div>
+        </div>
+        <span style="font-size:12.5px;color:var(--ha-primary);font-weight:500;">
+          ${this._showAdvanced ? "Collapse" : "Expand"}
+        </span>
+      </div>
+
+      ${
+        this._showAdvanced
+          ? this._renderAdvancedDrawer(selRoom, cfg, prev, areas, presets, activeMap)
+          : ""
+      }
+    `;
+  }
+
+  _renderAdvancedDrawer(selRoom, cfg, prev, areas, presets, activeMap) {
+    const priorPct = Math.round(Number(cfg.bayesian_prior ?? 0.2) * 100);
+    const threshPct = Math.round(Number(cfg.bayesian_threshold ?? 0.75) * 100);
+    const livePct = Number(
+      prev.probability_pct ?? (selRoom ? selRoom.bayesian_probability_pct : 0)
+    ).toFixed(1);
+    const comb = prev.combinatorics || {};
+
+    return `
+      <div class="ha-card">
+        <div class="sub-tabs">
+          <button class="sub-tab ${
+            this._advTab === "tuning" ? "active" : ""
+          }" data-adv-tab="tuning">Bayesian &amp; Vision Tuning</button>
+          <button class="sub-tab ${
+            this._advTab === "truth" ? "active" : ""
+          }" data-adv-tab="truth">Combination Truth Table</button>
+          <button class="sub-tab ${
+            this._advTab === "yaml" ? "active" : ""
+          }" data-adv-tab="yaml">YAML &amp; AI Rules</button>
+          <button class="sub-tab ${
+            this._advTab === "revisions" ? "active" : ""
+          }" data-adv-tab="revisions">Saved Revisions (${(selRoom.revisions || []).length})</button>
+          <div style="flex:1;"></div>
+          <button class="btn btn-sm" id="btn-open-global">Global AI Settings</button>
+          <button class="btn btn-sm" id="btn-jump-to-replay">Open Replay Simulator</button>
+        </div>
+
+        ${
+          this._advTab === "tuning"
+            ? `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:14px;margin-bottom:20px;">
+            <div>
+              <div class="setting-label" style="font-size:12.5px;margin-bottom:4px;">Home Assistant Area</div>
+              <select class="select" id="cfg-area-id">
+                <option value="">— None —</option>
+                ${areas
+                  .map(
+                    (a) =>
+                      `<option value="${this._escape(a.id)}" ${
+                        cfg.area_id === a.id ? "selected" : ""
+                      }>${this._escape(a.name)}</option>`
+                  )
+                  .join("")}
+              </select>
+            </div>
+            <div>
+              <div class="setting-label" style="font-size:12.5px;margin-bottom:4px;">Prior Baseline: ${priorPct}%</div>
+              <input type="range" min="5" max="50" step="1" id="cfg-prior-slider" value="${priorPct}" style="width:100%;" />
+            </div>
+            <div>
+              <div class="setting-label" style="font-size:12.5px;margin-bottom:4px;">Activation Threshold: ${threshPct}%</div>
+              <input type="range" min="50" max="95" step="1" id="cfg-thresh-slider" value="${threshPct}" style="width:100%;" />
+            </div>
+            <div>
+              <div class="setting-label" style="font-size:12.5px;margin-bottom:4px;">Camera Entity (AI Vision)</div>
+              <div style="display:flex;gap:6px;">
+                <input type="text" class="input" id="cfg-camera-entity" list="pdd-all-entities" value="${this._escape(
+                  cfg.camera_entity || ""
+                )}" placeholder="camera.living_room" />
+                <button class="btn btn-sm" id="btn-room-verify" title="Run AI Vision Check now">Check</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div class="setting-label">Detailed Sensor Probabilities — Current Score: ${livePct}%</div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-sm" id="btn-add-ble">+ Add Household BLE</button>
+              <button class="btn btn-sm" id="btn-sync-triggers">Sync Instant Triggers</button>
+            </div>
+          </div>
+
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--ha-divider);text-align:left;color:var(--ha-muted);">
+                  <th style="padding:8px 6px;">Entity ID &amp; Label</th>
+                  <th style="padding:8px 6px;">Preset</th>
+                  <th style="padding:8px 6px;">P(E|Occ)</th>
+                  <th style="padding:8px 6px;">P(E|Vac)</th>
+                  <th style="padding:8px 6px;">Operator &amp; State</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(cfg.bayesian_observations || [])
+                  .map((obs, idx) => {
+                    const presetVal = obs.preset || obs.weight || "moderate";
+                    const pDefaults = presets[presetVal] || {
+                      prob_given_true: 0.72,
+                      prob_given_false: 0.12,
+                    };
+                    const pTrue = Number(obs.prob_given_true ?? pDefaults.prob_given_true);
+                    const pFalse = Number(obs.prob_given_false ?? pDefaults.prob_given_false);
+                    return `
+                    <tr style="border-bottom:1px solid var(--ha-divider);">
+                      <td style="padding:8px 6px;">
+                        <input type="text" class="input obs-field" data-idx="${idx}" data-key="entity_id" list="pdd-all-entities" value="${this._escape(
+                      obs.entity_id || ""
+                    )}" style="margin-bottom:4px;font-family:monospace;font-size:11.5px;" />
+                        <input type="text" class="input obs-field" data-idx="${idx}" data-key="label" value="${this._escape(
+                      obs.label || ""
+                    )}" placeholder="Label" />
+                      </td>
+                      <td style="padding:8px 6px;width:130px;">
+                        <select class="select obs-preset" data-idx="${idx}">
+                          ${["decisive", "strong", "moderate", "supporting", "weak_hint", "custom"]
+                            .map(
+                              (p) =>
+                                `<option value="${p}" ${presetVal === p ? "selected" : ""}>${p}</option>`
+                            )
+                            .join("")}
+                        </select>
+                      </td>
+                      <td style="padding:8px 6px;width:90px;">
+                        <input type="number" step="0.01" min="0.01" max="0.99" class="input obs-prob" data-idx="${idx}" data-key="prob_given_true" value="${pTrue.toFixed(
+                      2
+                    )}" />
+                      </td>
+                      <td style="padding:8px 6px;width:90px;">
+                        <input type="number" step="0.01" min="0.01" max="0.99" class="input obs-prob" data-idx="${idx}" data-key="prob_given_false" value="${pFalse.toFixed(
+                      2
+                    )}" />
+                      </td>
+                      <td style="padding:8px 6px;width:190px;">
+                        <div style="display:flex;gap:4px;">
+                          <select class="select obs-field" data-idx="${idx}" data-key="operator">
+                            ${["equals", "in", "greater_than", "less_than", "not_equals"]
+                              .map(
+                                (op) =>
+                                  `<option value="${op}" ${
+                                    (obs.operator || "equals") === op ? "selected" : ""
+                                  }>${op}</option>`
+                              )
+                              .join("")}
+                          </select>
+                          <input type="text" class="input obs-field" data-idx="${idx}" data-key="state" value="${this._escape(
+                      obs.state ?? "on"
+                    )}" style="width:80px;" />
+                        </div>
+                      </td>
+                    </tr>`;
+                  })
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        `
+            : this._advTab === "truth"
+            ? `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:16px;">
+            <div>
+              <div class="setting-label" style="margin-bottom:8px;">Sensors that trigger occupancy alone (&ge; ${threshPct}%)</div>
+              ${
+                (comb.solo_triggers || []).length === 0
+                  ? `<div style="font-size:13px;color:var(--ha-muted);">None — at least 2 sensors must agree.</div>`
+                  : (comb.solo_triggers || [])
+                      .map(
+                        (s) => `
+                      <div style="display:flex;justify-content:space-between;padding:8px 10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;margin-bottom:6px;font-size:13px;">
+                        <span>${this._escape(s.label)}</span>
+                        <strong style="color:var(--ha-success);">${s.posterior_pct}%</strong>
+                      </div>`
+                      )
+                      .join("")
+              }
+            </div>
+            <div>
+              <div class="setting-label" style="margin-bottom:8px;">2-sensor combinations that trigger (&ge; ${threshPct}%)</div>
+              ${
+                (comb.pair_triggers || []).length === 0
+                  ? `<div style="font-size:13px;color:var(--ha-muted);">No 2-sensor combinations cross threshold.</div>`
+                  : (comb.pair_triggers || [])
+                      .slice(0, 8)
+                      .map(
+                        (p) => `
+                      <div style="display:flex;justify-content:space-between;padding:8px 10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;margin-bottom:6px;font-size:13px;">
+                        <span>${this._escape(p.labels)}</span>
+                        <strong style="color:var(--ha-primary);">${p.posterior_pct}%</strong>
+                      </div>`
+                      )
+                      .join("")
+              }
+            </div>
+            <div>
+              <div class="setting-label" style="margin-bottom:8px;">Ignored combinations (&lt; ${threshPct}%)</div>
+              ${
+                (comb.pair_sub_threshold || []).length === 0
+                  ? `<div style="font-size:13px;color:var(--ha-muted);">None</div>`
+                  : (comb.pair_sub_threshold || [])
+                      .slice(0, 6)
+                      .map(
+                        (p) => `
+                      <div style="display:flex;justify-content:space-between;padding:8px 10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;margin-bottom:6px;font-size:13px;color:var(--ha-muted);">
+                        <span>${this._escape(p.labels)}</span>
+                        <span>${p.posterior_pct}%</span>
+                      </div>`
+                      )
+                      .join("")
+              }
+            </div>
+          </div>
+        `
+            : this._advTab === "yaml"
+            ? `
+          <div style="display:flex;gap:6px;margin-bottom:10px;">
+            <button class="btn btn-sm ${this._rightTab === "yaml" ? "btn-primary" : ""}" data-rtab="yaml">Room YAML</button>
+            <button class="btn btn-sm ${this._rightTab === "ha_yaml" ? "btn-primary" : ""}" data-rtab="ha_yaml">Native HA Bayesian YAML</button>
+            <button class="btn btn-sm ${this._rightTab === "nl" ? "btn-primary" : ""}" data-rtab="nl">Plain-English AI Builder</button>
+          </div>
+          ${
+            this._rightTab === "yaml"
+              ? `
+            <textarea class="code-area" id="yaml-draft-editor">${this._escape(
+              this._yamlDraft
+            )}</textarea>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+              <button class="btn btn-primary btn-sm" id="btn-apply-yaml">Apply YAML</button>
+            </div>`
+              : this._rightTab === "ha_yaml"
+              ? `<textarea class="code-area" readonly>${this._escape(
+                  prev.ha_bayesian_yaml || ""
+                )}</textarea>`
+              : `
+            <textarea class="code-area" id="nl-prompt-input" style="min-height:90px;" placeholder="Describe how this room should behave in plain English...">${this._escape(
+              this._nlPrompt
+            )}</textarea>
+            <div style="display:flex;gap:8px;margin-top:8px;">
+              <button class="btn btn-primary btn-sm" id="btn-nl-to-yaml">Generate Rules</button>
+              <button class="btn btn-sm" id="btn-yaml-to-nl">Explain Current Rules</button>
+            </div>
+            ${
+              this._nlOutput
+                ? `<div style="margin-top:10px;padding:12px;background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;font-size:13px;white-space:pre-wrap;">${this._escape(
+                    this._nlOutput
+                  )}</div>`
+                : ""
+            }`
+          }
+        `
+            : `
+          ${
+            (selRoom.revisions || []).length === 0
+              ? `<div style="font-size:13px;color:var(--ha-muted);">No saved revisions yet.</div>`
+              : (selRoom.revisions || [])
+                  .map(
+                    (rev) => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--ha-divider);font-size:13px;">
+                    <div>
+                      <div style="font-weight:500;">${this._escape(rev.note || "Saved settings")}</div>
+                      <div style="font-size:12px;color:var(--ha-muted);">${this._escape(
+                        rev.timestamp
+                      )}</div>
+                    </div>
+                    <button class="btn btn-sm btn-rollback" data-rev-idx="${rev.index}">Restore</button>
+                  </div>`
+                  )
+                  .join("")
+          }
+        `
+        }
+      </div>
+    `;
+  }
+
+  _buildStepSvgPaths(series, width = 900, height = 170) {
     const pts = series || [];
     if (pts.length === 0) {
       return { linePath: "", areaPath: "" };
@@ -1781,532 +1842,6 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     return { linePath, areaPath };
   }
 
-  _presetColor(preset) {
-    const p = String(preset || "").toLowerCase();
-    if (p === "decisive") return "#10b981";
-    if (p === "strong") return "#38bdf8";
-    if (p === "moderate") return "#818cf8";
-    if (p === "supporting") return "#f59e0b";
-    if (p === "door") return "#a855f7";
-    return "#64748b";
-  }
-
-  _renderStatisticsPane(selRoom) {
-    if (!selRoom) {
-      return `<div class="panel-card">Select a room to inspect statistics.</div>`;
-    }
-    const st = this._statsData;
-    if (!st || st.entry_id !== selRoom.entry_id) {
-      return `<div class="panel-card">Loading ${this._historyHours}h historical timeline &amp; sensor attribution for <strong>${this._escape(
-        selRoom.room_name
-      )}</strong>...</div>`;
-    }
-    const sum = st.summary || {};
-    const series = st.series || [];
-    const swimlanes = st.swimlanes || [];
-    const W = 940;
-    const H = 185;
-    const { linePath, areaPath } = this._buildStepSvgPaths(series, W, H);
-    const threshY = H - (Number(st.threshold_pct || 75) / 100) * (H - 12) - 6;
-    const priorY = H - (Number(st.prior_pct || 20) / 100) * (H - 12) - 6;
-
-    const occBands = series
-      .filter((s) => s.is_present && Number(s.width_pct || 0) > 0)
-      .map((s) => {
-        const x = (Number(s.offset_pct || 0) / 100) * W;
-        const w = Math.max(2, (Number(s.width_pct || 0) / 100) * W);
-        return `<rect x="${x.toFixed(1)}" y="0" width="${w.toFixed(
-          1
-        )}" height="${H}" fill="rgba(16, 185, 129, 0.14)" />`;
-      })
-      .join("");
-
-    return `
-      <div class="panel-card">
-        <div class="card-header" style="flex-wrap:wrap;">
-          <div>
-            <h2 class="card-title" style="font-size:18px;">
-              📈 ${this._escape(selRoom.room_name)} — ${sum.window_hours || this._historyHours}h Occupancy &amp; Bayesian Signal Analytics
-            </h2>
-            <div class="card-subtitle">
-              Window: ${this._escape((st.start_iso || "").slice(11, 19))} UTC &rarr; ${this._escape(
-      (st.end_iso || "").slice(11, 19)
-    )} UTC · Threshold: ${st.threshold_pct}% · Baseline Prior: ${st.prior_pct}%
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm" id="btn-reload-stats">↻ Refresh Analytics</button>
-            <button class="btn btn-primary btn-sm" id="btn-jump-to-replay">⏮️ Open in Replay Simulator</button>
-          </div>
-        </div>
-
-        <div class="kpi-grid-6" style="margin-top:12px;">
-          <div class="kpi-card">
-            <div class="kpi-label">Occupancy Duty Cycle</div>
-            <div class="kpi-val" style="color:#10b981;">${Number(sum.occupied_pct || 0).toFixed(1)}%</div>
-            <div class="kpi-sub">${Number(sum.occupied_minutes || 0).toFixed(1)} min occupied</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">State Transitions</div>
-            <div class="kpi-val" style="color:#38bdf8;">${sum.transition_count || 0}</div>
-            <div class="kpi-sub">Vacant &rarr; Occupied entries</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Wasp-in-a-Box Hold</div>
-            <div class="kpi-val" style="color:#a855f7;">${Number(sum.sealed_hold_minutes || 0).toFixed(
-              1
-            )}m</div>
-            <div class="kpi-sub">Held by sealed door latch</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Deflected Noise</div>
-            <div class="kpi-val" style="color:#f59e0b;">${sum.sub_threshold_deflections || 0}</div>
-            <div class="kpi-sub">Sub-threshold events blocked</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Mean Occupied Prob</div>
-            <div class="kpi-val">${Number(sum.avg_occupied_probability_pct || 0).toFixed(1)}%</div>
-            <div class="kpi-sub">Threshold: ${st.threshold_pct}%</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Peak Posterior Prob</div>
-            <div class="kpi-val" style="color:#34d399;">${Number(sum.peak_probability_pct || 0).toFixed(
-              1
-            )}%</div>
-            <div class="kpi-sub">Baseline Prior: ${st.prior_pct}%</div>
-          </div>
-        </div>
-
-        <!-- SVG Probability & Occupancy Timeline Chart -->
-        <div style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:12px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11.5px;color:#94a3b8;">
-            <span><strong>Bayesian Posterior Probability Curve (0–100%)</strong> &amp; Shaded Occupied Intervals</span>
-            <div style="display:flex;gap:14px;">
-              <span><span style="display:inline-block;width:10px;height:10px;background:rgba(16,185,129,0.35);border:1px solid #10b981;margin-right:5px;"></span>Occupied State</span>
-              <span><span style="display:inline-block;width:12px;height:2px;background:#38bdf8;vertical-align:middle;margin-right:5px;"></span>Posterior %</span>
-              <span><span style="display:inline-block;width:12px;height:2px;background:#f59e0b;vertical-align:middle;margin-right:5px;"></span>Threshold (${st.threshold_pct}%)</span>
-            </div>
-          </div>
-          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:190px;display:block;">
-            <defs>
-              <linearGradient id="probGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35" />
-                <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.02" />
-              </linearGradient>
-            </defs>
-            ${occBands}
-            <line x1="0" y1="${threshY.toFixed(1)}" x2="${W}" y2="${threshY.toFixed(
-      1
-    )}" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6,4" />
-            <line x1="0" y1="${priorY.toFixed(1)}" x2="${W}" y2="${priorY.toFixed(
-      1
-    )}" stroke="#475569" stroke-width="1" stroke-dasharray="3,4" />
-            <path d="${areaPath}" fill="url(#probGrad)" />
-            <path d="${linePath}" fill="none" stroke="#38bdf8" stroke-width="2.2" />
-            <text x="8" y="${Math.max(12, threshY - 5).toFixed(
-              1
-            )}" fill="#f59e0b" font-size="10" font-weight="700">Threshold ${st.threshold_pct}%</text>
-            <text x="8" y="${Math.max(12, priorY - 5).toFixed(
-              1
-            )}" fill="#64748b" font-size="10">Prior ${st.prior_pct}%</text>
-          </svg>
-        </div>
-      </div>
-
-      <!-- Synchronized Multi-Track Sensor Swimlanes -->
-      <div class="panel-card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Synchronized Sensor Activity Swimlanes (${swimlanes.length} Tracked Signals)</h3>
-            <div class="card-subtitle">Each horizontal bar shows when a sensor matched its active occupancy condition across the ${
-              sum.window_hours || this._historyHours
-            }h window.</div>
-          </div>
-        </div>
-        <div>
-          ${swimlanes
-            .map((lane) => {
-              const color = this._presetColor(lane.preset);
-              const segsHtml = (lane.segments || [])
-                .map(
-                  (seg) =>
-                    `<div class="swimlane-seg" title="${this._escape(lane.label)}: ${this._escape(
-                      seg.state
-                    )} (${this._escape(seg.start_iso.slice(11, 19))} - ${this._escape(
-                      seg.end_iso.slice(11, 19)
-                    )})" style="left:${seg.start_pct}%;width:${seg.width_pct}%;background:${color};"></div>`
-                )
-                .join("");
-              return `
-                <div class="swimlane-row">
-                  <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span>
-                    <strong style="color:#e2e8f0;">${this._escape(lane.label)}</strong>
-                    <span style="color:#64748b;font-size:10px;margin-left:4px;">(${this._escape(
-                      lane.preset
-                    )})</span>
-                  </div>
-                  <div class="swimlane-track">${segsHtml}</div>
-                  <div style="text-align:right;color:#cbd5e1;font-size:11px;">
-                    <strong>${Number(lane.active_pct || 0).toFixed(1)}%</strong>
-                    <span style="color:#64748b;">(${Number(lane.active_minutes || 0).toFixed(
-                      0
-                    )}m)</span>
-                  </div>
-                </div>`;
-            })
-            .join("")}
-        </div>
-      </div>
-
-      <!-- Sensor Attribution & False-Alarm Deflection Table -->
-      <div class="panel-card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Sensor Signal Attribution &amp; Noise Deflection Breakdown</h3>
-            <div class="card-subtitle">Evaluate which sensors reliably corroborate occupancy versus which sensors fire alone without crossing the ${
-              st.threshold_pct
-            }% threshold.</div>
-          </div>
-        </div>
-        <div style="overflow-x:auto;">
-          <table class="obs-table">
-            <thead>
-              <tr>
-                <th>Sensor Label &amp; Entity ID</th>
-                <th>Tier / Preset</th>
-                <th>Weights P(E|T) / P(E|F)</th>
-                <th>Solo Posterior</th>
-                <th>Active Duty</th>
-                <th>Activations</th>
-                <th>Corroborated Occupancies</th>
-                <th>Deflected Below Threshold</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${swimlanes
-                .map(
-                  (lane) => `
-                <tr>
-                  <td>
-                    <div style="font-weight:600;color:#f1f5f9;">${this._escape(lane.label)}</div>
-                    <div style="font-family:monospace;font-size:10.5px;color:#64748b;">${this._escape(
-                      lane.entity_id
-                    )}</div>
-                  </td>
-                  <td><span class="occ-badge" style="background:#1e293b;color:${this._presetColor(
-                    lane.preset
-                  )};">${this._escape(lane.preset.toUpperCase())}</span></td>
-                  <td><code>${Number(lane.prob_given_true).toFixed(2)} / ${Number(
-                    lane.prob_given_false
-                  ).toFixed(2)}</code></td>
-                  <td><strong>${Number(lane.solo_posterior_pct).toFixed(1)}%</strong></td>
-                  <td>${Number(lane.active_pct).toFixed(1)}% (${Number(lane.active_minutes).toFixed(
-                    1
-                  )}m)</td>
-                  <td>${lane.activation_count}</td>
-                  <td style="color:#34d399;font-weight:700;">${lane.corroborated_count}</td>
-                  <td style="color:${lane.deflected_count > 0 ? "#f59e0b" : "#64748b"};font-weight:700;">
-                    ${lane.deflected_count} ${lane.deflected_count > 0 ? "(blocked solo noise)" : ""}
-                  </td>
-                </tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }
-
-  _renderReplayPane(selRoom, presets) {
-    if (!selRoom) {
-      return `<div class="panel-card">Select a room to run historical replay &amp; parameter tuning.</div>`;
-    }
-    const cand = this._replayCandidate || this._draftConfig || {};
-    const rep = this._replayData;
-    const candPriorPct = Math.round(Number(cand.bayesian_prior ?? 0.2) * 100);
-    const candThreshPct = Math.round(Number(cand.bayesian_threshold ?? 0.75) * 100);
-
-    if (!rep || rep.entry_id !== selRoom.entry_id) {
-      return `<div class="panel-card">Simulating historical What-If Replay for <strong>${this._escape(
-        selRoom.room_name
-      )}</strong>...</div>`;
-    }
-
-    const baseRes = rep.baseline || {};
-    const candRes = rep.candidate || {};
-    const deltas = rep.deltas || {};
-    const divergences = rep.divergence_windows || [];
-    const W = 940;
-    const H = 195;
-    const basePaths = this._buildStepSvgPaths(baseRes.series || [], W, H);
-    const candPaths = this._buildStepSvgPaths(candRes.series || [], W, H);
-    const candThreshY = H - (candThreshPct / 100) * (H - 12) - 6;
-
-    const divBands = divergences
-      .map((d) => {
-        const x = (Number(d.start_pct || 0) / 100) * W;
-        const w = Math.max(3, (Number(d.width_pct || 0) / 100) * W);
-        const fill =
-          d.type === "false_positive_eliminated"
-            ? "rgba(244, 63, 94, 0.24)"
-            : "rgba(16, 185, 129, 0.24)";
-        return `<rect x="${x.toFixed(1)}" y="0" width="${w.toFixed(
-          1
-        )}" height="${H}" fill="${fill}" />`;
-      })
-      .join("");
-
-    return `
-      <!-- Top Delta Comparison & Action Bar -->
-      <div class="panel-card">
-        <div class="card-header" style="flex-wrap:wrap;">
-          <div>
-            <h2 class="card-title" style="font-size:18px;">
-              ⏮️ ${this._escape(selRoom.room_name)} — Historical What-If Replay &amp; Bayesian Tuning Simulator (${
-      this._historyHours
-    }h)
-            </h2>
-            <div class="card-subtitle">
-              Tune prior, threshold, timeouts, or sensor weights below and immediately see how historical occupancy decisions change against saved baseline.
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-sm" id="btn-replay-reset">↺ Reset to Saved Baseline</button>
-            <button class="btn btn-primary btn-sm" id="btn-replay-run">▶ Run Replay</button>
-            <button class="btn btn-success btn-sm" id="btn-replay-apply">💾 Apply Tuned Config to Room (.storage)</button>
-          </div>
-        </div>
-
-        <div class="kpi-grid-6" style="margin-top:12px;">
-          <div class="kpi-card">
-            <div class="kpi-label">Baseline Occupied</div>
-            <div class="kpi-val">${Number(baseRes.summary?.occupied_pct || 0).toFixed(1)}%</div>
-            <div class="kpi-sub">${Number(baseRes.summary?.occupied_minutes || 0).toFixed(
-              1
-            )}m (${baseRes.summary?.transition_count || 0} transitions)</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Tuned Candidate Occupied</div>
-            <div class="kpi-val" style="color:#38bdf8;">${Number(
-              candRes.summary?.occupied_pct || 0
-            ).toFixed(1)}%</div>
-            <div class="kpi-sub">${Number(candRes.summary?.occupied_minutes || 0).toFixed(
-              1
-            )}m (${candRes.summary?.transition_count || 0} transitions)</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Duty Cycle Delta</div>
-            <div class="kpi-val" style="color:${
-              Number(deltas.occupied_pct_delta || 0) < 0
-                ? "#f43f5e"
-                : Number(deltas.occupied_pct_delta || 0) > 0
-                ? "#10b981"
-                : "#94a3b8"
-            };">${Number(deltas.occupied_pct_delta || 0) >= 0 ? "+" : ""}${Number(
-      deltas.occupied_pct_delta || 0
-    ).toFixed(1)}%</div>
-            <div class="kpi-sub">${
-              Number(deltas.occupied_minutes_delta || 0) >= 0 ? "+" : ""
-            }${Number(deltas.occupied_minutes_delta || 0).toFixed(1)} min vs baseline</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">False Positives Cut</div>
-            <div class="kpi-val" style="color:#f43f5e;">${Number(
-              deltas.false_positive_eliminated_minutes || 0
-            ).toFixed(1)}m</div>
-            <div class="kpi-sub">Baseline Occupied &rarr; Tuned Vacant</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Dropouts Prevented</div>
-            <div class="kpi-val" style="color:#10b981;">${Number(
-              deltas.occupancy_gained_minutes || 0
-            ).toFixed(1)}m</div>
-            <div class="kpi-sub">Baseline Vacant &rarr; Tuned Occupied</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Timeline Agreement</div>
-            <div class="kpi-val">${Number(deltas.agreement_pct ?? 100).toFixed(1)}%</div>
-            <div class="kpi-sub">${deltas.divergence_count || 0} divergence windows</div>
-          </div>
-        </div>
-
-        <!-- Dual-Curve Overlay SVG Chart -->
-        <div style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:12px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11.5px;color:#94a3b8;flex-wrap:wrap;gap:8px;">
-            <span><strong>Baseline vs. Tuned Candidate Posterior Probability Overlay</strong></span>
-            <div style="display:flex;gap:14px;flex-wrap:wrap;">
-              <span><span style="display:inline-block;width:12px;height:2px;background:#94a3b8;vertical-align:middle;margin-right:5px;"></span>Saved Baseline (%)</span>
-              <span><span style="display:inline-block;width:12px;height:2px;background:#38bdf8;vertical-align:middle;margin-right:5px;"></span>Tuned Candidate (%)</span>
-              <span><span style="display:inline-block;width:10px;height:10px;background:rgba(244,63,94,0.35);border:1px solid #f43f5e;margin-right:5px;"></span>False Positive Cut</span>
-              <span><span style="display:inline-block;width:10px;height:10px;background:rgba(16,185,129,0.35);border:1px solid #10b981;margin-right:5px;"></span>Occupancy Gained</span>
-            </div>
-          </div>
-          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:195px;display:block;">
-            ${divBands}
-            <line x1="0" y1="${candThreshY.toFixed(1)}" x2="${W}" y2="${candThreshY.toFixed(
-      1
-    )}" stroke="#10b981" stroke-width="1.4" stroke-dasharray="6,4" />
-            <path d="${basePaths.linePath}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="4,3" />
-            <path d="${candPaths.linePath}" fill="none" stroke="#38bdf8" stroke-width="2.4" />
-            <text x="8" y="${Math.max(12, candThreshY - 5).toFixed(
-              1
-            )}" fill="#10b981" font-size="10" font-weight="700">Candidate Threshold ${candThreshPct}%</text>
-          </svg>
-        </div>
-      </div>
-
-      <!-- Side-by-Side Candidate Sandbox & Divergence Windows Inspector -->
-      <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:16px;align-items:start;">
-        <div class="panel-card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Candidate Tuning Sandbox (What-If Parameters)</h3>
-              <div class="card-subtitle">Adjust sliders or sensor weights to test how they would have performed over the last ${
-                this._historyHours
-              } hours.</div>
-            </div>
-          </div>
-
-          <div class="form-grid-4" style="margin-bottom:12px;">
-            <div>
-              <label class="field-label">Candidate Prior: <strong style="color:#38bdf8;">${candPriorPct}%</strong></label>
-              <input type="range" min="5" max="50" step="1" id="rep-prior-slider" value="${candPriorPct}" style="width:100%;" />
-            </div>
-            <div>
-              <label class="field-label">Candidate Threshold: <strong style="color:#10b981;">${candThreshPct}%</strong></label>
-              <input type="range" min="50" max="95" step="1" id="rep-thresh-slider" value="${candThreshPct}" style="width:100%;" />
-            </div>
-            <div>
-              <label class="field-label">Inactivity Timeout (s)</label>
-              <input type="number" class="num-input" id="rep-inactivity" value="${Number(
-                cand.inactivity_timeout ?? 240
-              )}" />
-            </div>
-            <div>
-              <label class="field-label">Door Grace Timeout (s)</label>
-              <input type="number" class="num-input" id="rep-grace" value="${Number(
-                cand.grace_timeout ?? 60
-              )}" />
-            </div>
-          </div>
-
-          <div style="overflow-x:auto;">
-            <table class="obs-table">
-              <thead>
-                <tr>
-                  <th>Sensor Label</th>
-                  <th>Candidate Preset</th>
-                  <th>P(E|Occ)</th>
-                  <th>P(E|Vac)</th>
-                  <th>Solo %</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${(cand.bayesian_observations || [])
-                  .map((obs, idx) => {
-                    const presetVal = obs.preset || "moderate";
-                    const pDefaults = presets[presetVal] || {
-                      prob_given_true: 0.72,
-                      prob_given_false: 0.12,
-                    };
-                    const pTrue = Number(obs.prob_given_true ?? pDefaults.prob_given_true);
-                    const pFalse = Number(obs.prob_given_false ?? pDefaults.prob_given_false);
-                    const p0 = Math.max(0.01, Math.min(0.99, Number(cand.bayesian_prior ?? 0.2)));
-                    const soloOdds =
-                      (p0 / (1 - p0)) * (Math.max(0.001, pTrue) / Math.max(0.001, pFalse));
-                    const soloPct = ((soloOdds / (1 + soloOdds)) * 100).toFixed(1);
-                    return `
-                      <tr>
-                        <td>
-                          <div style="font-weight:600;color:#e2e8f0;">${this._escape(
-                            obs.label || obs.entity_id
-                          )}</div>
-                          <div style="font-size:10px;color:#64748b;font-family:monospace;">${this._escape(
-                            obs.entity_id
-                          )}</div>
-                        </td>
-                        <td>
-                          <select class="select-input rep-obs-preset" data-idx="${idx}">
-                            ${["decisive", "strong", "moderate", "supporting", "custom"]
-                              .map(
-                                (p) =>
-                                  `<option value="${p}" ${
-                                    presetVal === p ? "selected" : ""
-                                  }>${p.toUpperCase()}</option>`
-                              )
-                              .join("")}
-                          </select>
-                        </td>
-                        <td style="width:78px;">
-                          <input type="number" step="0.01" min="0.01" max="0.99" class="num-input rep-obs-prob" data-idx="${idx}" data-key="prob_given_true" value="${pTrue.toFixed(
-                      2
-                    )}" />
-                        </td>
-                        <td style="width:78px;">
-                          <input type="number" step="0.01" min="0.01" max="0.99" class="num-input rep-obs-prob" data-idx="${idx}" data-key="prob_given_false" value="${pFalse.toFixed(
-                      2
-                    )}" />
-                        </td>
-                        <td><strong style="color:${
-                          Number(soloPct) >= candThreshPct ? "#34d399" : "#94a3b8"
-                        };">${soloPct}%</strong></td>
-                      </tr>`;
-                  })
-                  .join("")}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="panel-card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Divergence Inspector (${divergences.length} Windows)</h3>
-              <div class="card-subtitle">Exact intervals where Tuned Candidate changed the room occupancy decision vs. Saved Baseline.</div>
-            </div>
-          </div>
-          ${
-            divergences.length === 0
-              ? `<div style="padding:18px;text-align:center;color:#64748b;font-size:12px;background:#090d16;border-radius:8px;border:1px solid #1e293b;">
-                  No occupancy divergences between Baseline and Candidate over this window (100% agreement). Adjust Candidate Threshold, Prior, or Sensor Weights on the left to test sensitivity!
-                </div>`
-              : divergences
-                  .slice(0, 12)
-                  .map(
-                    (d) => `
-                  <div style="background:#090d16;border-left:3px solid ${
-                    d.type === "false_positive_eliminated" ? "#f43f5e" : "#10b981"
-                  };border-radius:7px;padding:10px 12px;margin-bottom:8px;font-size:11.5px;">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-                      <strong style="color:${
-                        d.type === "false_positive_eliminated" ? "#fda4af" : "#6ee7b7"
-                      };">
-                        ${
-                          d.type === "false_positive_eliminated"
-                            ? "🛡 False Positive Eliminated"
-                            : "⚡ Occupancy Gained / Held"
-                        }
-                      </strong>
-                      <span style="color:#94a3b8;font-family:monospace;font-size:10.5px;">
-                        ${this._escape(d.start_iso.slice(11, 19))} &rarr; ${this._escape(
-                      d.end_iso.slice(11, 19)
-                    )} (${d.duration_sec}s)
-                      </span>
-                    </div>
-                    <div style="color:#cbd5e1;line-height:1.4;">${this._escape(
-                      d.explanation
-                    )}</div>
-                  </div>`
-                  )
-                  .join("")
-          }
-        </div>
-      </div>
-    `;
-  }
-
   _coneSvgPath(cam) {
     const cx = Number(cam.x || 0);
     const cy = Number(cam.y || 0);
@@ -2331,7 +1866,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const fp = this._floorplan || this._overview?.floorplan;
     const compiled = this._compiledTopology || this._overview?.compiled_topology || {};
     if (!fp || !Array.isArray(fp.floors)) {
-      return `<div class="panel-card">Loading 2D Spatial Floorplan &amp; Camera View Cones...</div>`;
+      return `<div class="ha-card">Loading floorplan...</div>`;
     }
     const floors = fp.floors;
     const activeFloor = floors.find((f) => f.id === this._selectedFloorId) || floors[1] || floors[0];
@@ -2382,24 +1917,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
     const camAnalysis = compiled.camera_analysis || [];
     const ambiguities = compiled.ambiguities || [];
-    const sealAnalysis = compiled.seal_analysis || {};
     const connMap = compiled.connected_rooms_map || {};
     const roomCoverage = compiled.room_coverage || {};
 
-    // Build SVG grid lines (1000 x 580 canvas)
-    const gridLines = [];
-    for (let gx = 80; gx < 1000; gx += 80) {
-      gridLines.push(
-        `<line x1="${gx}" y1="0" x2="${gx}" y2="580" stroke="#1e293b" stroke-width="0.6" stroke-dasharray="2,4" />`
-      );
-    }
-    for (let gy = 80; gy < 580; gy += 80) {
-      gridLines.push(
-        `<line x1="0" y1="${gy}" x2="1000" y2="${gy}" stroke="#1e293b" stroke-width="0.6" stroke-dasharray="2,4" />`
-      );
-    }
-
-    // Build SVG camera cones (with translucent fill)
     const conesSvg = fCams
       .map((cam) => {
         const camId = cam.id || cam.camera_entity;
@@ -2408,84 +1928,70 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const hasSpill =
           (Array.isArray(cam.spills_into) && cam.spills_into.length > 0) ||
           camAnalysis.some((ca) => ca.camera_id === camId && ca.has_multi_room_bleed);
-        const coneColor = hasSpill ? "#f59e0b" : "#38bdf8";
+        const coneColor = hasSpill ? "#d97706" : "#0284c7";
         const pathD = this._coneSvgPath(cam);
         const rad = (Number(cam.heading_deg || 0) * Math.PI) / 180.0;
-        const labelDist = Math.min(130, Number(cam.range_px || 200) * 0.45);
+        const labelDist = Math.min(125, Number(cam.range_px || 200) * 0.45);
         const labelX = Math.max(70, Math.min(930, Number(cam.x) + Math.cos(rad) * labelDist));
         const labelY = Math.max(20, Math.min(560, Number(cam.y) + Math.sin(rad) * labelDist));
         return `
           <g class="fp-cam-group" data-cam-entity="${this._escape(camId)}" style="cursor:pointer;">
             <path
               d="${pathD}"
-              fill="${hasSpill ? "rgba(245, 158, 11, 0.18)" : "rgba(56, 189, 248, 0.16)"}"
+              fill="${hasSpill ? "rgba(217, 119, 6, 0.12)" : "rgba(2, 132, 199, 0.11)"}"
               stroke="${coneColor}"
-              stroke-width="${isSelectedCam ? "2.6" : "1.4"}"
-              stroke-dasharray="${hasSpill ? "6,4" : "none"}"
+              stroke-width="${isSelectedCam ? "2.2" : "1.2"}"
+              stroke-dasharray="${hasSpill ? "5,4" : "none"}"
             />
             <circle
               cx="${Number(cam.x).toFixed(1)}"
               cy="${Number(cam.y).toFixed(1)}"
-              r="${isSelectedCam ? "8" : "6"}"
+              r="${isSelectedCam ? "7" : "5"}"
               fill="${coneColor}"
-              stroke="#090d16"
-              stroke-width="2"
-            />
-            <rect
-              x="${(labelX - 66).toFixed(1)}"
-              y="${(labelY - 11).toFixed(1)}"
-              width="132"
-              height="20"
-              rx="5"
-              fill="rgba(9, 13, 22, 0.88)"
-              stroke="${coneColor}"
-              stroke-width="1"
+              stroke="#ffffff"
+              stroke-width="1.5"
             />
             <text
               x="${labelX.toFixed(1)}"
-              y="${(labelY + 3).toFixed(1)}"
+              y="${labelY.toFixed(1)}"
               text-anchor="middle"
-              fill="${hasSpill ? "#fde68a" : "#bae6fd"}"
-              font-size="10.5"
-              font-weight="700"
-            >📷 ${this._escape(camLabel)} (${cam.fov_deg}°)</text>
+              fill="${coneColor}"
+              font-size="11"
+              font-weight="600"
+            >${this._escape(camLabel)}</text>
           </g>
         `;
       })
       .join("");
 
-    // Build SVG room boxes
     const roomsSvg = fRooms
       .map((box) => {
         const rName = box.name || box.room_name;
         const live = liveRoomsByName[rName];
         const isSel = selRoom && selRoom.room_name === rName;
         const isOcc = live ? Boolean(live.is_present) : false;
-        const probPct = live ? Number(live.bayesian_probability_pct || 0).toFixed(1) : "0.0";
-        const boxState = live ? String(live.box_state || "idle_clear") : "transit";
-        const sealInfo = sealAnalysis[rName] || {};
-        const canSeal = Boolean(sealInfo.can_be_bounded || sealInfo.can_seal);
         const isTransit = box.room_type === "transit" || Boolean(box.is_transit);
         const covPct = Number(roomCoverage[rName]?.max_coverage_pct ?? 100);
         const hasBlindSpot = !isTransit && covPct === 0;
 
-        let strokeColor = isSel ? "#38bdf8" : "#334155";
-        let fillColor = "rgba(15, 23, 42, 0.80)";
+        let strokeColor = isSel ? "#0284c7" : "#cbd5e1";
+        let fillColor = "#ffffff";
         if (isOcc) {
-          strokeColor = "#10b981";
-          fillColor = "rgba(6, 78, 59, 0.44)";
+          strokeColor = "#16a34a";
+          fillColor = "#f0fdf4";
         } else if (hasBlindSpot) {
-          strokeColor = "#f59e0b";
-          fillColor = "rgba(120, 53, 15, 0.25)";
+          strokeColor = "#d97706";
+          fillColor = "#fffbeb";
         } else if (isTransit) {
-          strokeColor = "#475569";
-          fillColor = "rgba(30, 41, 59, 0.48)";
+          strokeColor = "#cbd5e1";
+          fillColor = "#f8fafc";
         }
 
         const rx = Number(box.x);
         const ry = Number(box.y);
         const rw = Number(box.width ?? box.w ?? 200);
         const rh = Number(box.height ?? box.h ?? 150);
+        const statusSummary = this._roomStatusSummary(live);
 
         return `
           <g class="fp-room-box" data-room-name="${this._escape(rName)}" style="cursor:pointer;">
@@ -2497,80 +2003,25 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               rx="10"
               fill="${fillColor}"
               stroke="${strokeColor}"
-              stroke-width="${isSel ? "3.0" : "1.8"}"
-              stroke-dasharray="${isTransit ? "5,4" : "none"}"
+              stroke-width="${isSel ? "2.5" : "1.5"}"
+              stroke-dasharray="${isTransit ? "4,4" : "none"}"
             />
             <text
-              x="${rx + 12}"
-              y="${ry + 22}"
-              fill="#f8fafc"
+              x="${rx + 14}"
+              y="${ry + 24}"
+              fill="#1e293b"
               font-size="13.5"
-              font-weight="800"
-            >${this._escape(rName)}</text>
-            ${
-              live
-                ? `<text
-                    x="${rx + rw - 10}"
-                    y="${ry + 22}"
-                    text-anchor="end"
-                    fill="${isOcc ? "#34d399" : "#94a3b8"}"
-                    font-size="11.5"
-                    font-weight="700"
-                  >${isOcc ? `OCC ${probPct}%` : `VAC ${probPct}%`}</text>`
-                : `<text
-                    x="${rx + rw - 10}"
-                    y="${ry + 22}"
-                    text-anchor="end"
-                    fill="#64748b"
-                    font-size="10.5"
-                  >Transit / Shared</text>`
-            }
-            <text
-              x="${rx + 12}"
-              y="${ry + 42}"
-              fill="${canSeal ? "#c084fc" : "#38bdf8"}"
-              font-size="10.5"
               font-weight="600"
-            >${
-              isTransit
-                ? "↕ Multi-Room Transit Hub"
-                : canSeal
-                ? "🔒 Bounded (Sensor Door Seal)"
-                : "🌊 Open Passage / Timer Hand-Off"
-            }</text>
-            ${
-              live
-                ? `<text
-                    x="${rx + 12}"
-                    y="${ry + 60}"
-                    fill="#94a3b8"
-                    font-size="10.5"
-                  >State: ${this._escape(boxState)}${
-                    live.vacating_countdown ? ` (${live.vacating_countdown}s)` : ""
-                  } · Linked: ${(connMap[rName] || []).length} rooms</text>`
-                : ""
-            }
-            ${
-              box.notes
-                ? `<text
-                    x="${rx + 12}"
-                    y="${ry + rh - (hasBlindSpot ? 24 : 10)}"
-                    fill="#64748b"
-                    font-size="9.5"
-                  >${this._escape(
-                    box.notes.length > 52 ? box.notes.slice(0, 50) + "…" : box.notes
-                  )}</text>`
-                : ""
-            }
+            >${this._escape(rName)}</text>
+            <text
+              x="${rx + 14}"
+              y="${ry + 44}"
+              fill="${isOcc ? "#16a34a" : "#64748b"}"
+              font-size="11.5"
+            >${isTransit ? "Shared walkway / stairs" : this._escape(statusSummary.label)}</text>
             ${
               hasBlindSpot
-                ? `<text
-                    x="${rx + 12}"
-                    y="${ry + rh - 9}"
-                    fill="#fbbf24"
-                    font-size="10"
-                    font-weight="700"
-                  >⚠️ No Direct Camera View Cone (Relies on PIR / Doorway / BLE)</text>`
+                ? `<text x="${rx + 14}" y="${ry + rh - 12}" fill="#d97706" font-size="10.5" font-weight="500">No camera cone (uses motion / BLE)</text>`
                 : ""
             }
           </g>
@@ -2578,31 +2029,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       })
       .join("");
 
-    // Build SVG logical connections between room centers
     const connsSvg = fConns
       .map((conn) => {
         const bFrom = roomBoxMap[conn.from_room];
         const bTo = roomBoxMap[conn.to_room];
-        if (!bFrom || !bTo) {
-          const localBox = bFrom || bTo;
-          if (!localBox) return "";
-          const otherName = bFrom ? conn.to_room : conn.from_room;
-          const lw = Number(localBox.width ?? localBox.w ?? 200);
-          const lh = Number(localBox.height ?? localBox.h ?? 150);
-          const cx = Number(localBox.x) + lw / 2;
-          const cy = Number(localBox.y) + lh - 16;
-          return `
-            <g>
-              <rect x="${(cx - 82).toFixed(1)}" y="${(cy - 10).toFixed(
-            1
-          )}" width="164" height="19" rx="5" fill="#1e1b4b" stroke="#a855f7" stroke-width="1.2" />
-              <text x="${cx.toFixed(1)}" y="${(cy + 3).toFixed(
-            1
-          )}" text-anchor="middle" fill="#e9d5ff" font-size="10" font-weight="700">🪜 Stairs &harr; ${this._escape(
-            otherName
-          )}</text>
-            </g>`;
-        }
+        if (!bFrom || !bTo) return "";
         const w1 = Number(bFrom.width ?? bFrom.w ?? 200);
         const h1 = Number(bFrom.height ?? bFrom.h ?? 150);
         const w2 = Number(bTo.width ?? bTo.w ?? 200);
@@ -2611,363 +2042,334 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const y1 = Number(bFrom.y) + h1 / 2;
         const x2 = Number(bTo.x) + w2 / 2;
         const y2 = Number(bTo.y) + h2 / 2;
-        const mx = (x1 + x2) / 2;
-        const my = (y1 + y2) / 2;
-        let color = "#38bdf8";
-        let icon = "↔";
-        if (conn.type === "sensor_door") {
-          color = "#10b981";
-          icon = "🚪";
-        } else if (conn.type === "unmonitored_door") {
-          color = "#f59e0b";
-          icon = "🔓";
-        } else if (conn.type === "stairs") {
-          color = "#a855f7";
-          icon = "🪜";
-        }
         return `
-          <g>
-            <line
-              x1="${x1.toFixed(1)}"
-              y1="${y1.toFixed(1)}"
-              x2="${x2.toFixed(1)}"
-              y2="${y2.toFixed(1)}"
-              stroke="${color}"
-              stroke-width="2.2"
-              stroke-dasharray="${conn.type === "sensor_door" ? "none" : "6,4"}"
-              opacity="0.85"
-            />
-            <circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="11" fill="#090d16" stroke="${color}" stroke-width="1.5" />
-            <text x="${mx.toFixed(1)}" y="${(my + 4).toFixed(1)}" text-anchor="middle" font-size="10.5">${icon}</text>
-          </g>
+          <line
+            x1="${x1.toFixed(1)}"
+            y1="${y1.toFixed(1)}"
+            x2="${x2.toFixed(1)}"
+            y2="${y2.toFixed(1)}"
+            stroke="#94a3b8"
+            stroke-width="1.5"
+            stroke-dasharray="4,4"
+            opacity="0.65"
+          />
         `;
       })
       .join("");
 
     const selBoxName = selBox ? selBox.name || selBox.room_name : selRoom?.room_name || "Room";
     const selCamId = selCam ? selCam.id || selCam.camera_entity : "";
-    const spilloverCount = camAnalysis.filter((c) => c.has_multi_room_bleed).length;
 
     return `
-      <!-- Top Floorplan Header & Compiler Bar -->
-      <div class="panel-card">
-        <div class="card-header" style="flex-wrap:wrap;">
+      <div class="ha-card">
+        <div class="card-head" style="flex-wrap:wrap;">
           <div>
-            <h2 class="card-title" style="font-size:18px;">
-              🗺️ 2D House Floorplan, Camera View Cones &amp; Logical Room Linkage Compiler
-            </h2>
-            <div class="card-subtitle">
-              Place room boxes and camera field-of-view (FOV) cones to automatically compile adjacent room hand-offs, validate Wasp-in-a-Box door seals, and detect cross-room camera spillover or sensor blind spots.
+            <h2 class="card-title" style="font-size:18px;">House Floorplan &amp; Camera Coverage</h2>
+            <div class="card-desc">
+              Click any room to view its connections, or click <strong>Apply Connections to Rooms</strong> to sync adjacent room hand-offs.
             </div>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <div class="mode-switcher">
+
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <div class="seg-group" style="margin-top:0;">
               ${floors
                 .map(
                   (fl) => `
-                <button class="mode-btn ${
+                <button class="seg-btn ${
                   fl.id === activeFloor.id ? "active" : ""
-                }" data-floor-id="${this._escape(fl.id)}">
-                  ${
-                    fl.id === "upstairs"
-                      ? "🛏️ Upstairs"
-                      : fl.id === "basement"
-                      ? "🎬 Basement"
-                      : "🏠 Main Floor"
-                  }
+                }" data-floor-id="${this._escape(fl.id)}" style="padding:6px 12px;">
+                  ${this._escape(fl.name.replace(/\s*\(.*\)/, ""))}
                 </button>`
                 )
                 .join("")}
             </div>
-            <button class="btn btn-sm" id="btn-fp-reset">↺ Reset Default Layout</button>
-            <button class="btn btn-sm" id="btn-fp-save">💾 Save Layout</button>
-            <button class="btn btn-success btn-sm" id="btn-fp-compile">⚡ Compile Floorplan &rarr; Apply Linkages &amp; Rules</button>
+            <button class="btn btn-sm" id="btn-toggle-fp-inspector">
+              ${this._showFloorplanInspector ? "Hide Geometry Editor" : "Edit Boxes & Cameras"}
+            </button>
+            <button class="btn btn-primary btn-sm" id="btn-fp-compile">Apply Connections to Rooms</button>
           </div>
         </div>
 
-        <div class="kpi-grid-6" style="margin-top:10px;margin-bottom:4px;">
-          <div class="kpi-card">
-            <div class="kpi-label">Active Floor</div>
-            <div class="kpi-val" style="font-size:16px;color:#38bdf8;">${this._escape(
-              activeFloor.name
-            )}</div>
-            <div class="kpi-sub">${fRooms.length} room boxes · ${fCams.length} cameras</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Total Camera Cones</div>
-            <div class="kpi-val" style="color:#38bdf8;">${allFpCams.length || 10}</div>
-            <div class="kpi-sub">2D FOV coverage wedges</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Cross-Room Spillovers</div>
-            <div class="kpi-val" style="color:#f59e0b;">${spilloverCount}</div>
-            <div class="kpi-sub">Whole-frame downgraded to supporting</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Open / Unsealed Rooms</div>
-            <div class="kpi-val" style="color:#a855f7;">${
-              Object.values(sealAnalysis).filter((v) => !v.can_be_bounded).length
-            }</div>
-            <div class="kpi-sub">Prevented fake occupied_sealed latches</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Adjacent Hand-Off Links</div>
-            <div class="kpi-val" style="color:#10b981;">${
-              Object.values(connMap).reduce((acc, arr) => acc + (arr ? arr.length : 0), 0)
-            }</div>
-            <div class="kpi-sub">Zeroes vacating timer on hand-off</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Ambiguities &amp; Blind Spots</div>
-            <div class="kpi-val" style="color:#f43f5e;">${ambiguities.length}</div>
-            <div class="kpi-sub">Spatial coverage &amp; bleed findings</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Main 2-Column Canvas + Camera Cone & Room Box Inspector -->
-      <div style="display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start;">
-        <div class="panel-card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
-            <span style="font-size:12.5px;font-weight:700;color:#e2e8f0;">
-              ${this._escape(activeFloor.name)} — Interactive Room Boxes, Passages &amp; Camera FOV Cones
-            </span>
-            <div style="display:flex;gap:12px;font-size:11px;color:#94a3b8;flex-wrap:wrap;">
-              <span>🚪 <strong style="color:#10b981;">Sensor Door</strong></span>
-              <span>🔓 <strong style="color:#f59e0b;">Unmonitored Door</strong></span>
-              <span>↔ <strong style="color:#38bdf8;">Open Passage</strong></span>
-              <span>🪜 <strong style="color:#a855f7;">Stairs</strong></span>
-              <span>📷 <strong style="color:#fde68a;">Spillover FOV Cone</strong></span>
-            </div>
-          </div>
-
-          <div style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:8px;overflow:hidden;">
-            <svg id="fp-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:410px;display:block;user-select:none;">
-              ${gridLines.join("")}
-              ${roomsSvg}
-              ${connsSvg}
-              ${conesSvg}
-            </svg>
-          </div>
-          <div style="font-size:11px;color:#64748b;margin-top:6px;">
-            💡 Click any <strong>Room Box</strong> to select that room, or click any <strong>📷 Camera Cone</strong> to tune its position, heading angle, FOV wedge, and range on the right.
-          </div>
+        <div style="background:#f8fafc;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;overflow:hidden;">
+          <svg id="fp-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:420px;display:block;user-select:none;">
+            ${connsSvg}
+            ${roomsSvg}
+            ${conesSvg}
+          </svg>
         </div>
 
-        <!-- Right Inspector: Camera Cone Tuner & Room Linkage Summary -->
-        <div>
-          <!-- Camera View Cone Tuner -->
-          <div class="panel-card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">📷 Camera View Cone Inspector</h3>
-                <div class="card-subtitle">Adjust camera placement, heading (°), FOV angle (°), and range to see which rooms fall inside its view cone.</div>
-              </div>
-            </div>
-            ${
-              !selCam
-                ? `<div style="font-size:12px;color:#64748b;">No cameras on this floor.</div>`
-                : `
-              <div style="margin-bottom:10px;">
-                <label class="field-label">Select Camera on ${this._escape(activeFloor.name)}</label>
-                <select class="select-input" id="fp-cam-select">
+        ${
+          this._showFloorplanInspector
+            ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--ha-divider);">
+            <div>
+              <div class="setting-label" style="margin-bottom:8px;">Camera Cone Geometry</div>
+              ${
+                !selCam
+                  ? `<div style="font-size:13px;color:var(--ha-muted);">No cameras on this floor.</div>`
+                  : `
+                <select class="select" id="fp-cam-select" style="margin-bottom:10px;">
                   ${fCams
                     .map((c) => {
                       const cid = c.id || c.camera_entity;
-                      const cname = c.name || c.label || cid;
                       return `<option value="${this._escape(cid)}" ${
                         cid === selCamId ? "selected" : ""
-                      }>${this._escape(cname)} (${this._escape(cid)})</option>`;
+                      }>${this._escape(c.name || cid)}</option>`;
                     })
                     .join("")}
                 </select>
-              </div>
-              <div class="form-grid-5" style="margin-bottom:10px;">
-                <div>
-                  <label class="field-label">Origin X</label>
-                  <input type="number" class="num-input fp-cam-field" data-key="x" value="${Number(
+                <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;">
+                  <div><small>X</small><input type="number" class="input fp-cam-field" data-key="x" value="${Number(
                     selCam.x
-                  )}" />
-                </div>
-                <div>
-                  <label class="field-label">Origin Y</label>
-                  <input type="number" class="num-input fp-cam-field" data-key="y" value="${Number(
+                  )}" /></div>
+                  <div><small>Y</small><input type="number" class="input fp-cam-field" data-key="y" value="${Number(
                     selCam.y
-                  )}" />
-                </div>
-                <div>
-                  <label class="field-label">Heading (°)</label>
-                  <input type="number" class="num-input fp-cam-field" data-key="heading_deg" value="${Number(
+                  )}" /></div>
+                  <div><small>Angle°</small><input type="number" class="input fp-cam-field" data-key="heading_deg" value="${Number(
                     selCam.heading_deg
-                  )}" />
-                </div>
-                <div>
-                  <label class="field-label">FOV (°)</label>
-                  <input type="number" class="num-input fp-cam-field" data-key="fov_deg" min="20" max="180" value="${Number(
+                  )}" /></div>
+                  <div><small>FOV°</small><input type="number" class="input fp-cam-field" data-key="fov_deg" value="${Number(
                     selCam.fov_deg
-                  )}" />
-                </div>
-                <div>
-                  <label class="field-label">Range (px)</label>
-                  <input type="number" class="num-input fp-cam-field" data-key="range_px" min="40" max="700" value="${Number(
+                  )}" /></div>
+                  <div><small>Range</small><input type="number" class="input fp-cam-field" data-key="range_px" value="${Number(
                     selCam.range_px
-                  )}" />
-                </div>
-              </div>
-              <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:10px;font-size:11.5px;color:#cbd5e1;">
-                <div><strong>Host Room:</strong> <span style="color:#38bdf8;">${this._escape(
-                  selCam.host_room || selCam.primary_room || ""
-                )}</span></div>
-                ${
-                  (selCam.spills_into || []).length > 0
-                    ? `<div style="margin-top:4px;"><strong>Spills Into:</strong> <span style="color:#fbbf24;">${this._escape(
-                        (selCam.spills_into || []).join(", ")
-                      )}</span></div>`
-                    : ""
-                }
-                <div style="margin-top:4px;"><strong>Coverage Notes:</strong> ${this._escape(
-                  selCam.notes || "Covers primary room."
-                )}</div>
-              </div>
-            `
-            }
-          </div>
-
-          <!-- Selected Room Box & Compiled Topology Preview -->
-          <div class="panel-card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">📦 Selected Room Topology: ${this._escape(selBoxName)}</h3>
-                <div class="card-subtitle">Compiled linkages &amp; Wasp-in-a-Box seal eligibility from 2D floorplan</div>
-              </div>
+                  )}" /></div>
+                </div>`
+              }
             </div>
-            ${
-              !selBox
-                ? ""
-                : `
-              <div class="form-grid-4" style="margin-bottom:10px;">
-                <div>
-                  <label class="field-label">Box X</label>
-                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+
+            <div>
+              <div class="setting-label" style="margin-bottom:8px;">Room Box: ${this._escape(
+                selBoxName
+              )}</div>
+              ${
+                !selBox
+                  ? ""
+                  : `
+                <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:10px;">
+                  <div><small>X</small><input type="number" class="input fp-box-field" data-room="${this._escape(
                     selBoxName
-                  )}" data-key="x" value="${Number(selBox.x)}" />
-                </div>
-                <div>
-                  <label class="field-label">Box Y</label>
-                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+                  )}" data-key="x" value="${Number(selBox.x)}" /></div>
+                  <div><small>Y</small><input type="number" class="input fp-box-field" data-room="${this._escape(
                     selBoxName
-                  )}" data-key="y" value="${Number(selBox.y)}" />
-                </div>
-                <div>
-                  <label class="field-label">Width</label>
-                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+                  )}" data-key="y" value="${Number(selBox.y)}" /></div>
+                  <div><small>Width</small><input type="number" class="input fp-box-field" data-room="${this._escape(
                     selBoxName
-                  )}" data-key="width" value="${Number(selBox.width ?? selBox.w ?? 200)}" />
-                </div>
-                <div>
-                  <label class="field-label">Height</label>
-                  <input type="number" class="num-input fp-box-field" data-room="${this._escape(
+                  )}" data-key="width" value="${Number(selBox.width ?? 200)}" /></div>
+                  <div><small>Height</small><input type="number" class="input fp-box-field" data-room="${this._escape(
                     selBoxName
-                  )}" data-key="height" value="${Number(selBox.height ?? selBox.h ?? 150)}" />
+                  )}" data-key="height" value="${Number(selBox.height ?? 150)}" /></div>
                 </div>
-              </div>
-              <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:10px;font-size:11.5px;line-height:1.5;">
-                <div>
-                  <strong>Recommended Mode:</strong>
-                  <span style="color:${
-                    sealAnalysis[selBoxName]?.can_be_bounded ? "#c084fc" : "#38bdf8"
-                  };font-weight:700;">
-                    ${
-                      sealAnalysis[selBoxName]?.can_be_bounded
-                        ? "BOUNDED (All Exits Monitored by Door Sensors)"
-                        : "OPEN (Has Open Passages / Stairs / Unmonitored Doors)"
-                    }
-                  </span>
-                </div>
-                ${
-                  (sealAnalysis[selBoxName]?.unsealed_exits || []).length > 0
-                    ? `<div style="margin-top:4px;color:#94a3b8;"><strong>Unsealed Exits:</strong> ${this._escape(
-                        (sealAnalysis[selBoxName]?.unsealed_exits || []).join(", ")
-                      )}</div>`
-                    : ""
-                }
-                <div style="margin-top:6px;">
-                  <strong>Connected Hand-Off Rooms (${
-                    (connMap[selBoxName] || []).length
-                  }):</strong>
-                  <div class="chip-list" style="margin-top:4px;margin-bottom:0;">
-                    ${
-                      (connMap[selBoxName] || []).length === 0
-                        ? `<span style="color:#64748b;">None</span>`
-                        : (connMap[selBoxName] || [])
-                            .map(
-                              (rn) =>
-                                `<span class="entity-chip" style="border-color:#10b981;color:#6ee7b7;">🔗 ${this._escape(
-                                  rn
-                                )}</span>`
-                            )
-                            .join("")
-                    }
-                  </div>
-                </div>
-              </div>
-            `
-            }
-          </div>
-        </div>
+                <div style="display:flex;gap:8px;">
+                  <button class="btn btn-sm" id="btn-fp-save">Save Layout</button>
+                  <button class="btn btn-sm" id="btn-fp-reset">Reset Default Layout</button>
+                </div>`
+              }
+            </div>
+          </div>`
+            : ""
+        }
       </div>
 
-      <!-- Bottom Card: Automated Ambiguity, Camera Spillover & Blind-Spot Report -->
-      <div class="panel-card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">🔍 Automated Spatial Ambiguity, Camera Cone Spillover &amp; Blind-Spot Report (${
-              ambiguities.length
-            } Findings)</h3>
-            <div class="card-subtitle">
-              Derived directly from the 2D room boxes, passage linkages, and camera view cones above. Clicking <strong>⚡ Compile Floorplan &rarr; Apply Linkages &amp; Rules</strong> automatically configures these mitigations across all rooms.
-            </div>
+      <!-- Collapsible Coverage Notes Bar -->
+      <div class="advanced-toggle-bar" id="btn-toggle-fp-notes">
+        <div>
+          <div style="font-size:14px;font-weight:500;color:var(--ha-text);">
+            ${this._showFloorplanNotes ? "▾ Hide Coverage & Shared Camera Notes" : `▸ Coverage & Shared Camera Notes (${ambiguities.length})`}
+          </div>
+          <div style="font-size:12.5px;color:var(--ha-muted);margin-top:2px;">
+            Areas where a camera sees into a neighboring room or where a room has no direct camera coverage
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          ${ambiguities
-            .map((amb) => {
-              const cat = amb.category || amb.type || "";
-              const borderColor =
-                cat === "camera_spillover"
-                  ? "#f59e0b"
-                  : cat === "unsealed_perimeter" || cat === "unsealed_boundary"
-                  ? "#38bdf8"
-                  : cat === "vertical_ble_bleed"
-                  ? "#a855f7"
-                  : "#f43f5e";
-              const badgeLabel =
-                cat === "camera_spillover"
-                  ? "📐 CAMERA CONE SPILLOVER"
-                  : cat === "unsealed_perimeter" || cat === "unsealed_boundary"
-                  ? "🔓 UNSEALED EXIT PATHWAY"
-                  : cat === "vertical_ble_bleed"
-                  ? "📶 VERTICAL BLE STACK"
-                  : "⚠️ BLIND POCKET / SENSOR GAP";
-              const titleText = amb.title || amb.room || (amb.rooms || []).join(" ↔ ");
+        <span style="font-size:12.5px;color:var(--ha-primary);font-weight:500;">
+          ${this._showFloorplanNotes ? "Collapse" : "Expand"}
+        </span>
+      </div>
+
+      ${
+        this._showFloorplanNotes
+          ? `
+        <div class="ha-card">
+          <div class="list-divider" style="border-top:none;">
+            ${ambiguities
+              .map(
+                (amb) => `
+              <div style="padding:12px 0;border-bottom:1px solid var(--ha-divider);">
+                <div style="font-size:14px;font-weight:500;">${this._escape(
+                  amb.title || amb.room || (amb.rooms || []).join(" ↔ ")
+                )}</div>
+                <div style="font-size:13px;color:var(--ha-muted);margin-top:2px;">${this._escape(
+                  amb.description
+                )}</div>
+                <div style="font-size:12.5px;color:var(--ha-primary);margin-top:4px;">${this._escape(
+                  amb.resolution || amb.recommendation || ""
+                )}</div>
+              </div>`
+              )
+              .join("")}
+          </div>
+        </div>`
+          : ""
+      }
+    `;
+  }
+
+  _renderStatisticsPane(selRoom) {
+    if (!selRoom) {
+      return `<div class="ha-card">Select a room to view its activity history.</div>`;
+    }
+    const st = this._statsData;
+    if (!st || st.entry_id !== selRoom.entry_id) {
+      return `<div class="ha-card">Loading activity history for <strong>${this._escape(
+        selRoom.room_name
+      )}</strong>...</div>`;
+    }
+    const sum = st.summary || {};
+    const series = st.series || [];
+    const swimlanes = st.swimlanes || [];
+    const W = 900;
+    const H = 160;
+    const { linePath, areaPath } = this._buildStepSvgPaths(series, W, H);
+    const threshY = H - (Number(st.threshold_pct || 75) / 100) * (H - 12) - 6;
+
+    return `
+      <div class="ha-card">
+        <div class="card-head" style="flex-wrap:wrap;">
+          <div>
+            <h2 class="card-title" style="font-size:18px;">${this._escape(
+              selRoom.room_name
+            )} — Activity History</h2>
+            <div class="card-desc">
+              Occupied for ${Number(sum.occupied_minutes || 0).toFixed(0)} minutes (${Number(
+      sum.occupied_pct || 0
+    ).toFixed(1)}%) over the last ${sum.window_hours || this._historyHours} hours.
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center;">
+            <div class="seg-group" style="margin-top:0;">
+              ${[
+                { h: 1, label: "1h" },
+                { h: 6, label: "6h" },
+                { h: 24, label: "24h" },
+                { h: 168, label: "7d" },
+              ]
+                .map(
+                  (w) =>
+                    `<button class="seg-btn ${
+                      Number(this._historyHours) === w.h ? "active" : ""
+                    }" data-history-hours="${w.h}" style="padding:5px 10px;">${w.label}</button>`
+                )
+                .join("")}
+            </div>
+            <button class="btn btn-sm" id="btn-jump-to-replay">What-If Simulator</button>
+          </div>
+        </div>
+
+        <div style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;margin-bottom:16px;">
+          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:160px;display:block;">
+            <line x1="0" y1="${threshY.toFixed(1)}" x2="${W}" y2="${threshY.toFixed(
+      1
+    )}" stroke="#d97706" stroke-width="1.2" stroke-dasharray="5,4" />
+            <path d="${areaPath}" fill="rgba(2, 132, 199, 0.12)" />
+            <path d="${linePath}" fill="none" stroke="#0284c7" stroke-width="2" />
+          </svg>
+        </div>
+
+        <div class="setting-label" style="margin-bottom:8px;">Sensor Activity Timeline</div>
+        <div class="list-divider">
+          ${swimlanes
+            .map((lane) => {
+              const segsHtml = (lane.segments || [])
+                .map(
+                  (seg) =>
+                    `<div style="position:absolute;top:2px;bottom:2px;left:${seg.start_pct}%;width:${seg.width_pct}%;background:var(--ha-primary);border-radius:3px;"></div>`
+                )
+                .join("");
               return `
-                <div style="background:#090d16;border:1px solid #1e293b;border-left:3px solid ${borderColor};border-radius:8px;padding:10px 12px;font-size:11.5px;">
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px;">
-                    <strong style="color:#f8fafc;">${badgeLabel}: ${this._escape(titleText)}</strong>
-                    <span style="font-size:10px;color:#94a3b8;font-family:monospace;">${this._escape(
-                      amb.camera_id || amb.camera_entity || amb.severity || ""
-                    )}</span>
-                  </div>
-                  <div style="color:#cbd5e1;line-height:1.45;margin-bottom:4px;">${this._escape(
-                    amb.description
+                <div style="display:grid;grid-template-columns:220px 1fr 80px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--ha-divider);font-size:13px;">
+                  <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this._escape(
+                    lane.label
                   )}</div>
-                  <div style="color:#34d399;font-size:11px;"><strong>Rule Mitigation:</strong> ${this._escape(
-                    amb.resolution || amb.recommendation || ""
-                  )}</div>
-                </div>
-              `;
+                  <div style="position:relative;height:14px;background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:4px;overflow:hidden;">${segsHtml}</div>
+                  <div style="text-align:right;color:var(--ha-muted);font-size:12px;">${Number(
+                    lane.active_minutes || 0
+                  ).toFixed(0)}m</div>
+                </div>`;
             })
             .join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderReplayPane(selRoom, presets) {
+    if (!selRoom) {
+      return `<div class="ha-card">Select a room to run the What-If Replay Simulator.</div>`;
+    }
+    const cand = this._replayCandidate || this._draftConfig || {};
+    const rep = this._replayData;
+    const candPriorPct = Math.round(Number(cand.bayesian_prior ?? 0.2) * 100);
+    const candThreshPct = Math.round(Number(cand.bayesian_threshold ?? 0.75) * 100);
+
+    if (!rep || rep.entry_id !== selRoom.entry_id) {
+      return `<div class="ha-card">Simulating historical replay for <strong>${this._escape(
+        selRoom.room_name
+      )}</strong>...</div>`;
+    }
+
+    const baseRes = rep.baseline || {};
+    const candRes = rep.candidate || {};
+    const divergences = rep.divergence_windows || [];
+    const W = 900;
+    const H = 170;
+    const basePaths = this._buildStepSvgPaths(baseRes.series || [], W, H);
+    const candPaths = this._buildStepSvgPaths(candRes.series || [], W, H);
+
+    return `
+      <div class="ha-card">
+        <div class="card-head" style="flex-wrap:wrap;">
+          <div>
+            <h2 class="card-title" style="font-size:18px;">${this._escape(
+              selRoom.room_name
+            )} — What-If Replay Simulator (${this._historyHours}h)</h2>
+            <div class="card-desc">
+              Test different timeout or threshold settings against recorded sensor history before saving.
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm" id="btn-back-to-stats">Back to Activity History</button>
+            <button class="btn btn-sm" id="btn-replay-reset">Reset</button>
+            <button class="btn btn-primary btn-sm" id="btn-replay-apply">Apply to Room</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px;margin-bottom:16px;">
+          <div>
+            <div class="setting-label" style="font-size:12.5px;">Candidate Prior: ${candPriorPct}%</div>
+            <input type="range" min="5" max="50" step="1" id="rep-prior-slider" value="${candPriorPct}" style="width:100%;" />
+          </div>
+          <div>
+            <div class="setting-label" style="font-size:12.5px;">Candidate Threshold: ${candThreshPct}%</div>
+            <input type="range" min="50" max="95" step="1" id="rep-thresh-slider" value="${candThreshPct}" style="width:100%;" />
+          </div>
+          <div>
+            <div class="setting-label" style="font-size:12.5px;">Clear Delay (sec)</div>
+            <input type="number" class="input" id="rep-inactivity" value="${Number(
+              cand.inactivity_timeout ?? 180
+            )}" />
+          </div>
+        </div>
+
+        <div style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;margin-bottom:14px;">
+          <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:170px;display:block;">
+            <path d="${basePaths.linePath}" fill="none" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="4,3" />
+            <path d="${candPaths.linePath}" fill="none" stroke="#0284c7" stroke-width="2.2" />
+          </svg>
+        </div>
+
+        <div style="font-size:13px;color:var(--ha-muted);">
+          ${divergences.length} differences between current settings and candidate settings over the last ${this._historyHours} hours.
         </div>
       </div>
     `;
@@ -2977,7 +2379,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const root = this.shadowRoot;
     const presets = (this._overview && this._overview.presets) || {};
 
-    root.querySelectorAll(".mode-btn[data-studio-view]").forEach((el) => {
+    root.querySelectorAll(".nav-tab[data-studio-view]").forEach((el) => {
       el.addEventListener("click", () => {
         const v = el.getAttribute("data-studio-view");
         this._studioView = v;
@@ -3000,13 +2402,100 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
     });
 
+    // Advanced drawer toggle & tabs
+    root.querySelector("#btn-toggle-advanced")?.addEventListener("click", () => {
+      this._showAdvanced = !this._showAdvanced;
+      this.render();
+    });
+    root.querySelectorAll(".sub-tab[data-adv-tab]").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._advTab = el.getAttribute("data-adv-tab") || "tuning";
+        this.render();
+      });
+    });
+
+    // Simple Sensor Role selector & Add Sensor
+    root.querySelectorAll(".obs-role-simple").forEach((el) => {
+      el.addEventListener("change", () => {
+        const idx = Number(el.getAttribute("data-idx"));
+        const obs = this._draftConfig?.bayesian_observations?.[idx];
+        if (!obs) return;
+        this._applyFriendlyRoleGroup(obs, el.value, presets);
+        this._dirty = true;
+        this.refreshPreview();
+      });
+    });
+
+    root.querySelector("#btn-simple-add-obs")?.addEventListener("click", () => {
+      const entityInput = root.querySelector("#simple-add-obs-entity");
+      const roleSelect = root.querySelector("#simple-add-obs-role");
+      const eid = entityInput?.value?.trim() || "";
+      if (!eid) {
+        this.showToast("Select a sensor entity to add", "info");
+        return;
+      }
+      const entities = (this._overview && this._overview.entities) || [];
+      const found = entities.find((e) => e.entity_id === eid);
+      const newObs = {
+        entity_id: eid,
+        label: found?.name || eid,
+        operator: "equals",
+        state: "on",
+      };
+      this._applyFriendlyRoleGroup(newObs, roleSelect?.value || "shared", presets);
+      this._draftConfig.bayesian_observations.push(newObs);
+      this._dirty = true;
+      this.refreshPreview();
+    });
+
+    // Bounded Door Toggle
+    root.querySelector("#cfg-bounded-toggle")?.addEventListener("change", (e) => {
+      this._draftConfig.mode = e.target.checked ? "bounded" : "open";
+      if (!e.target.checked) {
+        this._draftConfig.boundary_entities = [];
+      }
+      this._dirty = true;
+      this.refreshPreview();
+    });
+
+    // Connected room dropdown auto-add on select
+    root.querySelector("#add-connected-room-input")?.addEventListener("change", (e) => {
+      const val = e.target.value?.trim();
+      if (!val) return;
+      if (!this._draftConfig.connected_rooms) this._draftConfig.connected_rooms = [];
+      if (!this._draftConfig.connected_rooms.includes(val)) {
+        this._draftConfig.connected_rooms.push(val);
+        this._dirty = true;
+        this.refreshPreview();
+      }
+    });
+
+    root.querySelectorAll(".del-connected-room").forEach((el) => {
+      el.addEventListener("click", () => {
+        const idx = Number(el.getAttribute("data-idx"));
+        if (Array.isArray(this._draftConfig.connected_rooms)) {
+          this._draftConfig.connected_rooms.splice(idx, 1);
+          this._dirty = true;
+          this.refreshPreview();
+        }
+      });
+    });
+
     // Floorplan view events
-    root.querySelectorAll(".mode-btn[data-floor-id]").forEach((el) => {
+    root.querySelectorAll(".seg-btn[data-floor-id]").forEach((el) => {
       el.addEventListener("click", () => {
         this._selectedFloorId = el.getAttribute("data-floor-id") || "main";
         this._selectedCamEntity = null;
         this.render();
       });
+    });
+    root.querySelector("#btn-toggle-fp-inspector")?.addEventListener("click", () => {
+      this._showFloorplanInspector = !this._showFloorplanInspector;
+      this.render();
+    });
+    root.querySelector("#btn-toggle-fp-notes")?.addEventListener("click", () => {
+      this._showFloorplanNotes = !this._showFloorplanNotes;
+      this.render();
     });
     root.querySelector("#btn-fp-save")?.addEventListener("click", () =>
       this.saveOrCompileFloorplan("save")
@@ -3061,27 +2550,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._studioView = "floorplan";
       this.render();
     });
-    root.querySelector("#btn-add-connected-room")?.addEventListener("click", () => {
-      const val = root.querySelector("#add-connected-room-input")?.value?.trim();
-      if (!this._draftConfig.connected_rooms) this._draftConfig.connected_rooms = [];
-      if (val && !this._draftConfig.connected_rooms.includes(val)) {
-        this._draftConfig.connected_rooms.push(val);
-        this._dirty = true;
-        this.refreshPreview();
-      }
-    });
-    root.querySelectorAll(".del-connected-room").forEach((el) => {
-      el.addEventListener("click", () => {
-        const idx = Number(el.getAttribute("data-idx"));
-        if (Array.isArray(this._draftConfig.connected_rooms)) {
-          this._draftConfig.connected_rooms.splice(idx, 1);
-          this._dirty = true;
-          this.refreshPreview();
-        }
-      });
-    });
 
-    root.querySelectorAll(".mode-btn[data-history-hours]").forEach((el) => {
+    root.querySelectorAll(".seg-btn[data-history-hours]").forEach((el) => {
       el.addEventListener("click", () => {
         this._historyHours = Number(el.getAttribute("data-history-hours") || 6);
         if (this._studioView === "statistics") {
@@ -3092,15 +2562,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
     });
 
-    root.querySelector("#btn-reload-stats")?.addEventListener("click", () => this.loadStatistics());
     root.querySelector("#btn-jump-to-replay")?.addEventListener("click", () => {
       this._studioView = "replay";
       this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig || {}));
       this.runReplay();
     });
+    root.querySelector("#btn-back-to-stats")?.addEventListener("click", () => {
+      this._studioView = "statistics";
+      this.loadStatistics();
+    });
 
     // Replay Simulator events
-    root.querySelector("#btn-replay-run")?.addEventListener("click", () => this.runReplay());
     root.querySelector("#btn-replay-reset")?.addEventListener("click", () => {
       this._replayCandidate = JSON.parse(JSON.stringify(this._draftConfig || {}));
       this.runReplay();
@@ -3119,35 +2591,6 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     root.querySelector("#rep-inactivity")?.addEventListener("change", (e) => {
       this._replayCandidate.inactivity_timeout = Number(e.target.value);
       this.runReplay();
-    });
-    root.querySelector("#rep-grace")?.addEventListener("change", (e) => {
-      this._replayCandidate.grace_timeout = Number(e.target.value);
-      this.runReplay();
-    });
-    root.querySelectorAll(".rep-obs-preset").forEach((el) => {
-      el.addEventListener("change", () => {
-        const idx = Number(el.getAttribute("data-idx"));
-        const obs = this._replayCandidate?.bayesian_observations?.[idx];
-        if (!obs) return;
-        const p = el.value;
-        obs.preset = p;
-        if (presets[p] && p !== "custom") {
-          obs.prob_given_true = presets[p].prob_given_true;
-          obs.prob_given_false = presets[p].prob_given_false;
-        }
-        this.runReplay();
-      });
-    });
-    root.querySelectorAll(".rep-obs-prob").forEach((el) => {
-      el.addEventListener("change", () => {
-        const idx = Number(el.getAttribute("data-idx"));
-        const key = el.getAttribute("data-key");
-        const obs = this._replayCandidate?.bayesian_observations?.[idx];
-        if (!obs) return;
-        obs[key] = Number(el.value);
-        obs.preset = "custom";
-        this.runReplay();
-      });
     });
 
     root.querySelector("#btn-refresh-overview")?.addEventListener("click", () => {
@@ -3181,13 +2624,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._roomSearch = e.target.value;
       this.render();
     });
-    root.querySelectorAll(".filter-tab[data-filter]").forEach((el) => {
+    root.querySelectorAll(".seg-btn[data-filter]").forEach((el) => {
       el.addEventListener("click", () => {
         this._roomFilter = el.getAttribute("data-filter");
         this.render();
       });
     });
-    root.querySelectorAll(".room-item[data-room-id]").forEach((el) => {
+    root.querySelectorAll(".room-row[data-room-id]").forEach((el) => {
       el.addEventListener("click", () => {
         const rid = el.getAttribute("data-room-id");
         const room = (this._overview?.rooms || []).find((r) => r.entry_id === rid);
@@ -3195,7 +2638,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
     });
 
-    // Room Header & Core Sliders
+    // Room Header & Core Controls
     root.querySelector("#btn-save-room")?.addEventListener("click", () => this.saveCurrentRoom());
     root.querySelector("#btn-room-refresh")?.addEventListener("click", () =>
       this.runRoomAction("force_refresh")
@@ -3206,24 +2649,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     root.querySelector("#btn-room-override")?.addEventListener("click", () =>
       this.runRoomAction("set_override")
     );
-    root.querySelector("#input-rev-note")?.addEventListener("input", (e) => {
-      this._revisionNote = e.target.value;
-    });
 
-    root.querySelector("#cfg-room-name")?.addEventListener("change", (e) => {
-      this._draftConfig.room_name = e.target.value;
-      this._dirty = true;
-      this.refreshPreview();
-    });
     root.querySelector("#cfg-area-id")?.addEventListener("change", (e) => {
       this._draftConfig.area_id = e.target.value || null;
       this._dirty = true;
       this.render();
-    });
-    root.querySelector("#cfg-mode")?.addEventListener("change", (e) => {
-      this._draftConfig.mode = e.target.value;
-      this._dirty = true;
-      this.refreshPreview();
     });
     root.querySelector("#cfg-camera-entity")?.addEventListener("change", (e) => {
       this._draftConfig.camera_entity = e.target.value;
@@ -3242,36 +2672,54 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     root.querySelector("#cfg-inactivity-timeout")?.addEventListener("change", (e) => {
       this._draftConfig.inactivity_timeout = Number(e.target.value);
       this._dirty = true;
-    });
-    root.querySelector("#cfg-grace-timeout")?.addEventListener("change", (e) => {
-      this._draftConfig.grace_timeout = Number(e.target.value);
-      this._dirty = true;
-    });
-    root.querySelector("#cfg-extend-timeout")?.addEventListener("change", (e) => {
-      this._draftConfig.extend_timeout = Number(e.target.value);
-      this._dirty = true;
-    });
-
-    // Observations Table
-    root.querySelector("#btn-add-obs")?.addEventListener("click", () => {
-      this._draftConfig.bayesian_observations.push({
-        entity_id: "",
-        label: "New Sensor Observation",
-        preset: "moderate",
-        prob_given_true: 0.72,
-        prob_given_false: 0.12,
-        operator: "equals",
-        state: "on",
-      });
-      this._dirty = true;
       this.render();
     });
-    root.querySelector("#btn-add-ble")?.addEventListener("click", () =>
-      this._addHouseholdBleTrackers()
-    );
-    root.querySelector("#btn-sync-triggers")?.addEventListener("click", () =>
-      this._syncTriggersFromStrongObservations()
-    );
+
+    root.querySelector("#btn-add-ble")?.addEventListener("click", () => {
+      const rname = this._draftConfig.room_name || "Room";
+      const trackers =
+        (this._overview &&
+          this._overview.global_settings &&
+          this._overview.global_settings.ble_trackers) || [
+          "sensor.steve_s_s25_ble_area",
+          "sensor.tab_s10_lite_ble_area",
+        ];
+      const obs = this._draftConfig.bayesian_observations || [];
+      trackers.forEach((eid, idx) => {
+        if (!obs.some((o) => o.entity_id === eid)) {
+          obs.push({
+            entity_id: eid,
+            label: idx === 0 ? `Primary Phone BLE (${rname})` : `Secondary BLE (${rname})`,
+            preset: idx === 0 ? "moderate" : "supporting",
+            prob_given_true: idx === 0 ? 0.72 : 0.35,
+            prob_given_false: idx === 0 ? 0.12 : 0.22,
+            operator: "equals",
+            state: rname,
+          });
+        }
+      });
+      this._draftConfig.bayesian_observations = obs;
+      this._dirty = true;
+      this.refreshPreview();
+    });
+
+    root.querySelector("#btn-sync-triggers")?.addEventListener("click", () => {
+      const obs = this._draftConfig.bayesian_observations || [];
+      const triggers = [];
+      for (const o of obs) {
+        const preset = o.preset || o.weight || "moderate";
+        if (
+          (preset === "decisive" || preset === "strong") &&
+          o.entity_id &&
+          o.entity_id.startsWith("binary_sensor.")
+        ) {
+          if (!triggers.includes(o.entity_id)) triggers.push(o.entity_id);
+        }
+      }
+      this._draftConfig.trigger_entities = triggers;
+      this._dirty = true;
+      this.showToast(`Synced ${triggers.length} main sensors`, "info");
+    });
 
     root.querySelectorAll(".obs-field").forEach((el) => {
       el.addEventListener("change", () => {
@@ -3323,7 +2771,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
     });
 
-    // Boundaries, Triggers & Sustaining Conditions
+    // Boundaries & Sustaining Conditions
     root.querySelector("#btn-add-boundary")?.addEventListener("click", () => {
       const val = root.querySelector("#add-boundary-input")?.value?.trim();
       if (val && !this._draftConfig.boundary_entities.includes(val)) {
@@ -3341,29 +2789,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
     });
 
-    root.querySelector("#btn-add-trigger")?.addEventListener("click", () => {
-      const val = root.querySelector("#add-trigger-input")?.value?.trim();
-      if (val && !this._draftConfig.trigger_entities.includes(val)) {
-        this._draftConfig.trigger_entities.push(val);
-        this._dirty = true;
-        this.refreshPreview();
-      }
-    });
-    root.querySelectorAll(".del-trigger").forEach((el) => {
-      el.addEventListener("click", () => {
-        const idx = Number(el.getAttribute("data-idx"));
-        this._draftConfig.trigger_entities.splice(idx, 1);
-        this._dirty = true;
-        this.refreshPreview();
-      });
-    });
-
     root.querySelector("#btn-add-condition")?.addEventListener("click", () => {
       this._draftConfig.sustaining_conditions.push({
         entity_id: "",
-        label: "Sustaining Condition",
+        label: "Keep Occupied Rule",
         operator: "equals",
-        state: "on",
+        state: "playing",
       });
       this._dirty = true;
       this.render();
@@ -3388,8 +2819,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
     });
 
-    // Right Column Tabs, YAML & Revisions
-    root.querySelectorAll(".filter-tab[data-rtab]").forEach((el) => {
+    // Advanced YAML & AI sub-tabs
+    root.querySelectorAll("[data-rtab]").forEach((el) => {
       el.addEventListener("click", () => {
         this._rightTab = el.getAttribute("data-rtab");
         this.render();
