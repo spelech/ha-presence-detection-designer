@@ -36,7 +36,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._replayCandidate = null;
     this._toast = null;
     this._loading = false;
+    this._narrow = false;
     this._initialized = false;
+  }
+
+  set narrow(value) {
+    const next = Boolean(value);
+    if (this._narrow !== next) {
+      this._narrow = next;
+      if (this._initialized) {
+        this.render();
+      }
+    }
   }
 
   set hass(hass) {
@@ -574,8 +585,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           --ha-success: var(--success-color, #16a34a);
           --ha-warning: var(--warning-color, #d97706);
           --ha-danger: var(--error-color, #dc2626);
-          display: block;
-          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+          isolation: isolate;
+          z-index: 1;
+          width: 100%;
+          max-width: 100%;
+          height: calc(100vh - var(--safe-area-inset-top, 0px) - var(--safe-area-inset-bottom, 0px));
+          height: calc(100dvh - var(--safe-area-inset-top, 0px) - var(--safe-area-inset-bottom, 0px));
+          overflow: hidden;
+          contain: layout paint;
           background: var(--ha-bg);
           color: var(--ha-text);
           font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -590,16 +610,27 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           justify-content: space-between;
           padding: 0 24px;
           height: 56px;
+          flex-shrink: 0;
+          width: 100%;
+          max-width: 100%;
           background: var(--ha-card);
           border-bottom: 1px solid var(--ha-divider);
-          position: sticky;
-          top: 0;
-          z-index: 20;
+          position: relative;
+          z-index: 2;
+        }
+        .panel-scroll-frame {
+          flex: 1;
+          min-height: 0;
+          width: 100%;
+          max-width: 100%;
+          overflow-y: auto;
+          overflow-x: hidden;
         }
         .header-left {
           display: flex;
-          align-items: baseline;
+          align-items: center;
           gap: 12px;
+          min-width: 0;
         }
         .header-title {
           font-size: 18px;
@@ -712,16 +743,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         /* Layout Workspace */
         .workspace {
           display: grid;
-          grid-template-columns: 270px minmax(0, 1fr);
+          grid-template-columns: 260px minmax(0, 1fr);
           gap: 24px;
+          width: 100%;
+          min-width: 0;
           max-width: 1380px;
           margin: 0 auto;
           padding: 20px 24px 48px;
           align-items: start;
         }
-        @media (max-width: 900px) {
+        @media (max-width: 1100px) {
           .workspace {
-            grid-template-columns: 1fr;
+            grid-template-columns: minmax(0, 1fr);
           }
         }
 
@@ -731,6 +764,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border: 1px solid var(--ha-divider);
           border-radius: 12px;
           overflow: hidden;
+          min-width: 0;
         }
         .sidebar-top {
           padding: 12px;
@@ -833,6 +867,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           display: flex;
           flex-direction: column;
           gap: 16px;
+          min-width: 0;
+          width: 100%;
           max-width: 920px;
         }
         .content-stack.wide {
@@ -843,6 +879,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border: 1px solid var(--ha-divider);
           border-radius: 12px;
           padding: 20px;
+          min-width: 0;
+          max-width: 100%;
+          overflow-x: hidden;
         }
         .card-head {
           display: flex;
@@ -870,7 +909,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         }
         .sensor-row {
           display: grid;
-          grid-template-columns: minmax(180px, 1.3fr) minmax(210px, 1.3fr) auto;
+          grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.3fr) auto;
           gap: 12px;
           align-items: center;
           padding: 12px 0;
@@ -879,7 +918,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         .sensor-row:last-child {
           border-bottom: none;
         }
-        @media (max-width: 700px) {
+        @media (max-width: 850px) {
           .sensor-row {
             grid-template-columns: 1fr;
           }
@@ -1017,26 +1056,26 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
         /* Modal */
         .modal-backdrop {
-          position: fixed;
+          position: absolute;
           inset: 0;
           background: rgba(15, 23, 42, 0.45);
           display: flex;
           align-items: center;
           justify-content: center;
-          z-index: 100;
+          z-index: 30;
         }
         .modal-card {
           background: var(--ha-card);
           border: 1px solid var(--ha-divider);
           border-radius: 12px;
           width: 480px;
-          max-width: 92vw;
+          max-width: 92%;
           padding: 20px;
           box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
         }
       </style>
 
-      <div id="pdd-toast-container" style="position:fixed;bottom:20px;right:24px;z-index:200;"></div>
+      <div id="pdd-toast-container" style="position:absolute;bottom:20px;right:24px;z-index:40;"></div>
 
       <datalist id="pdd-all-entities">
         ${entities
@@ -1052,6 +1091,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       <!-- Clean Home Assistant Header Bar -->
       <div class="app-header">
         <div class="header-left">
+          ${
+            this._narrow || this._hass?.dockedSidebar === "always_hidden"
+              ? `<button class="btn-text" id="btn-toggle-ha-sidebar" title="Toggle Sidebar" style="font-size:18px;padding:4px 8px;">☰</button>`
+              : ""
+          }
           <h1 class="header-title">Presence Detection</h1>
           <span class="header-summary">${occupiedCount} of ${rooms.length} rooms occupied</span>
         </div>
@@ -1069,72 +1113,74 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         </div>
       </div>
 
-      <div class="workspace">
-        <!-- LEFT SIDEBAR: Simple Room List -->
-        <div class="sidebar-card">
-          <div class="sidebar-top">
-            <input
-              type="text"
-              class="input"
-              id="room-search-input"
-              placeholder="Search rooms..."
-              value="${this._escape(this._roomSearch)}"
-            />
-            <div class="seg-group">
-              ${[
-                { id: "all", label: "All" },
-                { id: "occupied", label: "Occupied" },
-                { id: "vacant", label: "Clear" },
-              ]
-                .map(
-                  (f) => `
-                <button class="seg-btn ${this._roomFilter === f.id ? "active" : ""}" data-filter="${f.id}">
-                  ${f.label}
-                </button>`
-                )
+      <div class="panel-scroll-frame">
+        <div class="workspace">
+          <!-- LEFT SIDEBAR: Simple Room List -->
+          <div class="sidebar-card">
+            <div class="sidebar-top">
+              <input
+                type="text"
+                class="input"
+                id="room-search-input"
+                placeholder="Search rooms..."
+                value="${this._escape(this._roomSearch)}"
+              />
+              <div class="seg-group">
+                ${[
+                  { id: "all", label: "All" },
+                  { id: "occupied", label: "Occupied" },
+                  { id: "vacant", label: "Clear" },
+                ]
+                  .map(
+                    (f) => `
+                  <button class="seg-btn ${this._roomFilter === f.id ? "active" : ""}" data-filter="${f.id}">
+                    ${f.label}
+                  </button>`
+                  )
+                  .join("")}
+              </div>
+            </div>
+
+            <div class="room-list">
+              ${filteredRooms
+                .map((r) => {
+                  const st = this._roomStatusSummary(r);
+                  return `
+                    <div class="room-row ${
+                      r.entry_id === this._selectedRoomId ? "selected" : ""
+                    }" data-room-id="${this._escape(r.entry_id)}">
+                      <div class="room-row-left">
+                        <span class="status-dot ${st.dotClass}"></span>
+                        <span class="room-row-name">${this._escape(r.room_name)}</span>
+                      </div>
+                      <span class="room-row-status ${st.dotClass}">${this._escape(st.label)}</span>
+                    </div>`;
+                })
                 .join("")}
             </div>
           </div>
 
-          <div class="room-list">
-            ${filteredRooms
-              .map((r) => {
-                const st = this._roomStatusSummary(r);
-                return `
-                  <div class="room-row ${
-                    r.entry_id === this._selectedRoomId ? "selected" : ""
-                  }" data-room-id="${this._escape(r.entry_id)}">
-                    <div class="room-row-left">
-                      <span class="status-dot ${st.dotClass}"></span>
-                      <span class="room-row-name">${this._escape(r.room_name)}</span>
-                    </div>
-                    <span class="room-row-status ${st.dotClass}">${this._escape(st.label)}</span>
-                  </div>`;
-              })
-              .join("")}
-          </div>
+          <!-- MAIN WORKSPACE -->
+          ${
+            this._studioView === "floorplan"
+              ? `<div class="content-stack wide">${this._renderFloorplanPane(selRoom)}</div>`
+              : this._studioView === "statistics"
+              ? `<div class="content-stack wide">${this._renderStatisticsPane(selRoom)}</div>`
+              : this._studioView === "replay"
+              ? `<div class="content-stack wide">${this._renderReplayPane(selRoom, presets)}</div>`
+              : `<div class="content-stack">${this._renderSimpleRoomEditor(
+                  selRoom,
+                  cfg,
+                  prev,
+                  rooms,
+                  areas,
+                  entities,
+                  entityNameMap,
+                  presets,
+                  activeMap
+                )}</div>`
+          }
         </div>
-
-        <!-- MAIN WORKSPACE -->
-        ${
-          this._studioView === "floorplan"
-            ? `<div class="content-stack wide">${this._renderFloorplanPane(selRoom)}</div>`
-            : this._studioView === "statistics"
-            ? `<div class="content-stack wide">${this._renderStatisticsPane(selRoom)}</div>`
-            : this._studioView === "replay"
-            ? `<div class="content-stack wide">${this._renderReplayPane(selRoom, presets)}</div>`
-            : `<div class="content-stack">${this._renderSimpleRoomEditor(
-                selRoom,
-                cfg,
-                prev,
-                rooms,
-                areas,
-                entities,
-                entityNameMap,
-                presets,
-                activeMap
-              )}</div>`
-        }
       </div>
 
       ${
@@ -1327,7 +1373,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           }
         </div>
 
-        <div style="display:grid;grid-template-columns:1.3fr 1.2fr auto;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--ha-divider);align-items:center;">
+        <div style="display:grid;grid-template-columns:minmax(0, 1.3fr) minmax(0, 1.2fr) auto;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--ha-divider);align-items:center;">
           <input
             type="text"
             class="input"
@@ -1362,7 +1408,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               : conditions
                   .map(
                     (c, idx) => `
-                  <div style="display:grid;grid-template-columns:1.4fr 120px 120px auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--ha-divider);">
+                  <div style="display:grid;grid-template-columns:minmax(0, 1.4fr) minmax(90px, 120px) minmax(90px, 120px) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--ha-divider);">
                     <input
                       type="text"
                       class="input cond-field"
@@ -2593,6 +2639,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this.runReplay();
     });
 
+    root.querySelector("#btn-toggle-ha-sidebar")?.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }));
+    });
     root.querySelector("#btn-refresh-overview")?.addEventListener("click", () => {
       this.loadOverview(true);
     });

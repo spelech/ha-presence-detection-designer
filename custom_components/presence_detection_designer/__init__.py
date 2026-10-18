@@ -62,7 +62,7 @@ async def _async_ensure_panel_and_views(hass: Any) -> None:
                         StaticPathConfig(
                             "/presence_detection_designer/static",
                             static_dir,
-                            True,
+                            False,
                         )
                     ]
                 )
@@ -75,7 +75,7 @@ async def _async_ensure_panel_and_views(hass: Any) -> None:
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Skipping HTTP view registration: %s", err)
 
-    if not domain_data.get(PANEL_REGISTERED):
+    if domain_data.get(PANEL_REGISTERED) != version:
         try:
             from homeassistant.components.frontend import (
                 async_register_built_in_panel,
@@ -102,7 +102,7 @@ async def _async_ensure_panel_and_views(hass: Any) -> None:
                         "version": version,
                     },
                 )
-                domain_data[PANEL_REGISTERED] = True
+                domain_data[PANEL_REGISTERED] = version
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Skipping sidebar panel registration: %s", err)
 
@@ -346,7 +346,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     config_data = {**entry.data, **entry.options}
     stored_room = store.get_room(entry.entry_id)
     if stored_room:
-        config_data = {**stored_room, **config_data}
+        config_data = {**entry.data, **stored_room, **entry.options}
 
     await store.async_save_room(
         entry.entry_id,
