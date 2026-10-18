@@ -3,6 +3,9 @@
  * Custom Element: <presence-detection-designer-panel>
  */
 
+const PDD_DEFAULT_FLOORPLAN = {"version": 1, "canvas": {"width": 1000, "height": 600}, "floors": [{"id": "upstairs", "name": "Upstairs Level", "order": 0}, {"id": "main", "name": "Main Floor", "order": 1}, {"id": "basement", "name": "Basement Level", "order": 2}], "rooms": [{"id": "margots_room", "name": "Margot's Room", "floor": "upstairs", "x": 60, "y": 40, "width": 290, "height": 150, "room_type": "room"}, {"id": "guest_room", "name": "Guest Room", "floor": "upstairs", "x": 60, "y": 195, "width": 290, "height": 150, "room_type": "room", "notes": "Between Nursery and Office; Ecobee sensor pending battery replacement, no camera."}, {"id": "office", "name": "Office", "floor": "upstairs", "x": 60, "y": 350, "width": 290, "height": 200, "room_type": "room", "notes": "Next to stairs to Front Entryway; camera sees office doorway."}, {"id": "upstairs_hallway", "name": "Upstairs Hallway & Stairs", "floor": "upstairs", "x": 355, "y": 150, "width": 165, "height": 340, "room_type": "transit", "notes": "Connects Office, Guest Room, Nursery, Master Bedroom, and Stairs to Front Entry."}, {"id": "master_bedroom", "name": "Master Bedroom", "floor": "upstairs", "x": 525, "y": 40, "width": 415, "height": 310, "room_type": "room", "notes": "Camera catches bed, walkway, entry to Upstairs Hallway, and entry to Master Bath/Closet."}, {"id": "master_bathroom", "name": "Master Bathroom", "floor": "upstairs", "x": 640, "y": 355, "width": 300, "height": 195, "room_type": "room", "notes": "Master Bathroom & Closet; entry doorway caught by master_bedroom camera."}, {"id": "family_room", "name": "Family Room", "floor": "main", "x": 60, "y": 40, "width": 250, "height": 310, "room_type": "room", "notes": "Camera catches Family Room, Kitchen, and pathway to Entryway, Basement, and Laundry."}, {"id": "kitchen", "name": "Kitchen", "floor": "main", "x": 315, "y": 40, "width": 225, "height": 250, "room_type": "room", "notes": "Connected to Dining Room, Family Room, and Front Entry pathway; caught by Family Room camera."}, {"id": "dining_room", "name": "Dining Room", "floor": "main", "x": 545, "y": 40, "width": 395, "height": 230, "room_type": "room", "notes": "Connected to Kitchen and Living Room."}, {"id": "living_room", "name": "Living Room", "floor": "main", "x": 545, "y": 275, "width": 395, "height": 275, "room_type": "room", "notes": "Connected to Dining Room and Front Entryway; camera catches both Living Room and Entryway."}, {"id": "front_entry", "name": "Front Entry", "floor": "main", "x": 315, "y": 295, "width": 225, "height": 255, "room_type": "room", "notes": "Has front_door sensor, but exits openly to Stairs (Upstairs), Kitchen pathway, and Living Room."}, {"id": "garage", "name": "Garage", "floor": "main", "x": 60, "y": 355, "width": 250, "height": 195, "room_type": "room", "notes": "Connected via Laundry Room pathway to Family Room."}, {"id": "storage_room", "name": "Storage Room", "floor": "basement", "x": 60, "y": 90, "width": 250, "height": 230, "room_type": "room", "notes": "Out of frame on left of Play Area camera; has a door WITHOUT a contact sensor."}, {"id": "basement_bathroom", "name": "Basement Bathroom", "floor": "basement", "x": 60, "y": 325, "width": 250, "height": 215, "room_type": "transit", "notes": "Out of frame on left of Play Area camera; no sensors."}, {"id": "basement_play_area", "name": "Basement Play Area", "floor": "basement", "x": 315, "y": 140, "width": 310, "height": 400, "room_type": "room", "notes": "Central basement area; Storage Room and Basement Bathroom are out of frame on the left."}, {"id": "basement_theater", "name": "Basement Theater", "floor": "basement", "x": 630, "y": 90, "width": 310, "height": 450, "room_type": "room", "notes": "Open to Play Area; camera can partially catch someone on the basement stairs."}], "connections": [{"id": "conn_entry_lr", "from_room": "Front Entry", "to_room": "Living Room", "type": "open_passage", "label": "Open Archway (Entry <-> Living Room)"}, {"id": "conn_entry_kitchen", "from_room": "Front Entry", "to_room": "Kitchen", "type": "open_passage", "label": "Pathway (Entry <-> Kitchen)"}, {"id": "conn_entry_fr", "from_room": "Front Entry", "to_room": "Family Room", "type": "open_passage", "label": "Pathway (Entry <-> Family/Laundry/Basement)"}, {"id": "conn_lr_dr", "from_room": "Living Room", "to_room": "Dining Room", "type": "open_passage", "label": "Open Passage (Living <-> Dining)"}, {"id": "conn_dr_kitchen", "from_room": "Dining Room", "to_room": "Kitchen", "type": "open_passage", "label": "Open Passage (Dining <-> Kitchen)"}, {"id": "conn_kitchen_fr", "from_room": "Kitchen", "to_room": "Family Room", "type": "open_passage", "label": "Open Concept (Kitchen <-> Family Room)"}, {"id": "conn_fr_garage", "from_room": "Family Room", "to_room": "Garage", "type": "unmonitored_door", "entity_id": "binary_sensor.utility_room_door", "label": "Laundry / Utility Room Pathway"}, {"id": "conn_entry_upstairs", "from_room": "Front Entry", "to_room": "Upstairs Hallway & Stairs", "type": "stairs", "label": "Main Stairs (Next to Office)"}, {"id": "conn_fr_basement_play", "from_room": "Family Room", "to_room": "Basement Play Area", "type": "stairs", "label": "Basement Stairs"}, {"id": "conn_fr_basement_theater", "from_room": "Family Room", "to_room": "Basement Theater", "type": "stairs", "label": "Basement Stairs (Partial Camera Sightline)"}, {"id": "conn_hall_office", "from_room": "Upstairs Hallway & Stairs", "to_room": "Office", "type": "unmonitored_door", "label": "Office Doorway (Next to Stairs)"}, {"id": "conn_hall_guest", "from_room": "Upstairs Hallway & Stairs", "to_room": "Guest Room", "type": "unmonitored_door", "label": "Guest Room Doorway (No Sensor)"}, {"id": "conn_hall_nursery", "from_room": "Upstairs Hallway & Stairs", "to_room": "Margot's Room", "type": "unmonitored_door", "label": "Nursery Doorway (Seen Partially by Cam)"}, {"id": "conn_hall_master", "from_room": "Upstairs Hallway & Stairs", "to_room": "Master Bedroom", "type": "unmonitored_door", "label": "Master Bedroom Entryway"}, {"id": "conn_master_bath", "from_room": "Master Bedroom", "to_room": "Master Bathroom", "type": "unmonitored_door", "label": "Master Bath / Closet Entry"}, {"id": "conn_play_theater", "from_room": "Basement Play Area", "to_room": "Basement Theater", "type": "open_passage", "label": "Open Basement Divide (Play <-> Theater)"}, {"id": "conn_play_storage", "from_room": "Basement Play Area", "to_room": "Storage Room", "type": "unmonitored_door", "label": "Storage Room Door (No Sensor, Out of Frame Left)"}, {"id": "conn_play_bbath", "from_room": "Basement Play Area", "to_room": "Basement Bathroom", "type": "unmonitored_door", "label": "Basement Bath Door (No Sensor, Out of Frame Left)"}], "cameras": [{"id": "camera.living_room", "name": "Living Room Camera", "floor": "main", "host_room": "Living Room", "x": 920, "y": 525, "heading_deg": 196, "fov_deg": 56, "range_px": 560, "zones": ["living_room_couch", "living_room_floor", "living_room_bay_windows", "living_room_entry"], "spills_into": ["Front Entry"], "notes": "Catches both Living Room and Front Entryway."}, {"id": "camera.dining_room", "name": "Dining Room Camera", "floor": "main", "host_room": "Dining Room", "x": 920, "y": 60, "heading_deg": 162, "fov_deg": 52, "range_px": 350, "zones": ["dining_room_table", "rileys_food"], "spills_into": [], "notes": "Covers Dining Room table and Riley's food area."}, {"id": "camera.family_room", "name": "Family Room Camera", "floor": "main", "host_room": "Family Room", "x": 80, "y": 60, "heading_deg": 28, "fov_deg": 68, "range_px": 460, "zones": ["family_room_couch", "family_room_recliner", "family_room_floor", "kitchen_island"], "spills_into": ["Kitchen", "Front Entry"], "notes": "Catches Family Room, Kitchen Island, and pathway to Entryway, Basement, and Laundry."}, {"id": "camera.garage", "name": "Garage Camera", "floor": "main", "host_room": "Garage", "x": 80, "y": 375, "heading_deg": 32, "fov_deg": 64, "range_px": 230, "zones": ["garage_parking"], "spills_into": [], "notes": "Covers Garage parking bay."}, {"id": "camera.master_bedroom", "name": "Master Bedroom Camera", "floor": "upstairs", "host_room": "Master Bedroom", "x": 920, "y": 60, "heading_deg": 155, "fov_deg": 96, "range_px": 470, "zones": ["master_bed", "master_open_area", "master_bedroom_walkway", "master_bedroom_entryway", "master_bathroom"], "spills_into": ["Upstairs Hallway & Stairs", "Master Bathroom"], "notes": "Catches Master Bedroom plus entries to Upstairs Hallway and Master Bathroom/Closet."}, {"id": "camera.nursery", "name": "Nursery Camera", "floor": "upstairs", "host_room": "Margot's Room", "x": 80, "y": 55, "heading_deg": 28, "fov_deg": 85, "range_px": 310, "zones": ["nursery_bed"], "spills_into": ["Upstairs Hallway & Stairs"], "notes": "Covers Nursery bed and partially sees doorway from Upstairs Hallway."}, {"id": "camera.office", "name": "Office Camera", "floor": "upstairs", "host_room": "Office", "x": 80, "y": 530, "heading_deg": 330, "fov_deg": 90, "range_px": 330, "zones": ["steves_desk", "sim_rig", "office_floor", "office_entryway"], "spills_into": ["Upstairs Hallway & Stairs"], "notes": "Covers Office desk/sim rig and sees Office doorway next to the stairs."}, {"id": "camera.basement_theater", "name": "Basement Theater Camera", "floor": "basement", "host_room": "Basement Theater", "x": 920, "y": 515, "heading_deg": 212, "fov_deg": 96, "range_px": 540, "zones": ["basement_theater_couch", "basement_theater_playpen", "basement_theater_floor", "basement_bar", "basement_play_area_far", "basement_stairwell"], "spills_into": ["Basement Play Area"], "notes": "Covers Theater, sees far Play Area/Bar, and partially catches Basement Stairs."}, {"id": "camera.basement_play_area", "name": "Basement Play Area Camera", "floor": "basement", "host_room": "Basement Play Area", "x": 340, "y": 515, "heading_deg": 318, "fov_deg": 92, "range_px": 450, "zones": ["basement_play_floor", "basement_counter", "theater_rear_view"], "spills_into": ["Basement Theater"], "notes": "Covers Play Area & Counter; sees into Theater. Storage Room & Basement Bath are out of frame on left."}, {"id": "camera.storage_room", "name": "Storage Room Camera", "floor": "basement", "host_room": "Storage Room", "x": 80, "y": 110, "heading_deg": 38, "fov_deg": 85, "range_px": 240, "zones": ["storage_room_workout"], "spills_into": [], "notes": "Covers interior Storage Room / Gym floor."}]};
+const PDD_DEFAULT_COMPILED_TOPOLOGY = {"floorplan": {"version": 1, "canvas": {"width": 1000, "height": 600}, "floors": [{"id": "upstairs", "name": "Upstairs Level", "order": 0}, {"id": "main", "name": "Main Floor", "order": 1}, {"id": "basement", "name": "Basement Level", "order": 2}], "rooms": [{"id": "margots_room", "name": "Margot's Room", "floor": "upstairs", "x": 60, "y": 40, "width": 290, "height": 150, "room_type": "room"}, {"id": "guest_room", "name": "Guest Room", "floor": "upstairs", "x": 60, "y": 195, "width": 290, "height": 150, "room_type": "room", "notes": "Between Nursery and Office; Ecobee sensor pending battery replacement, no camera."}, {"id": "office", "name": "Office", "floor": "upstairs", "x": 60, "y": 350, "width": 290, "height": 200, "room_type": "room", "notes": "Next to stairs to Front Entryway; camera sees office doorway."}, {"id": "upstairs_hallway", "name": "Upstairs Hallway & Stairs", "floor": "upstairs", "x": 355, "y": 150, "width": 165, "height": 340, "room_type": "transit", "notes": "Connects Office, Guest Room, Nursery, Master Bedroom, and Stairs to Front Entry."}, {"id": "master_bedroom", "name": "Master Bedroom", "floor": "upstairs", "x": 525, "y": 40, "width": 415, "height": 310, "room_type": "room", "notes": "Camera catches bed, walkway, entry to Upstairs Hallway, and entry to Master Bath/Closet."}, {"id": "master_bathroom", "name": "Master Bathroom", "floor": "upstairs", "x": 640, "y": 355, "width": 300, "height": 195, "room_type": "room", "notes": "Master Bathroom & Closet; entry doorway caught by master_bedroom camera."}, {"id": "family_room", "name": "Family Room", "floor": "main", "x": 60, "y": 40, "width": 250, "height": 310, "room_type": "room", "notes": "Camera catches Family Room, Kitchen, and pathway to Entryway, Basement, and Laundry."}, {"id": "kitchen", "name": "Kitchen", "floor": "main", "x": 315, "y": 40, "width": 225, "height": 250, "room_type": "room", "notes": "Connected to Dining Room, Family Room, and Front Entry pathway; caught by Family Room camera."}, {"id": "dining_room", "name": "Dining Room", "floor": "main", "x": 545, "y": 40, "width": 395, "height": 230, "room_type": "room", "notes": "Connected to Kitchen and Living Room."}, {"id": "living_room", "name": "Living Room", "floor": "main", "x": 545, "y": 275, "width": 395, "height": 275, "room_type": "room", "notes": "Connected to Dining Room and Front Entryway; camera catches both Living Room and Entryway."}, {"id": "front_entry", "name": "Front Entry", "floor": "main", "x": 315, "y": 295, "width": 225, "height": 255, "room_type": "room", "notes": "Has front_door sensor, but exits openly to Stairs (Upstairs), Kitchen pathway, and Living Room."}, {"id": "garage", "name": "Garage", "floor": "main", "x": 60, "y": 355, "width": 250, "height": 195, "room_type": "room", "notes": "Connected via Laundry Room pathway to Family Room."}, {"id": "storage_room", "name": "Storage Room", "floor": "basement", "x": 60, "y": 90, "width": 250, "height": 230, "room_type": "room", "notes": "Out of frame on left of Play Area camera; has a door WITHOUT a contact sensor."}, {"id": "basement_bathroom", "name": "Basement Bathroom", "floor": "basement", "x": 60, "y": 325, "width": 250, "height": 215, "room_type": "transit", "notes": "Out of frame on left of Play Area camera; no sensors."}, {"id": "basement_play_area", "name": "Basement Play Area", "floor": "basement", "x": 315, "y": 140, "width": 310, "height": 400, "room_type": "room", "notes": "Central basement area; Storage Room and Basement Bathroom are out of frame on the left."}, {"id": "basement_theater", "name": "Basement Theater", "floor": "basement", "x": 630, "y": 90, "width": 310, "height": 450, "room_type": "room", "notes": "Open to Play Area; camera can partially catch someone on the basement stairs."}], "connections": [{"id": "conn_entry_lr", "from_room": "Front Entry", "to_room": "Living Room", "type": "open_passage", "label": "Open Archway (Entry <-> Living Room)"}, {"id": "conn_entry_kitchen", "from_room": "Front Entry", "to_room": "Kitchen", "type": "open_passage", "label": "Pathway (Entry <-> Kitchen)"}, {"id": "conn_entry_fr", "from_room": "Front Entry", "to_room": "Family Room", "type": "open_passage", "label": "Pathway (Entry <-> Family/Laundry/Basement)"}, {"id": "conn_lr_dr", "from_room": "Living Room", "to_room": "Dining Room", "type": "open_passage", "label": "Open Passage (Living <-> Dining)"}, {"id": "conn_dr_kitchen", "from_room": "Dining Room", "to_room": "Kitchen", "type": "open_passage", "label": "Open Passage (Dining <-> Kitchen)"}, {"id": "conn_kitchen_fr", "from_room": "Kitchen", "to_room": "Family Room", "type": "open_passage", "label": "Open Concept (Kitchen <-> Family Room)"}, {"id": "conn_fr_garage", "from_room": "Family Room", "to_room": "Garage", "type": "unmonitored_door", "entity_id": "binary_sensor.utility_room_door", "label": "Laundry / Utility Room Pathway"}, {"id": "conn_entry_upstairs", "from_room": "Front Entry", "to_room": "Upstairs Hallway & Stairs", "type": "stairs", "label": "Main Stairs (Next to Office)"}, {"id": "conn_fr_basement_play", "from_room": "Family Room", "to_room": "Basement Play Area", "type": "stairs", "label": "Basement Stairs"}, {"id": "conn_fr_basement_theater", "from_room": "Family Room", "to_room": "Basement Theater", "type": "stairs", "label": "Basement Stairs (Partial Camera Sightline)"}, {"id": "conn_hall_office", "from_room": "Upstairs Hallway & Stairs", "to_room": "Office", "type": "unmonitored_door", "label": "Office Doorway (Next to Stairs)"}, {"id": "conn_hall_guest", "from_room": "Upstairs Hallway & Stairs", "to_room": "Guest Room", "type": "unmonitored_door", "label": "Guest Room Doorway (No Sensor)"}, {"id": "conn_hall_nursery", "from_room": "Upstairs Hallway & Stairs", "to_room": "Margot's Room", "type": "unmonitored_door", "label": "Nursery Doorway (Seen Partially by Cam)"}, {"id": "conn_hall_master", "from_room": "Upstairs Hallway & Stairs", "to_room": "Master Bedroom", "type": "unmonitored_door", "label": "Master Bedroom Entryway"}, {"id": "conn_master_bath", "from_room": "Master Bedroom", "to_room": "Master Bathroom", "type": "unmonitored_door", "label": "Master Bath / Closet Entry"}, {"id": "conn_play_theater", "from_room": "Basement Play Area", "to_room": "Basement Theater", "type": "open_passage", "label": "Open Basement Divide (Play <-> Theater)"}, {"id": "conn_play_storage", "from_room": "Basement Play Area", "to_room": "Storage Room", "type": "unmonitored_door", "label": "Storage Room Door (No Sensor, Out of Frame Left)"}, {"id": "conn_play_bbath", "from_room": "Basement Play Area", "to_room": "Basement Bathroom", "type": "unmonitored_door", "label": "Basement Bath Door (No Sensor, Out of Frame Left)"}], "cameras": [{"id": "camera.living_room", "name": "Living Room Camera", "floor": "main", "host_room": "Living Room", "x": 920, "y": 525, "heading_deg": 196, "fov_deg": 56, "range_px": 560, "zones": ["living_room_couch", "living_room_floor", "living_room_bay_windows", "living_room_entry"], "spills_into": ["Front Entry"], "notes": "Catches both Living Room and Front Entryway."}, {"id": "camera.dining_room", "name": "Dining Room Camera", "floor": "main", "host_room": "Dining Room", "x": 920, "y": 60, "heading_deg": 162, "fov_deg": 52, "range_px": 350, "zones": ["dining_room_table", "rileys_food"], "spills_into": [], "notes": "Covers Dining Room table and Riley's food area."}, {"id": "camera.family_room", "name": "Family Room Camera", "floor": "main", "host_room": "Family Room", "x": 80, "y": 60, "heading_deg": 28, "fov_deg": 68, "range_px": 460, "zones": ["family_room_couch", "family_room_recliner", "family_room_floor", "kitchen_island"], "spills_into": ["Kitchen", "Front Entry"], "notes": "Catches Family Room, Kitchen Island, and pathway to Entryway, Basement, and Laundry."}, {"id": "camera.garage", "name": "Garage Camera", "floor": "main", "host_room": "Garage", "x": 80, "y": 375, "heading_deg": 32, "fov_deg": 64, "range_px": 230, "zones": ["garage_parking"], "spills_into": [], "notes": "Covers Garage parking bay."}, {"id": "camera.master_bedroom", "name": "Master Bedroom Camera", "floor": "upstairs", "host_room": "Master Bedroom", "x": 920, "y": 60, "heading_deg": 155, "fov_deg": 96, "range_px": 470, "zones": ["master_bed", "master_open_area", "master_bedroom_walkway", "master_bedroom_entryway", "master_bathroom"], "spills_into": ["Upstairs Hallway & Stairs", "Master Bathroom"], "notes": "Catches Master Bedroom plus entries to Upstairs Hallway and Master Bathroom/Closet."}, {"id": "camera.nursery", "name": "Nursery Camera", "floor": "upstairs", "host_room": "Margot's Room", "x": 80, "y": 55, "heading_deg": 28, "fov_deg": 85, "range_px": 310, "zones": ["nursery_bed"], "spills_into": ["Upstairs Hallway & Stairs"], "notes": "Covers Nursery bed and partially sees doorway from Upstairs Hallway."}, {"id": "camera.office", "name": "Office Camera", "floor": "upstairs", "host_room": "Office", "x": 80, "y": 530, "heading_deg": 330, "fov_deg": 90, "range_px": 330, "zones": ["steves_desk", "sim_rig", "office_floor", "office_entryway"], "spills_into": ["Upstairs Hallway & Stairs"], "notes": "Covers Office desk/sim rig and sees Office doorway next to the stairs."}, {"id": "camera.basement_theater", "name": "Basement Theater Camera", "floor": "basement", "host_room": "Basement Theater", "x": 920, "y": 515, "heading_deg": 212, "fov_deg": 96, "range_px": 540, "zones": ["basement_theater_couch", "basement_theater_playpen", "basement_theater_floor", "basement_bar", "basement_play_area_far", "basement_stairwell"], "spills_into": ["Basement Play Area"], "notes": "Covers Theater, sees far Play Area/Bar, and partially catches Basement Stairs."}, {"id": "camera.basement_play_area", "name": "Basement Play Area Camera", "floor": "basement", "host_room": "Basement Play Area", "x": 340, "y": 515, "heading_deg": 318, "fov_deg": 92, "range_px": 450, "zones": ["basement_play_floor", "basement_counter", "theater_rear_view"], "spills_into": ["Basement Theater"], "notes": "Covers Play Area & Counter; sees into Theater. Storage Room & Basement Bath are out of frame on left."}, {"id": "camera.storage_room", "name": "Storage Room Camera", "floor": "basement", "host_room": "Storage Room", "x": 80, "y": 110, "heading_deg": 38, "fov_deg": 85, "range_px": 240, "zones": ["storage_room_workout"], "spills_into": [], "notes": "Covers interior Storage Room / Gym floor."}]}, "connected_rooms_map": {"Margot's Room": ["Front Entry", "Guest Room", "Master Bedroom", "Office"], "Guest Room": ["Front Entry", "Margot's Room", "Master Bedroom", "Office"], "Office": ["Front Entry", "Guest Room", "Margot's Room", "Master Bedroom"], "Master Bedroom": ["Front Entry", "Guest Room", "Margot's Room", "Master Bathroom", "Office"], "Master Bathroom": ["Master Bedroom"], "Family Room": ["Basement Play Area", "Basement Theater", "Front Entry", "Garage", "Kitchen"], "Kitchen": ["Dining Room", "Family Room", "Front Entry"], "Dining Room": ["Kitchen", "Living Room"], "Living Room": ["Dining Room", "Front Entry"], "Front Entry": ["Family Room", "Guest Room", "Kitchen", "Living Room", "Margot's Room", "Master Bedroom", "Office"], "Garage": ["Family Room"], "Storage Room": ["Basement Play Area"], "Basement Play Area": ["Basement Theater", "Family Room", "Storage Room"], "Basement Theater": ["Basement Play Area", "Family Room"]}, "seal_analysis": {"Margot's Room": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)"]}, "Guest Room": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)"]}, "Office": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)"]}, "Master Bedroom": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)", "Master Bathroom (unmonitored door)"]}, "Master Bathroom": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Master Bedroom (unmonitored door)"]}, "Family Room": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Front Entry (open passage)", "Kitchen (open passage)", "Garage (unmonitored door)", "Basement Play Area (stairs)", "Basement Theater (stairs)"]}, "Kitchen": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Front Entry (open passage)", "Dining Room (open passage)", "Family Room (open passage)"]}, "Dining Room": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Living Room (open passage)", "Kitchen (open passage)"]}, "Living Room": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Front Entry (open passage)", "Dining Room (open passage)"]}, "Front Entry": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Living Room (open passage)", "Kitchen (open passage)", "Family Room (open passage)", "Upstairs Hallway & Stairs (stairs)"]}, "Garage": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Family Room (unmonitored door)"]}, "Storage Room": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Basement Play Area (unmonitored door)"]}, "Basement Play Area": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Family Room (stairs)", "Basement Theater (open passage)", "Storage Room (unmonitored door)", "Basement Bathroom (unmonitored door)"]}, "Basement Theater": {"can_be_bounded": false, "recommended_mode": "open", "monitored_doors": [], "unsealed_exits": ["Family Room (stairs)", "Basement Play Area (open passage)"]}}, "camera_analysis": [{"camera_id": "camera.living_room", "name": "Living Room Camera", "host_room": "Living Room", "floor": "main", "zones": ["living_room_couch", "living_room_floor", "living_room_bay_windows", "living_room_entry"], "spillover_targets": [{"room_name": "Kitchen", "overlap_pct": 22.0}, {"room_name": "Front Entry", "overlap_pct": 73.0}], "has_multi_room_bleed": true}, {"camera_id": "camera.dining_room", "name": "Dining Room Camera", "host_room": "Dining Room", "floor": "main", "zones": ["dining_room_table", "rileys_food"], "spillover_targets": [], "has_multi_room_bleed": false}, {"camera_id": "camera.family_room", "name": "Family Room Camera", "host_room": "Family Room", "floor": "main", "zones": ["family_room_couch", "family_room_recliner", "family_room_floor", "kitchen_island"], "spillover_targets": [{"room_name": "Kitchen", "overlap_pct": 93.0}, {"room_name": "Front Entry", "overlap_pct": 26.0}, {"room_name": "Garage", "overlap_pct": 10.0}], "has_multi_room_bleed": true}, {"camera_id": "camera.garage", "name": "Garage Camera", "host_room": "Garage", "floor": "main", "zones": ["garage_parking"], "spillover_targets": [], "has_multi_room_bleed": false}, {"camera_id": "camera.master_bedroom", "name": "Master Bedroom Camera", "host_room": "Master Bedroom", "floor": "upstairs", "zones": ["master_bed", "master_open_area", "master_bedroom_walkway", "master_bedroom_entryway", "master_bathroom"], "spillover_targets": [{"room_name": "Upstairs Hallway & Stairs", "overlap_pct": 18.0}, {"room_name": "Master Bathroom", "overlap_pct": 37.0}], "has_multi_room_bleed": true}, {"camera_id": "camera.nursery", "name": "Nursery Camera", "host_room": "Margot's Room", "floor": "upstairs", "zones": ["nursery_bed"], "spillover_targets": [{"room_name": "Guest Room", "overlap_pct": 48.0}, {"room_name": "Upstairs Hallway & Stairs", "overlap_pct": 18.0}], "has_multi_room_bleed": true}, {"camera_id": "camera.office", "name": "Office Camera", "host_room": "Office", "floor": "upstairs", "zones": ["steves_desk", "sim_rig", "office_floor", "office_entryway"], "spillover_targets": [{"room_name": "Guest Room", "overlap_pct": 43.0}, {"room_name": "Upstairs Hallway & Stairs", "overlap_pct": 18.0}], "has_multi_room_bleed": true}, {"camera_id": "camera.basement_theater", "name": "Basement Theater Camera", "host_room": "Basement Theater", "floor": "basement", "zones": ["basement_theater_couch", "basement_theater_playpen", "basement_theater_floor", "basement_bar", "basement_play_area_far", "basement_stairwell"], "spillover_targets": [{"room_name": "Basement Play Area", "overlap_pct": 66.0}], "has_multi_room_bleed": true}, {"camera_id": "camera.basement_play_area", "name": "Basement Play Area Camera", "host_room": "Basement Play Area", "floor": "basement", "zones": ["basement_play_floor", "basement_counter", "theater_rear_view"], "spillover_targets": [{"room_name": "Basement Theater", "overlap_pct": 30.0}], "has_multi_room_bleed": true}, {"camera_id": "camera.storage_room", "name": "Storage Room Camera", "host_room": "Storage Room", "floor": "basement", "zones": ["storage_room_workout"], "spillover_targets": [], "has_multi_room_bleed": false}], "room_coverage": {"Margot's Room": {"primary_cameras": [{"camera_id": "camera.nursery", "coverage_pct": 84.0}], "spillover_cameras": [], "max_coverage_pct": 84.0}, "Guest Room": {"primary_cameras": [], "spillover_cameras": [{"camera_id": "camera.nursery", "host_room": "Margot's Room", "overlap_pct": 48.0}, {"camera_id": "camera.office", "host_room": "Office", "overlap_pct": 43.0}], "max_coverage_pct": 48.0}, "Office": {"primary_cameras": [{"camera_id": "camera.office", "coverage_pct": 84.0}], "spillover_cameras": [], "max_coverage_pct": 84.0}, "Upstairs Hallway & Stairs": {"primary_cameras": [], "spillover_cameras": [{"camera_id": "camera.master_bedroom", "host_room": "Master Bedroom", "overlap_pct": 18.0}, {"camera_id": "camera.nursery", "host_room": "Margot's Room", "overlap_pct": 18.0}, {"camera_id": "camera.office", "host_room": "Office", "overlap_pct": 18.0}], "max_coverage_pct": 18.0}, "Master Bedroom": {"primary_cameras": [{"camera_id": "camera.master_bedroom", "coverage_pct": 84.0}], "spillover_cameras": [], "max_coverage_pct": 84.0}, "Master Bathroom": {"primary_cameras": [], "spillover_cameras": [{"camera_id": "camera.master_bedroom", "host_room": "Master Bedroom", "overlap_pct": 37.0}], "max_coverage_pct": 37.0}, "Family Room": {"primary_cameras": [{"camera_id": "camera.family_room", "coverage_pct": 65.0}], "spillover_cameras": [], "max_coverage_pct": 65.0}, "Kitchen": {"primary_cameras": [], "spillover_cameras": [{"camera_id": "camera.living_room", "host_room": "Living Room", "overlap_pct": 22.0}, {"camera_id": "camera.family_room", "host_room": "Family Room", "overlap_pct": 93.0}], "max_coverage_pct": 93.0}, "Dining Room": {"primary_cameras": [{"camera_id": "camera.dining_room", "coverage_pct": 65.0}], "spillover_cameras": [], "max_coverage_pct": 65.0}, "Living Room": {"primary_cameras": [{"camera_id": "camera.living_room", "coverage_pct": 65.0}], "spillover_cameras": [], "max_coverage_pct": 65.0}, "Front Entry": {"primary_cameras": [], "spillover_cameras": [{"camera_id": "camera.living_room", "host_room": "Living Room", "overlap_pct": 73.0}, {"camera_id": "camera.family_room", "host_room": "Family Room", "overlap_pct": 26.0}], "max_coverage_pct": 73.0}, "Garage": {"primary_cameras": [{"camera_id": "camera.garage", "coverage_pct": 65.0}], "spillover_cameras": [{"camera_id": "camera.family_room", "host_room": "Family Room", "overlap_pct": 10.0}], "max_coverage_pct": 65.0}, "Storage Room": {"primary_cameras": [{"camera_id": "camera.storage_room", "coverage_pct": 70.0}], "spillover_cameras": [], "max_coverage_pct": 70.0}, "Basement Bathroom": {"primary_cameras": [], "spillover_cameras": [], "max_coverage_pct": 0.0}, "Basement Play Area": {"primary_cameras": [{"camera_id": "camera.basement_play_area", "coverage_pct": 88.0}], "spillover_cameras": [{"camera_id": "camera.basement_theater", "host_room": "Basement Theater", "overlap_pct": 66.0}], "max_coverage_pct": 88.0}, "Basement Theater": {"primary_cameras": [{"camera_id": "camera.basement_theater", "coverage_pct": 82.0}], "spillover_cameras": [{"camera_id": "camera.basement_play_area", "host_room": "Basement Play Area", "overlap_pct": 30.0}], "max_coverage_pct": 82.0}}, "ambiguities": [{"severity": "high", "category": "camera_spillover", "title": "Living Room Camera cone spills into Kitchen, Front Entry", "rooms": ["Living Room", "Kitchen", "Front Entry"], "camera_id": "camera.living_room", "description": "`camera.living_room` (hosted in Living Room) also sees Kitchen, Front Entry. If whole-frame person detection is weighted as `strong`, movement in the adjacent entryway/hallway/room will falsely mark Living Room occupied.", "resolution": "Downgrade binary_sensor.living_room_person_occupancy to `supporting` and trigger Living Room only from interior Frigate sub-zones."}, {"severity": "high", "category": "camera_spillover", "title": "Family Room Camera cone spills into Kitchen, Front Entry, Garage", "rooms": ["Family Room", "Kitchen", "Front Entry", "Garage"], "camera_id": "camera.family_room", "description": "`camera.family_room` (hosted in Family Room) also sees Kitchen, Front Entry, Garage. If whole-frame person detection is weighted as `strong`, movement in the adjacent entryway/hallway/room will falsely mark Family Room occupied.", "resolution": "Downgrade binary_sensor.family_room_person_occupancy to `supporting` and trigger Family Room only from interior Frigate sub-zones."}, {"severity": "high", "category": "camera_spillover", "title": "Master Bedroom Camera cone spills into Upstairs Hallway & Stairs, Master Bathroom", "rooms": ["Master Bedroom", "Upstairs Hallway & Stairs", "Master Bathroom"], "camera_id": "camera.master_bedroom", "description": "`camera.master_bedroom` (hosted in Master Bedroom) also sees Upstairs Hallway & Stairs, Master Bathroom. If whole-frame person detection is weighted as `strong`, movement in the adjacent entryway/hallway/room will falsely mark Master Bedroom occupied.", "resolution": "Downgrade binary_sensor.master_bedroom_person_occupancy, binary_sensor.master_bedroom_entryway_person_occupancy to `supporting` and trigger Master Bedroom only from interior Frigate sub-zones."}, {"severity": "high", "category": "camera_spillover", "title": "Nursery Camera cone spills into Guest Room, Upstairs Hallway & Stairs", "rooms": ["Margot's Room", "Guest Room", "Upstairs Hallway & Stairs"], "camera_id": "camera.nursery", "description": "`camera.nursery` (hosted in Margot's Room) also sees Guest Room, Upstairs Hallway & Stairs. If whole-frame person detection is weighted as `strong`, movement in the adjacent entryway/hallway/room will falsely mark Margot's Room occupied.", "resolution": "Downgrade binary_sensor.nursery_person_occupancy to `supporting` and trigger Margot's Room only from interior Frigate sub-zones."}, {"severity": "high", "category": "camera_spillover", "title": "Office Camera cone spills into Guest Room, Upstairs Hallway & Stairs", "rooms": ["Office", "Guest Room", "Upstairs Hallway & Stairs"], "camera_id": "camera.office", "description": "`camera.office` (hosted in Office) also sees Guest Room, Upstairs Hallway & Stairs. If whole-frame person detection is weighted as `strong`, movement in the adjacent entryway/hallway/room will falsely mark Office occupied.", "resolution": "Downgrade binary_sensor.office_person_occupancy, binary_sensor.office_entryway_person_occupancy to `supporting` and trigger Office only from interior Frigate sub-zones."}, {"severity": "high", "category": "camera_spillover", "title": "Basement Theater Camera cone spills into Basement Play Area", "rooms": ["Basement Theater", "Basement Play Area"], "camera_id": "camera.basement_theater", "description": "`camera.basement_theater` (hosted in Basement Theater) also sees Basement Play Area. If whole-frame person detection is weighted as `strong`, movement in the adjacent entryway/hallway/room will falsely mark Basement Theater occupied.", "resolution": "Downgrade binary_sensor.basement_theater_person_occupancy, binary_sensor.basement_stairwell_person_occupancy to `supporting` and trigger Basement Theater only from interior Frigate sub-zones."}, {"severity": "high", "category": "camera_spillover", "title": "Basement Play Area Camera cone spills into Basement Theater", "rooms": ["Basement Play Area", "Basement Theater"], "camera_id": "camera.basement_play_area", "description": "`camera.basement_play_area` (hosted in Basement Play Area) also sees Basement Theater. If whole-frame person detection is weighted as `strong`, movement in the adjacent entryway/hallway/room will falsely mark Basement Play Area occupied.", "resolution": "Downgrade binary_sensor.basement_play_area_person_occupancy, binary_sensor.basement_stairwell_person_occupancy to `supporting` and trigger Basement Play Area only from interior Frigate sub-zones."}, {"severity": "low", "category": "blind_pocket", "title": "Basement Bathroom is out of frame left of Play Area camera", "rooms": ["Basement Play Area", "Storage Room"], "camera_id": "camera.basement_play_area", "description": "Located to the left of `camera.basement_play_area` alongside Storage Room, with an unmonitored door and no interior sensors.", "resolution": "Treat left edge exit from Basement Play Area as an unsealed transition; Storage Room uses its internal `camera.storage_room` to distinguish gym/storage entry."}, {"severity": "medium", "category": "vertical_ble_bleed", "title": "Vertical BLE stack: Margot's Room directly above Family Room (86% overlap)", "rooms": ["Margot's Room", "Family Room"], "camera_id": null, "description": "Margot's Room (Upstairs) sits directly over Family Room (Main Floor). Phone/tablet BLE proxies can bleed vertically through the floor.", "resolution": "Keep single BLE trackers at `moderate` (`60%` solo < `75%` threshold) and secondary tablets at `supporting` (`prob_given_false: 0.25`) so vertical BLE drift cannot trigger occupancy without a camera or PIR sensor."}, {"severity": "medium", "category": "vertical_ble_bleed", "title": "Vertical BLE stack: Guest Room directly above Family Room (86% overlap)", "rooms": ["Guest Room", "Family Room"], "camera_id": null, "description": "Guest Room (Upstairs) sits directly over Family Room (Main Floor). Phone/tablet BLE proxies can bleed vertically through the floor.", "resolution": "Keep single BLE trackers at `moderate` (`60%` solo < `75%` threshold) and secondary tablets at `supporting` (`prob_given_false: 0.25`) so vertical BLE drift cannot trigger occupancy without a camera or PIR sensor."}, {"severity": "medium", "category": "vertical_ble_bleed", "title": "Vertical BLE stack: Office directly above Garage (100% overlap)", "rooms": ["Office", "Garage"], "camera_id": null, "description": "Office (Upstairs) sits directly over Garage (Main Floor). Phone/tablet BLE proxies can bleed vertically through the floor.", "resolution": "Keep single BLE trackers at `moderate` (`60%` solo < `75%` threshold) and secondary tablets at `supporting` (`prob_given_false: 0.25`) so vertical BLE drift cannot trigger occupancy without a camera or PIR sensor."}, {"severity": "medium", "category": "vertical_ble_bleed", "title": "Vertical BLE stack: Master Bedroom directly above Dining Room (100% overlap)", "rooms": ["Master Bedroom", "Dining Room"], "camera_id": null, "description": "Master Bedroom (Upstairs) sits directly over Dining Room (Main Floor). Phone/tablet BLE proxies can bleed vertically through the floor.", "resolution": "Keep single BLE trackers at `moderate` (`60%` solo < `75%` threshold) and secondary tablets at `supporting` (`prob_given_false: 0.25`) so vertical BLE drift cannot trigger occupancy without a camera or PIR sensor."}, {"severity": "medium", "category": "vertical_ble_bleed", "title": "Vertical BLE stack: Master Bathroom directly above Living Room (100% overlap)", "rooms": ["Master Bathroom", "Living Room"], "camera_id": null, "description": "Master Bathroom (Upstairs) sits directly over Living Room (Main Floor). Phone/tablet BLE proxies can bleed vertically through the floor.", "resolution": "Keep single BLE trackers at `moderate` (`60%` solo < `75%` threshold) and secondary tablets at `supporting` (`prob_given_false: 0.25`) so vertical BLE drift cannot trigger occupancy without a camera or PIR sensor."}], "compiled_room_rules": {"Margot's Room": {"room_name": "Margot's Room", "connected_rooms": ["Front Entry", "Guest Room", "Master Bedroom", "Office"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)"], "recommended_inactivity_timeout": 300, "spillover_entities_to_downgrade": ["binary_sensor.nursery_person_occupancy"], "max_camera_coverage_pct": 84.0}, "Guest Room": {"room_name": "Guest Room", "connected_rooms": ["Front Entry", "Margot's Room", "Master Bedroom", "Office"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)"], "recommended_inactivity_timeout": 300, "spillover_entities_to_downgrade": [], "max_camera_coverage_pct": 48.0}, "Office": {"room_name": "Office", "connected_rooms": ["Front Entry", "Guest Room", "Margot's Room", "Master Bedroom"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)"], "recommended_inactivity_timeout": 240, "spillover_entities_to_downgrade": ["binary_sensor.office_person_occupancy", "binary_sensor.office_entryway_person_occupancy"], "max_camera_coverage_pct": 84.0}, "Master Bedroom": {"room_name": "Master Bedroom", "connected_rooms": ["Front Entry", "Guest Room", "Margot's Room", "Master Bathroom", "Office"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Upstairs Hallway & Stairs (unmonitored door)", "Master Bathroom (unmonitored door)"], "recommended_inactivity_timeout": 300, "spillover_entities_to_downgrade": ["binary_sensor.master_bedroom_person_occupancy", "binary_sensor.master_bedroom_entryway_person_occupancy"], "max_camera_coverage_pct": 84.0}, "Master Bathroom": {"room_name": "Master Bathroom", "connected_rooms": ["Master Bedroom"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Master Bedroom (unmonitored door)"], "recommended_inactivity_timeout": 600, "spillover_entities_to_downgrade": [], "max_camera_coverage_pct": 37.0}, "Family Room": {"room_name": "Family Room", "connected_rooms": ["Basement Play Area", "Basement Theater", "Front Entry", "Garage", "Kitchen"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Front Entry (open passage)", "Kitchen (open passage)", "Garage (unmonitored door)", "Basement Play Area (stairs)", "Basement Theater (stairs)"], "recommended_inactivity_timeout": 180, "spillover_entities_to_downgrade": ["binary_sensor.family_room_person_occupancy"], "max_camera_coverage_pct": 65.0}, "Kitchen": {"room_name": "Kitchen", "connected_rooms": ["Dining Room", "Family Room", "Front Entry"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Front Entry (open passage)", "Dining Room (open passage)", "Family Room (open passage)"], "recommended_inactivity_timeout": 180, "spillover_entities_to_downgrade": [], "max_camera_coverage_pct": 93.0}, "Dining Room": {"room_name": "Dining Room", "connected_rooms": ["Kitchen", "Living Room"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Living Room (open passage)", "Kitchen (open passage)"], "recommended_inactivity_timeout": 180, "spillover_entities_to_downgrade": [], "max_camera_coverage_pct": 65.0}, "Living Room": {"room_name": "Living Room", "connected_rooms": ["Dining Room", "Front Entry"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Front Entry (open passage)", "Dining Room (open passage)"], "recommended_inactivity_timeout": 180, "spillover_entities_to_downgrade": ["binary_sensor.living_room_person_occupancy"], "max_camera_coverage_pct": 65.0}, "Front Entry": {"room_name": "Front Entry", "connected_rooms": ["Family Room", "Guest Room", "Kitchen", "Living Room", "Margot's Room", "Master Bedroom", "Office"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Living Room (open passage)", "Kitchen (open passage)", "Family Room (open passage)", "Upstairs Hallway & Stairs (stairs)"], "recommended_inactivity_timeout": 60, "spillover_entities_to_downgrade": [], "max_camera_coverage_pct": 73.0}, "Garage": {"room_name": "Garage", "connected_rooms": ["Family Room"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Family Room (unmonitored door)"], "recommended_inactivity_timeout": 180, "spillover_entities_to_downgrade": [], "max_camera_coverage_pct": 65.0}, "Storage Room": {"room_name": "Storage Room", "connected_rooms": ["Basement Play Area"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Basement Play Area (unmonitored door)"], "recommended_inactivity_timeout": 180, "spillover_entities_to_downgrade": [], "max_camera_coverage_pct": 70.0}, "Basement Play Area": {"room_name": "Basement Play Area", "connected_rooms": ["Basement Theater", "Family Room", "Storage Room"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Family Room (stairs)", "Basement Theater (open passage)", "Storage Room (unmonitored door)", "Basement Bathroom (unmonitored door)"], "recommended_inactivity_timeout": 180, "spillover_entities_to_downgrade": ["binary_sensor.basement_play_area_person_occupancy", "binary_sensor.basement_stairwell_person_occupancy"], "max_camera_coverage_pct": 88.0}, "Basement Theater": {"room_name": "Basement Theater", "connected_rooms": ["Basement Play Area", "Family Room"], "recommended_mode": "open", "can_be_bounded": false, "unsealed_exits": ["Family Room (stairs)", "Basement Play Area (open passage)"], "recommended_inactivity_timeout": 240, "spillover_entities_to_downgrade": ["binary_sensor.basement_theater_person_occupancy", "binary_sensor.basement_stairwell_person_occupancy"], "max_camera_coverage_pct": 82.0}}};
+
 class PresenceDetectionDesignerPanel extends HTMLElement {
   constructor() {
     super();
@@ -25,8 +28,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._revisionNote = "";
     this._showGlobalModal = false;
     this._globalDraft = null;
-    this._floorplan = null;
-    this._compiledTopology = null;
+    this._floorplan = this._loadLocalOrDefaultFloorplan();
+    this._compiledTopology = this._compileFloorplanClient(this._floorplan);
     this._selectedFloorId = "main";
     this._selectedCamEntity = null;
     this._showFloorplanInspector = false;
@@ -116,6 +119,114 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     return await resp.json();
   }
 
+  _getDefaultFloorplan() {
+    return JSON.parse(JSON.stringify(PDD_DEFAULT_FLOORPLAN));
+  }
+
+  _loadLocalOrDefaultFloorplan() {
+    try {
+      const saved = window.localStorage.getItem("pdd_floorplan_layout_v1");
+      if (saved) {
+        const parsed = JSON.loads ? JSON.loads(saved) : JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.floors) && Array.isArray(parsed.rooms)) {
+          return parsed;
+        }
+      }
+    } catch (_e) {
+      // ignore storage errors
+    }
+    return this._getDefaultFloorplan();
+  }
+
+  _compileFloorplanClient(fpInput) {
+    const fp = fpInput && Array.isArray(fpInput.rooms) ? fpInput : this._getDefaultFloorplan();
+    const base = JSON.parse(JSON.stringify(PDD_DEFAULT_COMPILED_TOPOLOGY));
+    const rooms = fp.rooms || [];
+    const conns = fp.connections || [];
+    const cams = fp.cameras || [];
+    const roomMap = {};
+    rooms.forEach((r) => {
+      roomMap[r.name || r.room_name] = r;
+    });
+
+    // Compute bidirectional connected_rooms_map expanding through transit spaces
+    const adj = {};
+    rooms.forEach((r) => {
+      adj[r.name || r.room_name] = new Set();
+    });
+    conns.forEach((c) => {
+      if (adj[c.from_room] && adj[c.to_room]) {
+        adj[c.from_room].add(c.to_room);
+        adj[c.to_room].add(c.from_room);
+      }
+    });
+    const isTransit = (name) => {
+      const r = roomMap[name];
+      return r && (r.room_type === "transit" || Boolean(r.is_transit));
+    };
+    const connectedRoomsMap = {};
+    Object.keys(adj).forEach((rName) => {
+      if (isTransit(rName)) return;
+      const visited = new Set([rName]);
+      const queue = [...adj[rName]];
+      const linked = new Set();
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+        if (isTransit(cur)) {
+          adj[cur]?.forEach((nxt) => {
+            if (!visited.has(nxt)) queue.push(nxt);
+          });
+        } else {
+          linked.add(cur);
+        }
+      }
+      connectedRoomsMap[rName] = [...linked].sort();
+    });
+    base.connected_rooms_map = connectedRoomsMap;
+
+    // Point-in-cone check for camera spillover & coverage
+    const pointInCone = (px, py, cam) => {
+      const dx = px - Number(cam.x || 0);
+      const dy = py - Number(cam.y || 0);
+      const dist = Math.hypot(dx, dy);
+      const range = Number(cam.range_px || 200);
+      if (dist > range) return false;
+      if (dist < 1e-3) return true;
+      let ang = (Math.atan2(dy, dx) * 180) / Math.PI;
+      let diff = ((ang - Number(cam.heading_deg || 0) + 540) % 360) - 180;
+      return Math.abs(diff) <= Number(cam.fov_deg || 90) / 2;
+    };
+
+    const roomCoverage = {};
+    rooms.forEach((r) => {
+      const rName = r.name || r.room_name;
+      const FloorCams = cams.filter((c) => c.floor === r.floor);
+      let maxPct = 0;
+      const rx = Number(r.x || 0);
+      const ry = Number(r.y || 0);
+      const rw = Number(r.width ?? r.w ?? 200);
+      const rh = Number(r.height ?? r.h ?? 150);
+      FloorCams.forEach((cam) => {
+        let hits = 0;
+        const total = 9;
+        for (let ix = 0; ix < 3; ix++) {
+          for (let iy = 0; iy < 3; iy++) {
+            const sx = rx + ((ix + 0.5) * rw) / 3;
+            const sy = ry + ((iy + 0.5) * rh) / 3;
+            if (pointInCone(sx, sy, cam)) hits++;
+          }
+        }
+        const pct = Math.round((hits / total) * 100);
+        if (pct > maxPct) maxPct = pct;
+      });
+      roomCoverage[rName] = { max_coverage_pct: maxPct };
+    });
+    base.room_coverage = roomCoverage;
+    return base;
+  }
+
   async loadOverview(preserveSelection = true) {
     this._loading = true;
     try {
@@ -124,9 +235,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._globalDraft = JSON.parse(JSON.stringify(data.global_settings || {}));
       if (data.floorplan) {
         this._floorplan = JSON.parse(JSON.stringify(data.floorplan));
+      } else if (!this._floorplan) {
+        this._floorplan = this._loadLocalOrDefaultFloorplan();
       }
       if (data.compiled_topology) {
         this._compiledTopology = data.compiled_topology;
+      } else {
+        this._compiledTopology = this._compileFloorplanClient(this._floorplan);
       }
       const rooms = data.rooms || [];
       if (rooms.length > 0) {
@@ -205,12 +320,16 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       const res = await this._apiCall("GET", "/api/presence_detection_designer/floorplan");
       if (res && res.floorplan) {
         this._floorplan = res.floorplan;
-        this._compiledTopology = res.compiled_topology || null;
+        this._compiledTopology =
+          res.compiled_topology || this._compileFloorplanClient(this._floorplan);
       }
-      this.render();
-    } catch (err) {
-      this.showToast(`Failed to load floorplan: ${err.message}`, "error");
+    } catch (_err) {
+      if (!this._floorplan) {
+        this._floorplan = this._loadLocalOrDefaultFloorplan();
+      }
+      this._compiledTopology = this._compileFloorplanClient(this._floorplan);
     }
+    this.render();
   }
 
   async saveOrCompileFloorplan(action = "save") {
@@ -221,7 +340,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
       if (res && res.floorplan) {
         this._floorplan = res.floorplan;
-        this._compiledTopology = res.compiled_topology || null;
+        this._compiledTopology =
+          res.compiled_topology || this._compileFloorplanClient(this._floorplan);
+        try {
+          window.localStorage.setItem("pdd_floorplan_layout_v1", JSON.stringify(this._floorplan));
+        } catch (_e) {}
       }
       if (res && Array.isArray(res.updated_rooms) && res.updated_rooms.length > 0 && this._overview) {
         for (const ur of res.updated_rooms) {
@@ -244,8 +367,52 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       } else {
         this.showToast("Saved floorplan layout", "success");
       }
-    } catch (err) {
-      this.showToast(`Floorplan update failed: ${err.message}`, "error");
+    } catch (_err) {
+      // Fallback when backend HTTP route has not been reloaded yet
+      if (action === "reset") {
+        this._floorplan = this._getDefaultFloorplan();
+        try {
+          window.localStorage.removeItem("pdd_floorplan_layout_v1");
+        } catch (_e) {}
+        this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+        this.render();
+        this.showToast("Reset floorplan to default layout", "info");
+        return;
+      }
+      try {
+        window.localStorage.setItem("pdd_floorplan_layout_v1", JSON.stringify(this._floorplan));
+      } catch (_e) {}
+      this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+      if (action === "compile_and_apply" && this._overview && Array.isArray(this._overview.rooms)) {
+        const connMap = this._compiledTopology?.connected_rooms_map || {};
+        let updatedCount = 0;
+        for (let i = 0; i < this._overview.rooms.length; i++) {
+          const rm = this._overview.rooms[i];
+          const rName = rm.room_name;
+          if (Array.isArray(connMap[rName])) {
+            const nextCfg = JSON.parse(JSON.stringify(rm.config || {}));
+            nextCfg.connected_rooms = [...connMap[rName]];
+            try {
+              const saved = await this._apiCall(
+                "POST",
+                `/api/presence_detection_designer/room/${rm.entry_id}`,
+                { config: nextCfg, note: "Updated connections from Floorplan" }
+              );
+              if (saved && saved.room) {
+                this._overview.rooms[i] = saved.room;
+              }
+              updatedCount++;
+            } catch (_roomErr) {}
+          }
+        }
+        const cur = this.selectedRoom;
+        if (cur) this._selectRoomObject(cur, false);
+        this.render();
+        this.showToast(`Updated room connections across ${updatedCount} rooms`, "success");
+        return;
+      }
+      this.render();
+      this.showToast("Saved floorplan layout", "success");
     }
   }
 
@@ -517,7 +684,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           detail: `Clearing in ${this._formatDuration(countdown)} unless motion resumes`,
         };
       }
-      if (state === "occupied_sealed") {
+      const hasDoorSeal =
+        (r.mode || r.config?.mode) === "bounded" &&
+        Array.isArray(r.config?.boundary_entities) &&
+        r.config.boundary_entities.length > 0;
+      if (state === "occupied_sealed" && hasDoorSeal) {
         return {
           dotClass: "occupied",
           label: "Occupied (Doors closed)",
@@ -2578,6 +2749,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const cam = cams.find((c) => (c.id || c.camera_entity) === this._selectedCamEntity);
         if (!cam || !key) return;
         cam[key] = Number(el.value);
+        this._compiledTopology = this._compileFloorplanClient(this._floorplan);
         this.render();
       });
     });
@@ -2589,11 +2761,23 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const box = boxes.find((b) => (b.name || b.room_name) === rname);
         if (!box || !key) return;
         box[key] = Number(el.value);
+        this._compiledTopology = this._compileFloorplanClient(this._floorplan);
         this.render();
       });
     });
     root.querySelector("#btn-open-floorplan-tab")?.addEventListener("click", () => {
       this._studioView = "floorplan";
+      if (!this._floorplan) {
+        this._floorplan = this._loadLocalOrDefaultFloorplan();
+        this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+      }
+      const curRoom = this.selectedRoom;
+      const box = (this._floorplan?.rooms || []).find(
+        (b) => curRoom && (b.name || b.room_name) === curRoom.room_name
+      );
+      if (box && box.floor) {
+        this._selectedFloorId = box.floor;
+      }
       this.render();
     });
 

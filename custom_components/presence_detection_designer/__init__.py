@@ -39,7 +39,7 @@ async def _async_ensure_panel_and_views(hass: Any) -> None:
         return
     domain_data = hass.data.setdefault(DOMAIN, {})
 
-    version = "1.2.0"
+    version = "1.2.2"
     try:
         from homeassistant.loader import async_get_integration
 
