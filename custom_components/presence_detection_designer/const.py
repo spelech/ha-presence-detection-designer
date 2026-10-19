@@ -14,6 +14,7 @@ CONF_SUSTAINING_CONDITIONS = "sustaining_conditions"
 CONF_INACTIVITY_TIMEOUT = "inactivity_timeout"
 CONF_GRACE_TIMEOUT = "grace_timeout"
 CONF_EXTEND_TIMEOUT = "extend_timeout"
+CONF_CONNECTED_ROOMS = "connected_rooms"
 
 # Bayesian sensor fusion configuration
 CONF_BAYESIAN_ENABLED = "bayesian_enabled"
@@ -48,6 +49,7 @@ class BoxState(StrEnum):
     """Wasp-in-a-Box states."""
 
     IDLE_CLEAR = "idle_clear"
+    OCCUPIED = "occupied"
     OCCUPIED_SEALED = "occupied_sealed"
     OCCUPIED_UNSEALED = "occupied_unsealed"
     TIMER_ACTIVE = "timer_active"
@@ -128,3 +130,16 @@ class LLMProviderType(StrEnum):
 
 EVENT_PRESENCE_TRANSITION = "presence_detection_designer_transition"
 EVENT_PRESENCE_EXPLANATION = "presence_detection_designer_explanation"
+
+# Native .storage & custom panel constants
+STORAGE_VERSION = 1
+STORAGE_KEY = DOMAIN
+DATA_STORE = "_store"
+PANEL_REGISTERED = "_panel_registered"
+VIEWS_REGISTERED = "_views_registered"
+MAX_ROOM_REVISIONS = 15
+MAX_TIMELINE_EVENTS = 400
+DEFAULT_BLE_TRACKERS = [
+    "sensor.steve_s_s25_ble_area",
+    "sensor.tab_s10_lite_ble_area",
+]

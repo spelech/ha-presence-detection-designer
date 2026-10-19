@@ -35,6 +35,7 @@ from .const import (
     CONF_BOUNDARY_ENTITIES,
     CONF_CAMERA_ENTITY,
     CONF_CAMERA_SNAPSHOT_URL,
+    CONF_CONNECTED_ROOMS,
     CONF_EXTEND_TIMEOUT,
     CONF_GRACE_TIMEOUT,
     CONF_INACTIVITY_TIMEOUT,
@@ -89,12 +90,48 @@ class RoomPresenceCoordinator:
     ) -> None:
         self.hass = hass
         self.entry_id = entry_id
-        self.config = config
+        self.config = dict(config)
 
+        self._listeners: list[Callable[[], None]] = []
+        self._unsub_trackers: list[Callable[[], None]] = []
+        self._previous_presence = False
+        self.last_bayesian_eval: BayesianEvaluation | None = None
+        self.state_machine: RoomStateMachine = None  # type: ignore[assignment]
+
+        self._apply_config_fields(self.config, preserve_state=False)
+
+    def _resolve_global_llm_defaults(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Merge global_settings from PDDStore for any unset LLM fields."""
+        from .const import DATA_STORE, DOMAIN
+
+        gs: dict[str, Any] = {}
+        if self.hass and isinstance(getattr(self.hass, "data", None), dict):
+            store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+            if store is not None and hasattr(store, "global_settings"):
+                gs = store.global_settings or {}
+
+        return {
+            CONF_LLM_PROVIDER_TYPE: (
+                config.get(CONF_LLM_PROVIDER_TYPE)
+                or gs.get("llm_provider_type")
+                or LLMProviderType.VISION_API
+            ),
+            CONF_LLM_AGENT_ID: config.get(CONF_LLM_AGENT_ID) or gs.get("llm_agent_id"),
+            CONF_LLM_API_URL: config.get(CONF_LLM_API_URL) or gs.get("llm_api_url"),
+            CONF_LLM_API_KEY: config.get(CONF_LLM_API_KEY) or gs.get("llm_api_key"),
+            CONF_LLM_MODEL: config.get(CONF_LLM_MODEL) or gs.get("llm_model"),
+        }
+
+    def _apply_config_fields(self, config: dict[str, Any], preserve_state: bool = False) -> None:
+        """Populate coordinator attributes and state machine from config dict."""
+        self.config = dict(config)
         self.room_name: str = config.get(CONF_ROOM_NAME, "Room")
         self.area_id: str | None = config.get(CONF_AREA_ID)
         self.boundary_entities: list[str] = list(config.get(CONF_BOUNDARY_ENTITIES, []) or [])
         self.trigger_entities: list[str] = list(config.get(CONF_TRIGGER_ENTITIES, []) or [])
+        self.connected_rooms: list[str] = [
+            str(r) for r in (config.get(CONF_CONNECTED_ROOMS, []) or []) if r
+        ]
         self.conditions: list[dict[str, Any]] = list(
             config.get(CONF_SUSTAINING_CONDITIONS, []) or []
         )
@@ -119,37 +156,54 @@ class RoomPresenceCoordinator:
         extend_timeout = int(config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT))
         llm_enabled = bool(config.get(CONF_LLM_ENABLED, False))
 
-        self.state_machine = RoomStateMachine(
-            name=self.room_name,
-            mode=self.mode,
-            inactivity_timeout=inactivity_timeout,
-            grace_timeout=grace_timeout,
-            extend_timeout=extend_timeout,
-            llm_enabled=llm_enabled,
-            bayesian_prior=self.bayesian_prior,
-            bayesian_threshold=self.bayesian_threshold,
-        )
+        if preserve_state and self.state_machine is not None:
+            self.state_machine.name = self.room_name
+            self.state_machine.mode = self.mode
+            self.state_machine.has_boundaries = bool(self.boundary_entities)
+            self.state_machine.inactivity_timeout = inactivity_timeout
+            self.state_machine.grace_timeout = grace_timeout
+            self.state_machine.extend_timeout = extend_timeout
+            self.state_machine.llm_enabled = llm_enabled
+            self.state_machine.bayesian_prior = self.bayesian_prior
+            self.state_machine.bayesian_threshold = self.bayesian_threshold
+            self.state_machine._active_triggers.intersection_update(self.trigger_entities)
+            self.state_machine._open_boundaries.intersection_update(self.boundary_entities)
+        else:
+            self.state_machine = RoomStateMachine(
+                name=self.room_name,
+                mode=self.mode,
+                inactivity_timeout=inactivity_timeout,
+                grace_timeout=grace_timeout,
+                extend_timeout=extend_timeout,
+                llm_enabled=llm_enabled,
+                bayesian_prior=self.bayesian_prior,
+                bayesian_threshold=self.bayesian_threshold,
+                has_boundaries=bool(self.boundary_entities),
+            )
 
+        llm_cfg = self._resolve_global_llm_defaults(config)
         self.verifier = LLMVerifier(
-            hass=hass,
-            provider_type=config.get(CONF_LLM_PROVIDER_TYPE, LLMProviderType.VISION_API),
-            agent_id=config.get(CONF_LLM_AGENT_ID),
-            api_url=config.get(CONF_LLM_API_URL),
-            api_key=config.get(CONF_LLM_API_KEY),
-            model=config.get(CONF_LLM_MODEL),
+            hass=self.hass,
+            provider_type=llm_cfg[CONF_LLM_PROVIDER_TYPE],
+            agent_id=llm_cfg[CONF_LLM_AGENT_ID],
+            api_url=llm_cfg[CONF_LLM_API_URL],
+            api_key=llm_cfg[CONF_LLM_API_KEY],
+            model=llm_cfg[CONF_LLM_MODEL],
             prompt=config.get(CONF_LLM_PROMPT, DEFAULT_LLM_PROMPT),
         )
 
         self.camera_entity = config.get(CONF_CAMERA_ENTITY)
         self.camera_snapshot_url = config.get(CONF_CAMERA_SNAPSHOT_URL)
 
-        self.rule_guide: str = explain_config_in_natural_language(config)
-        self.yaml_representations: dict[str, str] = config_to_yaml_representations(config)
-        self.last_bayesian_eval: BayesianEvaluation | None = None
+        self.rule_guide = explain_config_in_natural_language(config)
+        self.yaml_representations = config_to_yaml_representations(config)
 
-        self._listeners: list[Callable[[], None]] = []
-        self._unsub_trackers: list[Callable[[], None]] = []
-        self._previous_presence = False
+    async def async_apply_config_in_place(self, new_config: dict[str, Any]) -> None:
+        """Hot-apply an updated configuration without losing active room presence or entity listeners."""
+        self._unsubscribe_trackers()
+        self._apply_config_fields(new_config, preserve_state=True)
+        await self.async_setup()
+        self.async_update_listeners()
 
     def async_add_listener(self, update_callback: Callable[[], None]) -> Callable[[], None]:
         """Add listener for state updates."""
@@ -261,14 +315,18 @@ class RoomPresenceCoordinator:
         # Initial evaluation of live states on startup
         self.async_refresh_all_states()
 
-    def async_unload(self) -> None:
-        """Unsubscribe all entity listeners and timers."""
+    def _unsubscribe_trackers(self) -> None:
+        """Unsubscribe entity state listeners and timer tick without clearing entity listeners."""
         for unsub in self._unsub_trackers:
             try:
                 unsub()
             except Exception:  # noqa: BLE001
                 pass
         self._unsub_trackers.clear()
+
+    def async_unload(self) -> None:
+        """Unsubscribe all entity listeners and timers."""
+        self._unsubscribe_trackers()
         self._listeners.clear()
 
     def async_refresh_all_states(self) -> None:
@@ -315,7 +373,94 @@ class RoomPresenceCoordinator:
             inactive_observations=evaluation.inactive_observations,
             trigger_state_machine=self.has_explicit_bayesian,
         )
+        self._record_timeline_snapshot()
+        if evaluation.is_occupied and self.has_explicit_bayesian:
+            self._notify_connected_rooms_if_active()
         return evaluation
+
+    def notify_adjacent_occupancy(self, from_room_name: str) -> bool:
+        """Clear vacating timer immediately if an adjacent connected room just detected an occupant."""
+        if self.state_machine.handle_adjacent_room_occupied(from_room_name):
+            self._record_timeline_snapshot()
+            self.async_update_listeners()
+            return True
+        return False
+
+    def _notify_connected_rooms_if_active(self) -> None:
+        """Notify connected adjacent rooms when this room actively detects an occupant."""
+        from .const import DOMAIN
+
+        if not self.hass or not isinstance(getattr(self.hass, "data", None), dict):
+            return
+        if not self.state_machine.is_present or self.state_machine.box_state not in (
+            BoxState.OCCUPIED,
+            BoxState.OCCUPIED_SEALED,
+            BoxState.OCCUPIED_UNSEALED,
+        ):
+            return
+
+        domain_data = self.hass.data.get(DOMAIN, {})
+        if not isinstance(domain_data, dict):
+            return
+
+        my_tokens = {
+            self.room_name.strip().lower(),
+            self.entry_id.strip().lower(),
+            self.room_name.strip().lower().replace("'", "").replace(" ", "_"),
+        }
+        if self.area_id:
+            my_tokens.add(str(self.area_id).strip().lower())
+
+        my_connected = {r.strip().lower() for r in self.connected_rooms if r}
+
+        for other in list(domain_data.values()):
+            if other is self or not isinstance(other, RoomPresenceCoordinator):
+                continue
+            other_tokens = {
+                other.room_name.strip().lower(),
+                other.entry_id.strip().lower(),
+                other.room_name.strip().lower().replace("'", "").replace(" ", "_"),
+            }
+            if other.area_id:
+                other_tokens.add(str(other.area_id).strip().lower())
+            other_connected = {r.strip().lower() for r in other.connected_rooms if r}
+
+            if (my_connected & other_tokens) or (other_connected & my_tokens):
+                other.notify_adjacent_occupancy(self.room_name)
+
+    def _record_timeline_snapshot(self) -> None:
+        """Record a compact sensor & state snapshot into PDDStore's rolling timeline buffer."""
+        from .const import DATA_STORE, DOMAIN
+
+        if not self.hass or not isinstance(getattr(self.hass, "data", None), dict):
+            return
+        store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if store is None or not hasattr(store, "record_timeline_event"):
+            return
+
+        entity_states: dict[str, str] = {}
+        tracked_eids: set[str] = set(self.boundary_entities) | set(self.trigger_entities)
+        for cond in self.conditions:
+            if isinstance(cond, dict) and cond.get("entity_id"):
+                tracked_eids.add(str(cond["entity_id"]))
+        for obs in self.bayesian_observations:
+            if isinstance(obs, dict) and obs.get("entity_id"):
+                tracked_eids.add(str(obs["entity_id"]))
+
+        for eid in sorted(tracked_eids):
+            st_obj = _safe_state_getter(self.hass, eid)
+            if st_obj is not None:
+                entity_states[eid] = str(st_obj.state)
+
+        store.record_timeline_event(
+            self.entry_id,
+            {
+                "is_present": self.state_machine.is_present,
+                "box_state": str(self.state_machine.box_state),
+                "probability_pct": self.state_machine.bayesian_probability_pct,
+                "entity_states": entity_states,
+            },
+        )
 
     def _eval_conditions_and_update(self) -> None:
         """Evaluate sustaining conditions and Bayesian observations."""
@@ -340,6 +485,8 @@ class RoomPresenceCoordinator:
         is_active = to_state.state in ("on", "playing", "home")
         self.state_machine.handle_trigger(entity_id, is_active)
         self._eval_bayesian_and_update()
+        if is_active:
+            self._notify_connected_rooms_if_active()
         self.async_update_listeners()
 
     @callback

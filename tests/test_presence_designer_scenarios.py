@@ -92,7 +92,7 @@ async def test_scenario_a_stationary_tv_watcher(mock_hass):
         await coordinator._async_handle_tick(None)
 
     assert sensor.is_on is True
-    assert sensor.extra_state_attributes["box_state"] == BoxState.OCCUPIED_SEALED
+    assert sensor.extra_state_attributes["box_state"] == BoxState.OCCUPIED
 
     # 4. Movie ends, TV turns off
     tv_state.state = "off"

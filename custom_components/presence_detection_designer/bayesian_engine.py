@@ -16,6 +16,7 @@ from .const import (
     CONF_BAYESIAN_THRESHOLD,
     CONF_BOUNDARY_ENTITIES,
     CONF_CAMERA_ENTITY,
+    CONF_CONNECTED_ROOMS,
     CONF_EXTEND_TIMEOUT,
     CONF_GRACE_TIMEOUT,
     CONF_INACTIVITY_TIMEOUT,
@@ -109,6 +110,37 @@ def friendly_entity_label(obs: dict[str, Any], entity_state_obj: Any = None) -> 
     entity_id = str(obs.get("entity_id", "sensor"))
     slug = entity_id.split(".", 1)[-1]
     return slug.replace("_", " ").title()
+
+
+def normalize_observation(obs: dict[str, Any]) -> dict[str, Any]:
+    """Return a normalized Bayesian observation dictionary with resolved weights and likelihood ratio."""
+    raw_eid = obs.get("entity_id", "sensor.unknown")
+    eid = str(raw_eid.get("entity_id") if isinstance(raw_eid, dict) else raw_eid)
+    op = str(obs.get("operator", ConditionOperator.EQUALS))
+    st = str(obs.get("state", "on"))
+    preset_name, pt, pf = resolve_observation_weights(obs)
+    lr = _clamp_prob(pt) / _clamp_prob(pf)
+    return {
+        "entity_id": eid,
+        "label": friendly_entity_label({**obs, "entity_id": eid}),
+        "preset": preset_name,
+        "operator": op,
+        "state": st,
+        "attribute": obs.get("attribute"),
+        "prob_given_true": round(pt, 3),
+        "prob_given_false": round(pf, 3),
+        "likelihood_ratio": round(lr, 2),
+        "penalize_when_off": bool(obs.get("penalize_when_off", False)),
+    }
+
+
+def prior_and_lrs_to_posterior(prior: float, likelihood_ratios: list[float]) -> float:
+    """Compute Bayesian posterior probability (0..1) from prior and a list of likelihood ratios."""
+    p0 = _clamp_prob(prior)
+    odds = p0 / (1.0 - p0)
+    for lr in likelihood_ratios:
+        odds *= max(0.001, float(lr))
+    return odds / (1.0 + odds)
 
 
 def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -279,8 +311,13 @@ def evaluate_bayesian(
                 }
             )
 
-    final_prob = round(current_prob, 4)
-    final_pct = round(current_prob * 100.0, 1)
+    if active_list:
+        final_prob = round(current_prob, 4)
+        final_pct = round(current_prob * 100.0, 1)
+    else:
+        final_prob = 0.0
+        final_pct = 0.0
+
     prior_pct = round(prior_clamped * 100.0, 1)
     thresh_pct = round(threshold_clamped * 100.0, 1)
     is_occupied = final_prob >= threshold_clamped
@@ -294,8 +331,8 @@ def evaluate_bayesian(
         )
     else:
         summary = (
-            f"{final_pct}% probability ({status_word}; threshold {thresh_pct}%, "
-            f"baseline {prior_pct}%). No active occupancy evidence across "
+            f"0.0% probability ({status_word}; threshold {thresh_pct}%, "
+            f"prior {prior_pct}% when triggered). No active occupancy evidence across "
             f"{len(inactive_list)} monitored sensors."
         )
 
@@ -330,6 +367,7 @@ def explain_config_in_natural_language(config: dict[str, Any]) -> str:
     grace = config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT)
     extend = config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT)
     boundaries = config.get(CONF_BOUNDARY_ENTITIES, []) or []
+    connected = config.get(CONF_CONNECTED_ROOMS, []) or []
     conditions = config.get(CONF_SUSTAINING_CONDITIONS, []) or []
     observations = build_effective_observations(config)
 
@@ -341,8 +379,14 @@ def explain_config_in_natural_language(config: dict[str, Any]) -> str:
             if mode == Mode.BOUNDED and boundaries
             else f"(Open zone with {inactivity}s inactivity countdown)"
         ),
-        f"- **Bayesian Baseline & Threshold**: Starts at a **{prior_pct}%** baseline prior and declares occupancy when combined evidence reaches **{thresh_pct}%**.",
+        f"- **Bayesian Baseline & Threshold**: Reports **0.0%** when idle; uses a **{prior_pct}%** base prior when sensors activate and declares occupancy at **{thresh_pct}%**.",
     ]
+
+    if connected:
+        lines.append(
+            f"- **Connected Rooms (Instant Timer Hand-Off)**: {', '.join(str(r) for r in connected)} "
+            "(vacating countdown clears to 0s immediately if an adjacent room detects presence)."
+        )
 
     if observations:
         lines.append("- **Bayesian Sensor Evidence Tiers**:")
@@ -429,6 +473,10 @@ def config_to_yaml_representations(config: dict[str, Any]) -> dict[str, str]:
     ]
     if config.get(CONF_AREA_ID):
         pdd_lines.append(f'  area_id: "{config[CONF_AREA_ID]}"')
+    if config.get(CONF_CONNECTED_ROOMS):
+        pdd_lines.append("  connected_rooms:")
+        for r in config[CONF_CONNECTED_ROOMS]:
+            pdd_lines.append(f'    - "{r}"')
     if config.get(CONF_BOUNDARY_ENTITIES):
         pdd_lines.append("  boundary_entities:")
         for b in config[CONF_BOUNDARY_ENTITIES]:
