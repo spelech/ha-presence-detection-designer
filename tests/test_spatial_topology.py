@@ -24,9 +24,13 @@ from custom_components.presence_detection_designer.coordinator import RoomPresen
 from custom_components.presence_detection_designer.spatial_topology import (
     apply_compiled_topology_to_config,
     compile_floorplan_topology,
+    compute_camera_visibility_polygon,
     compute_cone_room_overlap_pct,
+    extract_floor_wall_segments,
     get_default_floorplan,
+    line_segment_intersects_solid_wall,
     point_in_cone,
+    ray_segment_intersection,
 )
 from custom_components.presence_detection_designer.state_machine import RoomStateMachine
 from custom_components.presence_detection_designer.views import PDDFloorplanView
@@ -329,3 +333,108 @@ async def test_floorplan_view_endpoints(mock_hass):
     req_reset.json = AsyncMock(return_value={"action": "reset"})
     status_reset, _ = _unpack(await view.post(req_reset))
     assert status_reset == 200
+
+
+def test_extract_floor_wall_segments_and_doorway_subtraction():
+    """Verify doorway openings are correctly subtracted from perimeter walls to form solid segments."""
+    room = {
+        "id": "test_room",
+        "name": "Test Room",
+        "floor": "main",
+        "x": 100,
+        "y": 100,
+        "width": 200,
+        "height": 100,
+        "entryways": [
+            {
+                "id": "door_top",
+                "wall": "top",
+                "offset": 50,
+                "width": 40,
+                "type": "door",
+            }
+        ],
+    }
+    segments = extract_floor_wall_segments([room])
+    # Top wall (length 200): solid from 0..50 -> (100,100)-(150,100), and 90..200 -> (190,100)-(300,100)
+    top_segs = [s for s in segments if s[0][1] == 100 and s[1][1] == 100]
+    assert len(top_segs) == 2
+    assert ((100.0, 100), (150.0, 100)) in top_segs
+    assert ((190.0, 100), (300.0, 100)) in top_segs
+
+    # Bottom wall has no door: solid from 100..300 at y=200
+    bottom_segs = [s for s in segments if s[0][1] == 200 and s[1][1] == 200]
+    assert len(bottom_segs) == 1
+    assert bottom_segs[0] == ((100.0, 200), (300.0, 200))
+
+
+def test_ray_segment_intersection_and_solid_wall_occlusion():
+    """Test 2D ray-segment intersection and solid blocker detection."""
+    # Ray along +X axis
+    t_hit = ray_segment_intersection(0, 50, 1, 0, 100, 0, 100, 100)
+    assert t_hit == 100.0
+
+    # Ray misses segment
+    t_miss = ray_segment_intersection(0, 50, 1, 0, 100, 60, 100, 100)
+    assert t_miss is None
+
+    # Line of sight occlusion test
+    solid_segs = [((100, 0), (100, 40)), ((100, 60), (100, 100))]
+    # Sightline through the doorway gap [40..60] is NOT occluded
+    assert not line_segment_intersects_solid_wall(10, 50, 200, 50, solid_segs)
+    # Sightline through solid wall [0..40] IS occluded
+    assert line_segment_intersects_solid_wall(10, 20, 200, 20, solid_segs)
+
+
+def test_camera_visibility_polygon_doorway_pass_through():
+    """Verify camera visibility polygon stops at solid walls and passes through doorway apertures."""
+    solid_segs = [
+        ((100.0, 0.0), (100.0, 40.0)),
+        ((100.0, 60.0), (100.0, 100.0)),
+        ((250.0, 0.0), (250.0, 100.0)),  # far wall behind door
+    ]
+    cam = {
+        "x": 10,
+        "y": 50,
+        "heading_deg": 0,
+        "fov_deg": 90,
+        "range_px": 300,
+        "floor": "main",
+    }
+    poly = compute_camera_visibility_polygon(cam, solid_segs)
+    assert len(poly) > 10
+    # Origin is first vertex
+    assert poly[0] == (10.0, 50.0)
+
+    # The ray aimed through the door at y=50 hits the far wall at x=250
+    center_rays = [p for p in poly if abs(p[1] - 50.0) < 1.0 and p[0] > 10.0]
+    assert any(abs(p[0] - 250.0) < 2.0 for p in center_rays)
+
+    # Rays aimed at solid walls stop around x=100
+    blocked_rays = [p for p in poly if abs(p[1] - 20.0) < 2.0]
+    assert any(abs(p[0] - 100.0) < 2.0 for p in blocked_rays)
+
+
+def test_occluded_cone_room_overlap_pct_doorway_penetration():
+    """Verify compute_cone_room_overlap_pct detects zero coverage when blocked by a solid wall and positive coverage when open."""
+    cam = {
+        "x": 50,
+        "y": 50,
+        "heading_deg": 0,
+        "fov_deg": 90,
+        "range_px": 200,
+        "floor": "main",
+    }
+    adj_room = {"floor": "main", "x": 110, "y": 20, "width": 80, "height": 60}
+
+    # 1. Solid wall completely blocking adjacent room
+    solid_wall = [((100.0, 0.0), (100.0, 100.0))]
+    pct_blocked = compute_cone_room_overlap_pct(
+        cam, adj_room, grid_steps=10, solid_segments=solid_wall
+    )
+    assert pct_blocked == 0.0
+
+    # 2. Doorway opening in the wall allows cone to penetrate adjacent room
+    door_wall = [((100.0, 0.0), (100.0, 35.0)), ((100.0, 65.0), (100.0, 100.0))]
+    pct_door = compute_cone_room_overlap_pct(cam, adj_room, grid_steps=10, solid_segments=door_wall)
+    assert pct_door > 20.0
