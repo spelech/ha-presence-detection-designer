@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ha-presence-detection-designer"
-version = "1.1.0"
+version = "1.2.2"
 description = "Home Assistant custom integration combining Wasp-in-a-Box presence, entity condition matrices, and VLM/LLM snapshot verification."
 authors = [{name = "Steven T. Pelech"}]
 readme = "README.md"
