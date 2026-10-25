@@ -832,6 +832,121 @@ class PDDFloorplanView(HomeAssistantView):
         )
 
 
+class PDDCameraAlignView(HomeAssistantView):
+    """View to analyze camera snapshots for vanishing horizon tilt and opening azimuth alignment."""
+
+    url = "/api/presence_detection_designer/camera/{camera_id}/align"
+    name = "api:presence_detection_designer:camera_align"
+    requires_auth = True
+
+    async def post(self, request: Any, camera_id: str) -> Any:
+        """Handle POST /api/presence_detection_designer/camera/{camera_id}/align."""
+        hass = request.app["hass"]
+        store = await async_get_store(hass)
+        fp = store.get_floorplan()
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+
+        # 1. Locate camera in floorplan or request body
+        cameras = fp.get("cameras", [])
+        cam_dict: dict[str, Any] | None = None
+        for c in cameras:
+            if c.get("id") == camera_id or c.get("camera_entity") == camera_id:
+                cam_dict = dict(c)
+                break
+
+        if not cam_dict:
+            cam_dict = body.get("camera_dict") or {"id": camera_id}
+
+        # Override any camera properties passed in body
+        if body.get("camera_dict"):
+            cam_dict.update(body["camera_dict"])
+
+        # 2. Acquire snapshot image bytes
+        image_bytes: bytes | None = None
+        image_b64 = body.get("image_b64")
+        if image_b64:
+            if "," in image_b64:
+                image_b64 = image_b64.split(",", 1)[1]
+            try:
+                import base64
+
+                image_bytes = base64.b64decode(image_b64)
+            except Exception as err:  # noqa: BLE001
+                return self.json({"error": f"Invalid base64 image: {err}"}, status_code=400)
+
+        if not image_bytes:
+            camera_entity = (
+                body.get("camera_entity")
+                or cam_dict.get("camera_entity")
+                or (camera_id if camera_id.startswith("camera.") else None)
+            )
+            if camera_entity and hass is not None:
+                try:
+                    from homeassistant.components.camera import async_get_image
+
+                    image_data = await async_get_image(hass, camera_entity)
+                    image_bytes = image_data.content
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Could not fetch camera snapshot for %s: %s", camera_entity, err
+                    )
+
+        if not image_bytes:
+            return self.json(
+                {
+                    "error": (
+                        f"No image snapshot available for camera '{camera_id}'. "
+                        "Provide 'image_b64' or ensure an active HA camera entity exists."
+                    )
+                },
+                status_code=400,
+            )
+
+        # 3. Locate room and entryways
+        host_room_name = cam_dict.get("host_room")
+        room_box = body.get("room_box")
+        entryways = body.get("entryways")
+
+        if not room_box or not entryways:
+            rooms = fp.get("rooms", [])
+            matched_room = next((r for r in rooms if r.get("name") == host_room_name), None)
+            if matched_room:
+                if not room_box:
+                    room_box = {
+                        "name": matched_room.get("name"),
+                        "x": matched_room.get("x", 0),
+                        "y": matched_room.get("y", 0),
+                        "width": matched_room.get("width", 100),
+                        "height": matched_room.get("height", 100),
+                    }
+                if not entryways:
+                    entryways = list(matched_room.get("entryways", []))
+
+        if not room_box:
+            room_box = {
+                "name": host_room_name or "Unknown",
+                "x": 0,
+                "y": 0,
+                "width": 200,
+                "height": 200,
+            }
+        if entryways is None:
+            entryways = []
+
+        try:
+            from .camera_alignment_cv import analyze_camera_view_alignment
+
+            result = analyze_camera_view_alignment(image_bytes, cam_dict, entryways, room_box)
+            return self.json(result)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Failed to analyze camera view alignment: %s", err)
+            return self.json({"error": f"Alignment analysis failed: {err}"}, status_code=500)
+
+
 def async_register_views(hass: Any) -> None:
     """Register all HTTP API views for Presence Detection Designer once."""
     if not hass or not hasattr(hass, "http") or not hasattr(hass.http, "register_view"):
@@ -847,5 +962,6 @@ def async_register_views(hass: Any) -> None:
         PDDStatisticsView,
         PDDReplayView,
         PDDFloorplanView,
+        PDDCameraAlignView,
     ):
         hass.http.register_view(view_cls())

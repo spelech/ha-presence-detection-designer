@@ -26,6 +26,7 @@ from custom_components.presence_detection_designer.coordinator import (
     RoomPresenceCoordinator,
 )
 from custom_components.presence_detection_designer.views import (
+    PDDCameraAlignView,
     PDDGlobalSettingsView,
     PDDOverviewView,
     PDDPreviewBayesianView,
@@ -187,7 +188,7 @@ async def test_views_end_to_end(mock_hass):
     )
     mock_hass.http = MagicMock()
     async_register_views(mock_hass)
-    assert mock_hass.http.register_view.call_count == 10
+    assert mock_hass.http.register_view.call_count == 11
 
     coord = RoomPresenceCoordinator(
         mock_hass,
@@ -361,3 +362,53 @@ async def test_views_end_to_end(mock_hass):
         {CONF_ROOM_NAME: "Guest Room"},
     )
     assert res_unloaded["config"][CONF_ROOM_NAME] == "Guest Room"
+
+
+async def test_camera_alignment_view(mock_hass):
+    """Test PDDCameraAlignView endpoint with synthetic snapshot."""
+    import base64
+
+    from tests.test_camera_alignment_cv import create_synthetic_room_snapshot
+
+    img_bytes = create_synthetic_room_snapshot(width=640, height=480, horizon_y=190)
+    img_b64 = "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode("ascii")
+
+    align_view = PDDCameraAlignView()
+    req = _make_request(
+        mock_hass,
+        {
+            "image_b64": img_b64,
+            "camera_dict": {
+                "id": "camera.living_room",
+                "x": 175,
+                "y": 530,
+                "heading_deg": 18.0,
+                "fov_deg": 65.0,
+                "host_room": "Living Room",
+            },
+            "room_box": {
+                "name": "Living Room",
+                "x": 160,
+                "y": 325,
+                "width": 235,
+                "height": 220,
+            },
+            "entryways": [
+                {
+                    "id": "arch_lr_entry",
+                    "wall": "right",
+                    "offset": 30,
+                    "width": 130,
+                    "type": "open_passage",
+                    "target_room": "Front Entry",
+                }
+            ],
+        },
+    )
+
+    status, res = _unpack(await align_view.post(req, "camera.living_room"))
+    assert status == 200
+    assert res["success"] is True
+    assert "tilt_deg" in res
+    assert "recommended_heading_deg" in res
+    assert res["annotated_image"].startswith("data:image/jpeg;base64,")
