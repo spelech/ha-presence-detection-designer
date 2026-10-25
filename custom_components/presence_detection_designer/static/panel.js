@@ -49,6 +49,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._canvasRenderRaf = null;
     this._showBlueprintUnderlay = true;
     this._underlayOpacity = 0.5;
+    this._floorplanMode = "rooms"; // "rooms" | "cameras"
+    this._cameraAlignmentResult = null;
+    this._cameraAlignmentError = null;
+    this._analyzingCamera = false;
   }
 
   set narrow(value) {
@@ -703,6 +707,136 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         }
       } catch (_e) {}
     }, 400);
+  }
+
+  async _analyzeCameraAlignment(camId) {
+    if (!camId) return;
+    this._analyzingCamera = true;
+    this._cameraAlignmentError = null;
+    this._cameraAlignmentResult = null;
+    this.render();
+
+    try {
+      const cam = (this._floorplan?.cameras || []).find(
+        (c) => (c.id || c.camera_entity) === camId
+      );
+      if (!cam) throw new Error("Camera not found in floorplan");
+
+      const res = await this._apiCall(
+        "POST",
+        `/api/presence_detection_designer/camera/${encodeURIComponent(camId)}/align`,
+        { camera_dict: cam }
+      );
+      if (res && res.error) {
+        throw new Error(res.error);
+      }
+      this._cameraAlignmentResult = res;
+      this.showToast("Camera perspective and openings analyzed successfully", "success");
+    } catch (err) {
+      this._cameraAlignmentError = String(err.message || err);
+      this.showToast(`Alignment failed: ${this._cameraAlignmentError}`, "danger");
+    } finally {
+      this._analyzingCamera = false;
+      this.render();
+    }
+  }
+
+  _renderCameraAlignmentDetails(selCam) {
+    if (this._analyzingCamera) {
+      return `
+        <div style="padding:16px;text-align:center;color:var(--ha-muted);font-size:12px;">
+          <div style="margin-bottom:6px;font-weight:600;">🔍 Processing snapshot computer vision...</div>
+          <div style="font-size:11px;">Estimating horizon vanishing line, tilt/pitch angle &amp; doorway azimuth rays.</div>
+        </div>
+      `;
+    }
+
+    if (this._cameraAlignmentError) {
+      return `
+        <div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#b91c1c;font-size:12px;margin-top:6px;">
+          <strong>Alignment Error:</strong> ${this._escape(this._cameraAlignmentError)}
+        </div>
+      `;
+    }
+
+    const res = this._cameraAlignmentResult;
+    if (!res || !res.success) {
+      return `
+        <div style="font-size:12px;color:var(--ha-muted);margin-top:4px;">
+          Click <strong>Analyze Alignment</strong> to evaluate this camera's vertical pitch (downward tilt) and horizontal sightline to doorways, computing the optimal 2D cone heading.
+        </div>
+      `;
+    }
+
+    const openings = Array.isArray(res.openings) ? res.openings : [];
+    const diffHeading = Math.round((res.recommended_heading_deg - res.current_heading_deg) * 10) / 10;
+    const diffSign = diffHeading > 0 ? `+${diffHeading}°` : `${diffHeading}°`;
+
+    return `
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:8px;">
+        ${
+          res.annotated_image
+            ? `<div style="text-align:center;background:#0f172a;border-radius:6px;overflow:hidden;border:1px solid var(--ha-divider);">
+                 <img src="${res.annotated_image}" style="max-width:100%;max-height:240px;object-fit:contain;display:block;margin:0 auto;" alt="Annotated Camera Alignment" />
+               </div>`
+            : ""
+        }
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;text-align:center;font-size:12px;">
+          <div style="background:var(--ha-subtle, #f1f5f9);padding:8px 6px;border-radius:6px;border:1px solid var(--ha-divider);">
+            <div style="color:var(--ha-muted);font-size:11px;">Vertical Tilt / Pitch</div>
+            <div style="font-weight:700;font-size:14px;color:#0284c7;">${res.tilt_deg > 0 ? "+" : ""}${res.tilt_deg}°</div>
+            <div style="font-size:10px;color:var(--ha-muted);">${res.tilt_deg < 0 ? "Angled Down" : "Level/Up"}</div>
+          </div>
+          <div style="background:var(--ha-subtle, #f1f5f9);padding:8px 6px;border-radius:6px;border:1px solid var(--ha-divider);">
+            <div style="color:var(--ha-muted);font-size:11px;">Camera Roll</div>
+            <div style="font-weight:700;font-size:14px;color:#0284c7;">${res.roll_deg > 0 ? "+" : ""}${res.roll_deg}°</div>
+            <div style="font-size:10px;color:var(--ha-muted);">Horizon Level</div>
+          </div>
+          <div style="background:var(--ha-subtle, #f1f5f9);padding:8px 6px;border-radius:6px;border:1px solid var(--ha-divider);">
+            <div style="color:var(--ha-muted);font-size:11px;">Cone Alignment</div>
+            <div style="font-weight:700;font-size:14px;color:${Math.abs(diffHeading) > 3 ? "#d97706" : "#16a34a"};">
+              ${res.recommended_heading_deg}° <span style="font-size:11px;font-weight:500;">(Δ ${diffSign})</span>
+            </div>
+            <div style="font-size:10px;color:var(--ha-muted);">2D Cone: ${res.current_heading_deg}°</div>
+          </div>
+        </div>
+
+        ${
+          openings.length > 0
+            ? `
+          <div style="font-size:11.5px;border:1px solid var(--ha-divider);border-radius:6px;overflow:hidden;">
+            <div style="background:var(--ha-subtle, #f1f5f9);padding:6px 10px;font-weight:600;display:flex;justify-content:space-between;">
+              <span>Detected Physical Openings</span>
+              <span>Visual vs Expected Azimuth</span>
+            </div>
+            ${openings
+              .map(
+                (op) => `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-top:1px solid var(--ha-divider);">
+                <div>
+                  <strong style="color:#0284c7;">${this._escape(op.target_room || op.entryway_id || "Passage")}</strong>
+                  <span style="font-size:10px;color:var(--ha-muted);margin-left:4px;">(Bearing: ${op.bearing_deg ?? "—"}°)</span>
+                </div>
+                <div style="text-align:right;">
+                  <span>Azimuth: <strong>${op.azimuth_deg > 0 ? "+" : ""}${op.azimuth_deg}°</strong></span>
+                  ${
+                    op.discrepancy_deg !== undefined
+                      ? `<span style="margin-left:6px;color:${Math.abs(op.discrepancy_deg) > 3 ? "#d97706" : "#16a34a"};font-weight:600;">(Δ ${op.discrepancy_deg > 0 ? "+" : ""}${op.discrepancy_deg}°)</span>`
+                      : ""
+                  }
+                </div>
+              </div>`
+              )
+              .join("")}
+          </div>`
+            : `<div style="font-size:11.5px;color:var(--ha-muted);text-align:center;padding:4px;">No distinct doorway openings matched in current FOV cone.</div>`
+        }
+
+        <button class="btn btn-sm btn-primary" id="btn-fp-apply-calibrated-heading" style="padding:7px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px;">
+          <span>🎯 Auto-Calibrate 2D Heading to Physical Reality (${res.recommended_heading_deg}°)</span>
+        </button>
+      </div>
+    `;
   }
 
   _scheduleCanvasRender() {
@@ -2472,11 +2606,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const solidSegments = this._extractFloorWallSegments(fRooms);
 
     // 1. Cones & camera controls
+    const isCamMode = this._floorplanMode === "cameras";
     const conesSvg = fCams
       .map((cam) => {
         const camId = cam.id || cam.camera_entity;
         const camLabel = (cam.name || cam.label || camId).replace(" Camera", "");
-        const isSelectedCam = selCam && (selCam.id || selCam.camera_entity) === camId;
+        const isSelectedCam = selCam && (selCam.id || selCam.camera_entity) === camId && isCamMode;
         const hasSpill =
           (Array.isArray(cam.spills_into) && cam.spills_into.length > 0) ||
           camAnalysis.some((ca) => ca.camera_id === camId && ca.has_multi_room_bleed);
@@ -2489,7 +2624,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
         // Interactive control handles for selected camera
         let camHandlesSvg = "";
-        if (isSelectedCam) {
+        if (isSelectedCam && isCamMode) {
           const aimDist = 45;
           const aimX = Number(cam.x) + Math.cos(rad) * aimDist;
           const aimY = Number(cam.y) + Math.sin(rad) * aimDist;
@@ -2515,7 +2650,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         }
 
         return `
-          <g class="fp-cam-group" data-cam-entity="${this._escape(camId)}">
+          <g class="fp-cam-group" data-cam-entity="${this._escape(camId)}" style="${isCamMode ? "" : "opacity:0.4;"}">
             <path
               d="${pathD}"
               fill="${hasSpill ? "rgba(217, 119, 6, 0.15)" : "rgba(2, 132, 199, 0.13)"}"
@@ -2533,7 +2668,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               fill="${coneColor}"
               stroke="#ffffff"
               stroke-width="2"
-              style="cursor:move;"
+              style="${isCamMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
             />
             ${camHandlesSvg}
             <text
@@ -2551,11 +2686,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       .join("");
 
     // 2. Rooms, entryways & resize handles
+    const isRoomMode = this._floorplanMode === "rooms";
     const roomsSvg = fRooms
       .map((box) => {
         const rName = box.name || box.room_name;
         const live = liveRoomsByName[rName];
-        const isSel = (selBox && (selBox.name || selBox.room_name) === rName);
+        const isSel = (selBox && (selBox.name || selBox.room_name) === rName && isRoomMode);
         const isOcc = live ? Boolean(live.is_present) : false;
         const isTransit = box.room_type === "transit" || Boolean(box.is_transit);
         const covPct = Number(roomCoverage[rName]?.max_coverage_pct ?? 100);
@@ -2584,7 +2720,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const entryways = Array.isArray(box.entryways) ? box.entryways : [];
         const entrywaysSvg = entryways
           .map((ew) => {
-            const isSelDoor = this._selectedDoorId === ew.id;
+            const isSelDoor = this._selectedDoorId === ew.id && isRoomMode;
             const offset = Math.max(0, Number(ew.offset || 0));
             const width = Math.max(10, Number(ew.width || 36));
             let x1 = rx,
@@ -2625,12 +2761,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             const isPassage = ew.type === "open_passage";
             const doorColor = isSelDoor ? "#0284c7" : isPassage ? "#64748b" : "#b45309";
             return `
-              <g class="fp-door-group" data-room-name="${this._escape(rName)}" data-door-id="${this._escape(ew.id)}">
+              <g class="fp-door-group" data-room-name="${this._escape(rName)}" data-door-id="${this._escape(ew.id)}" style="${isRoomMode ? "" : "pointer-events:none;"}">
                 <line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#ffffff" stroke-width="5" stroke-linecap="round" />
                 <line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${doorColor}" stroke-width="${isSelDoor ? "3" : "2"}" stroke-dasharray="${isPassage ? "4,3" : "none"}" />
-                <circle class="fp-door-handle" data-room-name="${this._escape(rName)}" data-door-id="${this._escape(ew.id)}" cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" r="${isSelDoor ? "6.5" : "5"}" fill="${doorColor}" stroke="#ffffff" stroke-width="1.5" style="cursor:grab;" />
+                <circle class="fp-door-handle" data-room-name="${this._escape(rName)}" data-door-id="${this._escape(ew.id)}" cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" r="${isSelDoor ? "6.5" : "5"}" fill="${doorColor}" stroke="#ffffff" stroke-width="1.5" style="${isRoomMode ? "cursor:grab;pointer-events:all;" : "pointer-events:none;display:none;"}" />
                 ${
-                  isSelDoor
+                  isSelDoor && isRoomMode
                     ? `
                   <rect class="fp-door-tab" data-tab="start" data-room-name="${this._escape(rName)}" data-door-id="${this._escape(ew.id)}" x="${(x1 - 3).toFixed(1)}" y="${(y1 - 3).toFixed(1)}" width="6" height="6" fill="#0284c7" stroke="#ffffff" stroke-width="1" style="cursor:crosshair;" />
                   <rect class="fp-door-tab" data-tab="end" data-room-name="${this._escape(rName)}" data-door-id="${this._escape(ew.id)}" x="${(x2 - 3).toFixed(1)}" y="${(y2 - 3).toFixed(1)}" width="6" height="6" fill="#0284c7" stroke="#ffffff" stroke-width="1" style="cursor:crosshair;" />
@@ -2644,7 +2780,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
         // 8 Resize Handles when room is selected
         let resizeHandlesSvg = "";
-        if (isSel) {
+        if (isSel && isRoomMode) {
           const handles = [
             { id: "nw", x: rx, y: ry, cursor: "nwse-resize" },
             { id: "n", x: rx + rw / 2, y: ry, cursor: "ns-resize" },
@@ -2678,7 +2814,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         }
 
         return `
-          <g class="fp-room-box" data-room-name="${this._escape(rName)}">
+          <g class="fp-room-box" data-room-name="${this._escape(rName)}" style="${isRoomMode ? "" : "pointer-events:none;"}">
             <rect
               class="fp-room-rect"
               data-room-name="${this._escape(rName)}"
@@ -2691,7 +2827,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               stroke="${strokeColor}"
               stroke-width="${isSel ? "2.5" : "1.5"}"
               stroke-dasharray="${isTransit ? "4,4" : "none"}"
-              style="cursor:move;"
+              style="${isRoomMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
             />
             <text
               x="${rx + 14}"
@@ -2784,6 +2920,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           </div>
 
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <div class="seg-group" id="fp-mode-switcher" style="margin-top:0;">
+              <button class="seg-btn ${
+                this._floorplanMode === "rooms" ? "active" : ""
+              }" id="btn-fp-mode-rooms" style="padding:6px 12px;font-weight:600;">
+                🏠 Rooms & Doors
+              </button>
+              <button class="seg-btn ${
+                this._floorplanMode === "cameras" ? "active" : ""
+              }" id="btn-fp-mode-cameras" style="padding:6px 12px;font-weight:600;">
+                📹 Cameras & Cones
+              </button>
+            </div>
             <div class="seg-group" style="margin-top:0;">
               ${floors
                 .map(
@@ -2858,6 +3006,20 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   <div><small>Range</small><input type="number" class="input fp-cam-field" data-key="range_px" value="${Number(
                     selCam.range_px
                   )}" /></div>
+                </div>
+
+                <!-- Camera View & Physical Horizon/Azimuth Alignment -->
+                <div style="margin-top:14px;padding:12px;background:var(--ha-card-background, #ffffff);border:1px solid var(--ha-divider);border-radius:8px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                    <div>
+                      <div style="font-weight:600;font-size:12.5px;">📸 Camera View &amp; Opening Alignment</div>
+                      <div style="font-size:11px;color:var(--ha-muted);">CV vanishing horizon tilt &amp; doorway azimuth analysis</div>
+                    </div>
+                    <button class="btn btn-sm btn-primary" id="btn-fp-analyze-camera" style="padding:4px 10px;font-size:11.5px;" ${this._analyzingCamera ? "disabled" : ""}>
+                      ${this._analyzingCamera ? "Analyzing..." : "Analyze Alignment"}
+                    </button>
+                  </div>
+                  ${this._renderCameraAlignmentDetails(selCam)}
                 </div>`
               }
             </div>
@@ -3289,6 +3451,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         this.render();
       });
     });
+    root.querySelector("#btn-fp-mode-rooms")?.addEventListener("click", () => {
+      this._floorplanMode = "rooms";
+      this._selectedCamEntity = null;
+      this.render();
+    });
+    root.querySelector("#btn-fp-mode-cameras")?.addEventListener("click", () => {
+      this._floorplanMode = "cameras";
+      this._selectedRoomBoxName = null;
+      this._selectedDoorId = null;
+      this.render();
+    });
     root.querySelector("#btn-toggle-fp-inspector")?.addEventListener("click", () => {
       this._showFloorplanInspector = !this._showFloorplanInspector;
       this.render();
@@ -3308,7 +3481,37 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     );
     root.querySelector("#fp-cam-select")?.addEventListener("change", (e) => {
       this._selectedCamEntity = e.target.value;
+      this._cameraAlignmentResult = null;
+      this._cameraAlignmentError = null;
       this.render();
+    });
+    root.querySelector("#btn-fp-analyze-camera")?.addEventListener("click", () => {
+      const fCams = (this._floorplan?.cameras || []).filter(
+        (c) => (c.floor || "main") === this._selectedFloorId
+      );
+      const selCamId =
+        this._selectedCamEntity ||
+        root.querySelector("#fp-cam-select")?.value ||
+        (fCams[0]?.id || fCams[0]?.camera_entity);
+      if (selCamId) {
+        this._analyzeCameraAlignment(selCamId);
+      }
+    });
+    root.querySelector("#btn-fp-apply-calibrated-heading")?.addEventListener("click", () => {
+      const res = this._cameraAlignmentResult;
+      if (!res || res.recommended_heading_deg === undefined) return;
+      const selCamId = res.camera_id || this._selectedCamEntity;
+      const cam = (this._floorplan?.cameras || []).find(
+        (c) => (c.id || c.camera_entity) === selCamId
+      );
+      if (cam) {
+        cam.heading_deg = Math.round(res.recommended_heading_deg);
+        this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+        this._scheduleCanvasRender();
+        this._debounceSaveFloorplan();
+        this.showToast(`Calibrated camera heading to ${cam.heading_deg}°`, "success");
+        this.render();
+      }
     });
 
     // Doorway Inspector actions
@@ -3412,6 +3615,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const doorTab = e.target.closest(".fp-door-tab");
         const doorHandle = e.target.closest(".fp-door-handle");
         const roomBox = e.target.closest(".fp-room-box");
+
+        // Enforce active floorplan tool mode isolation
+        if (this._floorplanMode === "rooms" && (camHandle || camOrigin)) {
+          return;
+        }
+        if (this._floorplanMode === "cameras" && (resizeHandle || doorTab || doorHandle || roomBox)) {
+          return;
+        }
 
         const startPt = this._getSvgPoint(e, svgCanvas);
 
