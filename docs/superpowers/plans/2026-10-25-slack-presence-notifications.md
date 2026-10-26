@@ -41,10 +41,28 @@
       duration_occupied_str: str | None
       timestamp: datetime
 
+
   class NotificationDispatcher:
-      def resolve_transition_driver(self, room_id: str, room_name: str, from_state: str, to_state: str, room_config: dict[str, Any], prev_eval: dict[str, Any] | None, curr_eval: dict[str, Any], adjacent_context: str | None = None, duration_seconds: float | None = None) -> TransitionAttribution: ...
+      def resolve_transition_driver(
+          self,
+          room_id: str,
+          room_name: str,
+          from_state: str,
+          to_state: str,
+          room_config: dict[str, Any],
+          prev_eval: dict[str, Any] | None,
+          curr_eval: dict[str, Any],
+          adjacent_context: str | None = None,
+          duration_seconds: float | None = None,
+      ) -> TransitionAttribution: ...
       def format_slack_message(self, attribution: TransitionAttribution) -> dict[str, Any]: ...
-      async def async_dispatch_notification(self, hass: HomeAssistant, attribution: TransitionAttribution, global_settings: dict[str, Any], room_config: dict[str, Any]) -> bool: ...
+      async def async_dispatch_notification(
+          self,
+          hass: HomeAssistant,
+          attribution: TransitionAttribution,
+          global_settings: dict[str, Any],
+          room_config: dict[str, Any],
+      ) -> bool: ...
   ```
 
 - [ ] **Step 1: Write failing unit tests for `notifications.py`**
