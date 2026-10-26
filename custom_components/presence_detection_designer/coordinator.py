@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -47,21 +48,27 @@ from .const import (
     CONF_LLM_PROMPT,
     CONF_LLM_PROVIDER_TYPE,
     CONF_MODE,
+    CONF_NOTIFY_ON_CLEARED,
+    CONF_NOTIFY_ON_OCCUPIED,
+    CONF_NOTIFY_SLACK,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
+    DATA_STORE,
     DEFAULT_BAYESIAN_PRIOR,
     DEFAULT_BAYESIAN_THRESHOLD,
     DEFAULT_EXTEND_TIMEOUT,
     DEFAULT_GRACE_TIMEOUT,
     DEFAULT_INACTIVITY_TIMEOUT,
     DEFAULT_LLM_PROMPT,
+    DOMAIN,
     EVENT_PRESENCE_TRANSITION,
     BoxState,
     LLMProviderType,
     Mode,
 )
 from .llm_verifier import LLMVerifier
+from .notifications import NotificationDispatcher
 from .state_machine import RoomStateMachine
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,6 +102,9 @@ class RoomPresenceCoordinator:
         self._listeners: list[Callable[[], None]] = []
         self._unsub_trackers: list[Callable[[], None]] = []
         self._previous_presence = False
+        self._occupied_start_time: float | None = None
+        self._last_adjacent_arrival: str | None = None
+        self._notification_dispatcher = NotificationDispatcher()
         self.last_bayesian_eval: BayesianEvaluation | None = None
         self.state_machine: RoomStateMachine = None  # type: ignore[assignment]
 
@@ -150,6 +160,11 @@ class RoomPresenceCoordinator:
             self.mode = Mode.BOUNDED if len(self.boundary_entities) > 0 else Mode.OPEN
         else:
             self.mode = Mode(mode_val)
+
+        # Slack & Notification configuration
+        self.notify_slack: bool = bool(config.get(CONF_NOTIFY_SLACK, False))
+        self.notify_on_occupied: bool = bool(config.get(CONF_NOTIFY_ON_OCCUPIED, True))
+        self.notify_on_cleared: bool = bool(config.get(CONF_NOTIFY_ON_CLEARED, True))
 
         inactivity_timeout = int(config.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT))
         grace_timeout = int(config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT))
@@ -227,7 +242,18 @@ class RoomPresenceCoordinator:
         # Check for presence transition event
         curr_presence = self.state_machine.is_present
         if curr_presence != self._previous_presence:
+            from_state = "occupied" if self._previous_presence else "clear"
+            to_state = "occupied" if curr_presence else "clear"
             self._previous_presence = curr_presence
+
+            now_ts = time.time()
+            duration_sec: float | None = None
+            if to_state == "occupied":
+                self._occupied_start_time = now_ts
+            elif self._occupied_start_time is not None:
+                duration_sec = now_ts - self._occupied_start_time
+                self._occupied_start_time = None
+
             if self.hass and hasattr(self.hass, "bus"):
                 try:
                     self.hass.bus.async_fire(
@@ -236,6 +262,8 @@ class RoomPresenceCoordinator:
                             "entry_id": self.entry_id,
                             "room_name": self.room_name,
                             "presence": curr_presence,
+                            "from_state": from_state,
+                            "to_state": to_state,
                             "box_state": self.state_machine.box_state,
                             "bayesian_probability": self.state_machine.bayesian_probability,
                             "bayesian_probability_pct": self.state_machine.bayesian_probability_pct,
@@ -244,10 +272,57 @@ class RoomPresenceCoordinator:
                             ),
                             "last_trigger": self.state_machine.last_trigger_entity,
                             "active_conditions": self.state_machine.active_conditions,
+                            "duration_seconds": duration_sec,
                         },
                     )
                 except Exception:  # noqa: BLE001
                     pass
+
+            # Dispatch Slack notification if enabled
+            if self.hass and self.notify_slack:
+                global_settings: dict[str, Any] = {}
+                if hasattr(self.hass, "data") and isinstance(self.hass.data, dict):
+                    store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+                    if store is not None and hasattr(store, "global_settings"):
+                        global_settings = store.global_settings or {}
+
+                curr_eval: dict[str, Any] = {
+                    "probability": self.state_machine.bayesian_probability,
+                    "is_occupied": self.state_machine.is_present,
+                    "active_entities": [self.state_machine.last_trigger_entity]
+                    if self.state_machine.last_trigger_entity
+                    else [],
+                    "active_sustaining_conditions": self.state_machine.active_conditions,
+                    "driver_entity": self.state_machine.last_trigger_entity,
+                }
+                if self.last_bayesian_eval:
+                    curr_eval["probability"] = self.last_bayesian_eval.probability
+                    curr_eval["active_entities"] = list(
+                        self.last_bayesian_eval.active_observations.keys()
+                    )
+
+                attribution = self._notification_dispatcher.resolve_transition_driver(
+                    room_id=self.entry_id,
+                    room_name=self.room_name,
+                    from_state=from_state,
+                    to_state=to_state,
+                    room_config=self.config,
+                    prev_eval=None,
+                    curr_eval=curr_eval,
+                    adjacent_context=self._last_adjacent_arrival,
+                    duration_seconds=duration_sec,
+                )
+                self._last_adjacent_arrival = None
+
+                if hasattr(self.hass, "async_create_task"):
+                    self.hass.async_create_task(
+                        self._notification_dispatcher.async_dispatch_notification(
+                            self.hass,
+                            attribution,
+                            global_settings,
+                            self.config,
+                        )
+                    )
 
     async def async_setup(self) -> None:
         """Start listening to entity state changes and timer ticks."""
@@ -381,6 +456,7 @@ class RoomPresenceCoordinator:
     def notify_adjacent_occupancy(self, from_room_name: str) -> bool:
         """Clear vacating timer immediately if an adjacent connected room just detected an occupant."""
         if self.state_machine.handle_adjacent_room_occupied(from_room_name):
+            self._last_adjacent_arrival = f"Entered from {from_room_name}"
             self._record_timeline_snapshot()
             self.async_update_listeners()
             return True
@@ -560,3 +636,43 @@ class RoomPresenceCoordinator:
         result["box_state"] = str(self.state_machine.box_state)
         result["is_present"] = self.state_machine.is_present
         return result
+
+    async def async_send_test_notification(
+        self,
+        service: str | None = None,
+        channel: str | None = None,
+    ) -> bool:
+        """Send a test diagnostic notification to verify Slack connectivity."""
+        from .notifications import TransitionAttribution
+
+        global_settings: dict[str, Any] = {}
+        if self.hass and hasattr(self.hass, "data") and isinstance(self.hass.data, dict):
+            store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+            if store is not None and hasattr(store, "global_settings"):
+                global_settings = dict(store.global_settings or {})
+
+        if service:
+            global_settings["slack_notify_service"] = service
+        if channel:
+            global_settings["slack_channel"] = channel
+
+        attribution = TransitionAttribution(
+            room_id=self.entry_id,
+            room_name=self.room_name,
+            from_state="clear",
+            to_state="occupied",
+            primary_driver="Test Trigger (Manual Studio Verification)",
+            driver_type="sensor",
+            confidence_pct=95.0,
+            threshold_pct=75.0,
+            active_sensors=["test_sensor.manual_ping"],
+            sustaining_conditions=[],
+            arrival_context="Manual Studio Test",
+            duration_occupied_str=None,
+        )
+        return await self._notification_dispatcher.async_dispatch_notification(
+            self.hass,
+            attribution,
+            global_settings,
+            {"notify_slack": True, "notify_on_occupied": True},
+        )
