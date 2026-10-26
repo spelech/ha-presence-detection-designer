@@ -199,3 +199,47 @@ async def test_component_lifecycle_and_services(mock_hass, sample_config):
     # Unload entry
     assert await async_unload_entry(mock_hass, mock_entry) is True
     assert "test_entry" not in mock_hass.data[DOMAIN]
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_assigns_area_using_async_get_device_by_identifier(
+    mock_hass, sample_config
+):
+    """Verify HA 2027.8+ compatibility: async_setup_entry prefers async_get_device_by_identifier over deprecated async_get_device."""
+    from unittest.mock import patch
+
+    from custom_components.presence_detection_designer import async_setup_entry
+    from custom_components.presence_detection_designer.const import CONF_AREA_ID
+
+    config_with_area = {**sample_config, CONF_AREA_ID: "living_room_area"}
+    mock_entry = MagicMock()
+    mock_entry.entry_id = "test_entry_area"
+    mock_entry.data = config_with_area
+    mock_entry.options = {}
+
+    mock_hass.config_entries = MagicMock()
+    mock_hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=None)
+
+    mock_device = MagicMock()
+    mock_device.id = "dev_room_1"
+    mock_device.area_id = None
+
+    mock_dev_reg = MagicMock()
+    mock_dev_reg.async_get_device_by_identifier = MagicMock(return_value=mock_device)
+    mock_dev_reg.async_get_device = MagicMock(
+        side_effect=AssertionError("async_get_device is deprecated in HA 2027.8+")
+    )
+    mock_dev_reg.async_update_device = MagicMock()
+
+    with patch(
+        "homeassistant.helpers.device_registry.async_get",
+        return_value=mock_dev_reg,
+    ):
+        assert await async_setup_entry(mock_hass, mock_entry) is True
+
+    mock_dev_reg.async_get_device_by_identifier.assert_called_once_with(
+        (DOMAIN, "test_entry_area"), "test_entry_area"
+    )
+    mock_dev_reg.async_update_device.assert_called_once_with(
+        "dev_room_1", area_id="living_room_area"
+    )
