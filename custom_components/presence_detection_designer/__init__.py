@@ -39,7 +39,7 @@ async def _async_ensure_panel_and_views(hass: Any) -> None:
         return
     domain_data = hass.data.setdefault(DOMAIN, {})
 
-    version = "1.2.2"
+    version = "1.2.3"
     try:
         from homeassistant.loader import async_get_integration
 
@@ -372,10 +372,15 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
             from homeassistant.helpers import device_registry as dr
 
             dev_reg = dr.async_get(hass)
-            if hasattr(dev_reg, "async_get_device"):
+            device = None
+            if hasattr(dev_reg, "async_get_device_by_identifier"):
+                device = dev_reg.async_get_device_by_identifier(
+                    (DOMAIN, entry.entry_id), entry.entry_id
+                )
+            elif hasattr(dev_reg, "async_get_device"):
                 device = dev_reg.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
-                if device and getattr(device, "area_id", None) != coordinator.area_id:
-                    dev_reg.async_update_device(device.id, area_id=coordinator.area_id)
+            if device and getattr(device, "area_id", None) != coordinator.area_id:
+                dev_reg.async_update_device(device.id, area_id=coordinator.area_id)
         except Exception:  # noqa: BLE001
             pass
 
