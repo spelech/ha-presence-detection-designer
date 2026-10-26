@@ -1837,6 +1837,35 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   (this._globalDraft?.ble_trackers || []).join(", ")
                 )}" />
               </div>
+
+              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                  <span class="setting-label" style="font-weight:600;">Slack Presence Notifications</span>
+                  <input type="checkbox" id="gl-notify-enabled" ${
+                    this._globalDraft?.notifications_enabled !== false ? "checked" : ""
+                  } />
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div>
+                    <div class="setting-label" style="margin-bottom:4px;">Notify Service</div>
+                    <input type="text" class="input" id="gl-slack-service" value="${this._escape(
+                      this._globalDraft?.slack_notify_service || "notify.scdbots"
+                    )}" placeholder="notify.scdbots" />
+                  </div>
+                  <div>
+                    <div class="setting-label" style="margin-bottom:4px;">Target Channel</div>
+                    <input type="text" class="input" id="gl-slack-channel" value="${this._escape(
+                      this._globalDraft?.slack_channel || "#presence-alerts"
+                    )}" placeholder="#presence-alerts" />
+                  </div>
+                </div>
+                <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+                  <button class="btn btn-secondary" id="btn-test-slack-alert" style="font-size:12px;">
+                    🔔 Send Test Alert to Slack
+                  </button>
+                </div>
+              </div>
+
               <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
                 <button class="btn" id="btn-cancel-global">Cancel</button>
                 <button class="btn btn-primary" id="btn-save-global">Save</button>
@@ -2169,6 +2198,47 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               </div>`
                 : ""
             }
+          </div>
+        </div>
+      </div>
+
+      <!-- 4b. Slack Presence Notifications Card -->
+      <div class="ha-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">Slack Presence Notifications</h3>
+            <div class="card-desc">
+              Send diagnostic alerts to <code>#presence-alerts</code> when presence transitions in this room.
+            </div>
+          </div>
+        </div>
+
+        <div class="list-divider">
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Enable Slack alerts for this room</div>
+              <div class="setting-help">Send real-time cards detailing what sensor or rule caused this room to occupy or clear.</div>
+            </div>
+            <div>
+              <input type="checkbox" id="cfg-notify-slack" ${cfg.notify_slack ? "checked" : ""} style="width:16px;height:16px;" />
+            </div>
+          </div>
+
+          <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
+            <div>
+              <div class="setting-label">Transition Triggers</div>
+              <div class="setting-help">Choose which presence transitions trigger a Slack notification.</div>
+            </div>
+            <div style="display:flex;gap:18px;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" id="cfg-notify-on-occupied" ${cfg.notify_on_occupied !== false ? "checked" : ""} />
+                Alert on Occupied
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" id="cfg-notify-on-cleared" ${cfg.notify_on_cleared !== false ? "checked" : ""} />
+                Alert on Cleared
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -4083,9 +4153,33 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         llm_api_url: root.querySelector("#gl-api-url")?.value || "",
         llm_model: root.querySelector("#gl-model")?.value || "",
         llm_agent_id: root.querySelector("#gl-agent-id")?.value || "",
-        ble_trackers: root.querySelector("#gl-ble")?.value || "",
+        ble_trackers: (root.querySelector("#gl-ble")?.value || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        notifications_enabled: Boolean(root.querySelector("#gl-notify-enabled")?.checked),
+        slack_notify_service: root.querySelector("#gl-slack-service")?.value || "notify.scdbots",
+        slack_channel: root.querySelector("#gl-slack-channel")?.value || "#presence-alerts",
       };
       this.saveGlobalSettings();
+    });
+
+    root.querySelector("#btn-test-slack-alert")?.addEventListener("click", async () => {
+      const btn = root.querySelector("#btn-test-slack-alert");
+      if (btn) btn.disabled = true;
+      try {
+        const service = root.querySelector("#gl-slack-service")?.value || "notify.scdbots";
+        const channel = root.querySelector("#gl-slack-channel")?.value || "#presence-alerts";
+        const res = await this._apiCall("POST", "/api/presence_detection_designer/notifications/test", {
+          slack_notify_service: service,
+          slack_channel: channel,
+        });
+        this.showToast(res?.message || "Test alert dispatched to Slack!", "success");
+      } catch (err) {
+        this.showToast("Failed to send test alert: " + (err.message || err), "error");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
 
     root.querySelector("#room-search-input")?.addEventListener("input", (e) => {
@@ -4141,6 +4235,20 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._draftConfig.inactivity_timeout = Number(e.target.value);
       this._dirty = true;
       this.render();
+    });
+
+    root.querySelector("#cfg-notify-slack")?.addEventListener("change", (e) => {
+      this._draftConfig.notify_slack = e.target.checked;
+      this._dirty = true;
+      this.render();
+    });
+    root.querySelector("#cfg-notify-on-occupied")?.addEventListener("change", (e) => {
+      this._draftConfig.notify_on_occupied = e.target.checked;
+      this._dirty = true;
+    });
+    root.querySelector("#cfg-notify-on-cleared")?.addEventListener("change", (e) => {
+      this._draftConfig.notify_on_cleared = e.target.checked;
+      this._dirty = true;
     });
 
     root.querySelector("#btn-add-ble")?.addEventListener("click", () => {

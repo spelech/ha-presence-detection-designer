@@ -947,6 +947,79 @@ class PDDCameraAlignView(HomeAssistantView):
             return self.json({"error": f"Alignment analysis failed: {err}"}, status_code=500)
 
 
+class PDDNotificationTestView(HomeAssistantView):
+    """View to dispatch a test Slack notification."""
+
+    url = "/api/presence_detection_designer/notifications/test"
+    name = "api:presence_detection_designer:notifications:test"
+    requires_auth = True
+
+    async def post(self, request: Any) -> Any:
+        """Handle test notification request."""
+        hass = request.app["hass"]
+        body: dict[str, Any] = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        service = body.get("slack_notify_service")
+        channel = body.get("slack_channel")
+
+        from .const import DATA_STORE, DOMAIN
+        from .coordinator import RoomPresenceCoordinator
+        from .notifications import NotificationDispatcher, TransitionAttribution
+
+        domain_data = getattr(hass, "data", {}).get(DOMAIN, {})
+        coordinators = [c for c in domain_data.values() if isinstance(c, RoomPresenceCoordinator)]
+        if coordinators:
+            success = await coordinators[0].async_send_test_notification(
+                service=service, channel=channel
+            )
+            return self.json(
+                {
+                    "success": success,
+                    "message": f"Test alert sent via {service or 'notify.scdbots'} to {channel or '#presence-alerts'}",
+                }
+            )
+
+        # Fallback if no coordinator is active
+        store = domain_data.get(DATA_STORE)
+        global_settings = dict(getattr(store, "global_settings", {}) or {})
+        if service:
+            global_settings["slack_notify_service"] = service
+        if channel:
+            global_settings["slack_channel"] = channel
+
+        dispatcher = NotificationDispatcher()
+        attribution = TransitionAttribution(
+            room_id="studio_test",
+            room_name="Design Studio",
+            from_state="clear",
+            to_state="occupied",
+            primary_driver="Manual Studio Verification Ping",
+            driver_type="sensor",
+            confidence_pct=95.0,
+            threshold_pct=75.0,
+            active_sensors=["test_sensor.manual_ping"],
+            sustaining_conditions=[],
+            arrival_context="Manual Studio Test",
+            duration_occupied_str=None,
+        )
+        success = await dispatcher.async_dispatch_notification(
+            hass,
+            attribution,
+            global_settings,
+            {"notify_slack": True, "notify_on_occupied": True},
+        )
+        return self.json(
+            {
+                "success": success,
+                "message": f"Test alert sent via {global_settings.get('slack_notify_service', 'notify.scdbots')} to {global_settings.get('slack_channel', '#presence-alerts')}",
+            }
+        )
+
+
 def async_register_views(hass: Any) -> None:
     """Register all HTTP API views for Presence Detection Designer once."""
     if not hass or not hasattr(hass, "http") or not hasattr(hass.http, "register_view"):
@@ -963,5 +1036,6 @@ def async_register_views(hass: Any) -> None:
         PDDReplayView,
         PDDFloorplanView,
         PDDCameraAlignView,
+        PDDNotificationTestView,
     ):
         hass.http.register_view(view_cls())
