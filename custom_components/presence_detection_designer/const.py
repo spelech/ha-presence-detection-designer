@@ -33,6 +33,17 @@ CONF_CAMERA_ENTITY = "camera_entity"
 CONF_CAMERA_SNAPSHOT_URL = "camera_snapshot_url"
 CONF_LLM_PROMPT = "llm_prompt"
 
+# Slack & Notification configuration
+CONF_NOTIFICATIONS_ENABLED = "notifications_enabled"
+CONF_SLACK_NOTIFY_SERVICE = "slack_notify_service"
+CONF_SLACK_CHANNEL = "slack_channel"
+CONF_NOTIFY_SLACK = "notify_slack"
+CONF_NOTIFY_ON_OCCUPIED = "notify_on_occupied"
+CONF_NOTIFY_ON_CLEARED = "notify_on_cleared"
+
+DEFAULT_SLACK_NOTIFY_SERVICE = "notify.scdbots"
+DEFAULT_SLACK_CHANNEL = "#presence-alerts"
+
 # Defaults
 DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
 DEFAULT_GRACE_TIMEOUT = 60  # 1 minute after door open/close

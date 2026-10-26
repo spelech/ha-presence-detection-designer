@@ -188,7 +188,7 @@ async def test_views_end_to_end(mock_hass):
     )
     mock_hass.http = MagicMock()
     async_register_views(mock_hass)
-    assert mock_hass.http.register_view.call_count == 11
+    assert mock_hass.http.register_view.call_count == 12
 
     coord = RoomPresenceCoordinator(
         mock_hass,
@@ -412,3 +412,22 @@ async def test_camera_alignment_view(mock_hass):
     assert "tilt_deg" in res
     assert "recommended_heading_deg" in res
     assert res["annotated_image"].startswith("data:image/jpeg;base64,")
+
+
+async def test_notification_test_view(mock_hass):
+    """Test PDDNotificationTestView endpoint."""
+    from custom_components.presence_detection_designer.views import PDDNotificationTestView
+
+    view = PDDNotificationTestView()
+    req = _make_request(
+        mock_hass,
+        {
+            "slack_notify_service": "notify.scdbots",
+            "slack_channel": "#presence-alerts",
+        },
+    )
+
+    status, res = _unpack(await view.post(req))
+    assert status == 200
+    assert res["success"] is True
+    assert "#presence-alerts" in res["message"]
