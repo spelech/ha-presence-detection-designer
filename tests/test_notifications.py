@@ -217,3 +217,82 @@ async def test_debounce_suppression(sample_attribution_occupied: TransitionAttri
     )
     assert res2 is False
     assert hass.services.async_call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_create_missing_slack_channel_and_negative_space_formatting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = NotificationDispatcher()
+    hass = MagicMock()
+    hass.services.async_call = AsyncMock()
+    hass.bus.async_fire = MagicMock()
+
+    async def _run_sync(func, *args):
+        return func(*args)
+
+    hass.async_add_executor_job = AsyncMock(side_effect=_run_sync)
+
+    slack_entry = MagicMock()
+    slack_entry.data = {"api_key": "xoxb-test-slack-token", "default_channel": "notifications"}
+    hass.config_entries.async_entries = MagicMock(return_value=[slack_entry])
+
+    created_channels: list[str] = []
+
+    def _fake_slack_api(
+        url: str, token: str, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if "conversations.list" in url:
+            return {
+                "ok": True,
+                "channels": [{"name": "notifications", "id": "C111", "is_member": True}],
+            }
+        if "conversations.create" in url and payload:
+            created_channels.append(payload["name"])
+            return {
+                "ok": True,
+                "channel": {"id": "C222", "name": payload["name"], "is_member": True},
+            }
+        return {"ok": True}
+
+    monkeypatch.setattr(dispatcher, "_call_slack_web_api", _fake_slack_api)
+
+    curr_eval: dict[str, Any] = {
+        "probability": 0.89,
+        "is_occupied": True,
+        "active_entities": ["binary_sensor.master_bathroom_person_occupancy"],
+        "active_sustaining_conditions": [],
+        "driver_entity": "binary_sensor.master_bathroom_person_occupancy",
+        "inferred_location": "Master Bathroom (Interior Shower/Vanity Blind Pocket)",
+        "negative_space_evidence": [
+            "camera.master_bedroom cone confirmed clear (88% of Master Bedroom excluded)"
+        ],
+    }
+    attr = dispatcher.resolve_transition_driver(
+        room_id="master_bath",
+        room_name="Master Bathroom",
+        from_state="clear",
+        to_state="occupied",
+        room_config={"room_name": "Master Bathroom", "prob_threshold": 0.75},
+        prev_eval=None,
+        curr_eval=curr_eval,
+    )
+    assert attr.inferred_location == "Master Bathroom (Interior Shower/Vanity Blind Pocket)"
+    assert attr.negative_space_evidence is not None
+    formatted = dispatcher.format_slack_message(attr)
+    assert "Master Bathroom (Interior Shower/Vanity Blind Pocket)" in formatted["text"]
+    assert "camera.master_bedroom cone confirmed clear" in formatted["text"]
+
+    # Room config with notify_slack=None defaults to enabled, and missing #new-presence-chan is auto-created
+    ok = await dispatcher.async_dispatch_notification(
+        hass=hass,
+        attribution=attr,
+        global_settings={
+            "notifications_enabled": True,
+            "slack_notify_service": "notify.scdbots",
+            "slack_channel": "#new-presence-chan",
+        },
+        room_config={"notify_slack": None},
+    )
+    assert ok is True
+    assert created_channels == ["new-presence-chan"]
