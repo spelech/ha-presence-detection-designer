@@ -188,7 +188,7 @@ async def test_views_end_to_end(mock_hass):
     )
     mock_hass.http = MagicMock()
     async_register_views(mock_hass)
-    assert mock_hass.http.register_view.call_count == 12
+    assert mock_hass.http.register_view.call_count == 13
 
     coord = RoomPresenceCoordinator(
         mock_hass,
@@ -431,3 +431,25 @@ async def test_notification_test_view(mock_hass):
     assert status == 200
     assert res["success"] is True
     assert "#presence-alerts" in res["message"]
+
+
+async def test_timeline_reconstruction_view(mock_hass):
+    """Test PDDTimelineReconstructionView with negative_space=true and false."""
+    from custom_components.presence_detection_designer.views import PDDTimelineReconstructionView
+
+    view = PDDTimelineReconstructionView()
+    req_on = _make_request(mock_hass, {})
+    req_on.query = {"hours": "2", "negative_space": "true"}
+
+    status_on, res_on = _unpack(await view.get(req_on))
+    assert status_on == 200
+    assert res_on["negative_space_enabled"] is True
+    assert "frames" in res_on
+    assert "transitions" in res_on
+    assert "comparison_summary" in res_on
+
+    req_off = _make_request(mock_hass, {})
+    req_off.query = {"hours": "2", "negative_space": "false"}
+    status_off, res_off = _unpack(await view.get(req_off))
+    assert status_off == 200
+    assert res_off["negative_space_enabled"] is False

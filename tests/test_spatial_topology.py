@@ -438,3 +438,35 @@ def test_occluded_cone_room_overlap_pct_doorway_penetration():
     door_wall = [((100.0, 0.0), (100.0, 35.0)), ((100.0, 65.0), (100.0, 100.0))]
     pct_door = compute_cone_room_overlap_pct(cam, adj_room, grid_steps=10, solid_segments=door_wall)
     assert pct_door > 20.0
+
+
+def test_floorplan_multi_sensor_layers_and_compilation():
+    """Verify PIR motion cones, Frigate 2D sub-zones, door contacts, and BLE proxy anchors compile on the floorplan."""
+    fp = get_default_floorplan()
+    assert len(fp.get("sensors", [])) >= 12
+    assert len(fp.get("ble_proxies", [])) == 6
+
+    pir_sensors = [s for s in fp["sensors"] if s.get("sensor_type") == "pir_motion"]
+    door_sensors = [s for s in fp["sensors"] if s.get("sensor_type") == "door_contact"]
+    assert len(pir_sensors) >= 10
+    assert len(door_sensors) >= 4
+
+    # Every camera has 2D sub_zones mapped onto the floorplan
+    for cam in fp["cameras"]:
+        assert len(cam.get("sub_zones", [])) >= 1
+        for sz in cam["sub_zones"]:
+            assert "entity_id" in sz
+            assert "x" in sz and "y" in sz and "width" in sz and "height" in sz
+
+    compiled = compile_floorplan_topology(fp)
+    assert len(compiled.get("pir_analysis", [])) == len(pir_sensors)
+    assert len(compiled.get("sub_zone_analysis", [])) >= 20
+    assert len(compiled.get("ble_proxy_analysis", [])) == 6
+
+    # PIR analysis includes wall-occluded visibility polygons
+    first_pir = compiled["pir_analysis"][0]
+    assert len(first_pir["visibility_polygon"]) > 5
+
+    # Room coverage tracks uncovered negative-space percentage
+    assert "uncovered_pct" in compiled["room_coverage"]["Master Bathroom"]
+    assert compiled["room_coverage"]["Master Bathroom"]["uncovered_pct"] >= 50.0
