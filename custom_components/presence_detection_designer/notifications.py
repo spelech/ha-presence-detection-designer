@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -43,13 +45,17 @@ class TransitionAttribution:
     from_state: str
     to_state: str
     primary_driver: str
-    driver_type: str  # "sensor", "sustaining", "inactivity_timeout", "bounded_exit"
+    driver_type: (
+        str  # "sensor", "sustaining", "inactivity_timeout", "bounded_exit", "negative_space"
+    )
     confidence_pct: float
     threshold_pct: float
     active_sensors: list[str]
     sustaining_conditions: list[str]
     arrival_context: str | None = None
     duration_occupied_str: str | None = None
+    inferred_location: str | None = None
+    negative_space_evidence: list[str] | None = None
     timestamp: datetime = datetime.now(UTC)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,11 +66,90 @@ class TransitionAttribution:
 
 
 class NotificationDispatcher:
-    """Handles driver attribution, Slack formatting, debounce, and async dispatch."""
+    """Handles driver attribution, Slack formatting, auto-channel creation, debounce, and async dispatch."""
 
     def __init__(self) -> None:
         """Initialize the dispatcher."""
         self._last_dispatched: dict[tuple[str, str], float] = {}
+        self._verified_channels: set[str] = set()
+
+    def _call_slack_web_api(
+        self,
+        url: str,
+        token: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Invoke a Slack Web API endpoint synchronously (run inside executor job)."""
+        headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
+        data_bytes: bytes | None = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json; charset=utf-8"
+            data_bytes = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data_bytes, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    async def async_ensure_slack_channel(
+        self,
+        hass: Any,
+        channel: str,
+    ) -> str:
+        """Ensure target Slack channel exists; create it via conversations.create if missing."""
+        clean_name = channel.lstrip("#").strip().lower()
+        if not clean_name or clean_name in self._verified_channels:
+            return channel
+
+        token: str | None = None
+        if (
+            hass
+            and hasattr(hass, "config_entries")
+            and hasattr(hass.config_entries, "async_entries")
+        ):
+            try:
+                entries = hass.config_entries.async_entries("slack") or []
+                for entry in entries:
+                    data = getattr(entry, "data", None)
+                    if isinstance(data, dict):
+                        cand = data.get("api_key")
+                        if isinstance(cand, str) and cand.startswith("xox"):
+                            token = cand
+                            break
+            except Exception:  # noqa: BLE001
+                token = None
+
+        if not token or not hasattr(hass, "async_add_executor_job"):
+            return channel
+
+        try:
+            list_res = await hass.async_add_executor_job(
+                self._call_slack_web_api,
+                "https://slack.com/api/conversations.list?types=public_channel,private_channel&limit=200",
+                token,
+                None,
+            )
+            if isinstance(list_res, dict) and list_res.get("ok"):
+                existing = {
+                    str(ch.get("name", "")).lower(): ch
+                    for ch in (list_res.get("channels") or [])
+                    if isinstance(ch, dict)
+                }
+                if clean_name in existing:
+                    self._verified_channels.add(clean_name)
+                    return channel
+
+                create_res = await hass.async_add_executor_job(
+                    self._call_slack_web_api,
+                    "https://slack.com/api/conversations.create",
+                    token,
+                    {"name": clean_name, "is_private": False},
+                )
+                if isinstance(create_res, dict) and create_res.get("ok"):
+                    _LOGGER.info("Auto-created missing Slack channel #%s", clean_name)
+                    self._verified_channels.add(clean_name)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Slack channel auto-provisioning skipped for %s: %s", channel, err)
+
+        return channel
 
     def resolve_transition_driver(
         self,
@@ -81,10 +166,14 @@ class NotificationDispatcher:
         """Attribute primary driver and compile diagnostic context for a transition."""
         prob = float(curr_eval.get("probability", 0.0))
         confidence_pct = round(prob * 100.0, 1)
-        threshold = float(room_config.get("prob_threshold", 0.70))
+        threshold = float(
+            room_config.get("prob_threshold") or room_config.get("bayesian_threshold") or 0.70
+        )
         threshold_pct = round(threshold * 100.0, 1)
         active_sensors = list(curr_eval.get("active_entities", []))
         sustaining = list(curr_eval.get("active_sustaining_conditions", []))
+        inferred_location = curr_eval.get("inferred_location")
+        negative_space_evidence = curr_eval.get("negative_space_evidence")
 
         if to_state == "occupied":
             driver_entity = curr_eval.get("driver_entity")
@@ -94,6 +183,9 @@ class NotificationDispatcher:
                     label = f"{label} (Frigate Camera)"
                 primary_driver = label
                 driver_type = "sensor"
+            elif negative_space_evidence:
+                primary_driver = f"Negative-Space Inference ({inferred_location or room_name})"
+                driver_type = "negative_space"
             elif sustaining:
                 primary_driver = f"Sustaining condition: {sustaining[0]}"
                 driver_type = "sustaining"
@@ -135,6 +227,10 @@ class NotificationDispatcher:
             sustaining_conditions=sustaining,
             arrival_context=adjacent_context,
             duration_occupied_str=duration_str,
+            inferred_location=str(inferred_location) if inferred_location else None,
+            negative_space_evidence=list(negative_space_evidence)
+            if negative_space_evidence
+            else None,
             timestamp=datetime.now(UTC),
         )
 
@@ -148,6 +244,11 @@ class NotificationDispatcher:
             lines.append(
                 f"• *Bayesian Probability:* {attribution.confidence_pct:.0f}% *(Threshold: {attribution.threshold_pct:.0f}%)*"
             )
+            if attribution.inferred_location:
+                lines.append(f"• *Spatial Localization:* {attribution.inferred_location}")
+            if attribution.negative_space_evidence:
+                neg_str = "; ".join(attribution.negative_space_evidence[:3])
+                lines.append(f"• *Negative-Space Exclusion:* {neg_str}")
             if attribution.active_sensors:
                 active_str = ", ".join(f"`{s}`" for s in attribution.active_sensors[:4])
                 lines.append(f"• *Active Sensors:* {active_str}")
@@ -183,14 +284,14 @@ class NotificationDispatcher:
             _LOGGER.debug("Notifications globally disabled; skipping")
             return False
 
-        # 2. Per-room settings
-        if not room_config.get("notify_slack", False):
+        # 2. Per-room settings (default to True unless explicitly False)
+        if room_config.get("notify_slack") is False:
             return False
 
-        if attribution.to_state == "occupied" and not room_config.get("notify_on_occupied", True):
+        if attribution.to_state == "occupied" and room_config.get("notify_on_occupied") is False:
             return False
 
-        if attribution.to_state == "clear" and not room_config.get("notify_on_cleared", True):
+        if attribution.to_state == "clear" and room_config.get("notify_on_cleared") is False:
             return False
 
         # 3. Debounce check
@@ -208,11 +309,12 @@ class NotificationDispatcher:
 
         self._last_dispatched[key] = now
 
-        # 4. Resolve notify service & target channel
+        # 4. Resolve notify service & target channel (auto-creating missing Slack channel if needed)
         notify_service_full = str(
-            global_settings.get("slack_notify_service", "notify.scdbots")
+            global_settings.get("slack_notify_service") or "notify.scdbots"
         ).strip()
-        channel = str(global_settings.get("slack_channel", "#presence-alerts")).strip()
+        channel = str(global_settings.get("slack_channel") or "#presence-alerts").strip()
+        await self.async_ensure_slack_channel(hass, channel)
 
         # Handle 'notify.scdbots' -> domain 'notify', service 'scdbots'
         if "." in notify_service_full:

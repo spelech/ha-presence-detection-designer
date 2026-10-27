@@ -36,8 +36,15 @@ from .const import (
     CONF_LLM_API_URL,
     CONF_LLM_MODEL,
     CONF_LLM_PROVIDER_TYPE,
+    CONF_NOTIFY_ON_CLEARED,
+    CONF_NOTIFY_ON_OCCUPIED,
+    CONF_NOTIFY_SLACK,
     DATA_STORE,
     DEFAULT_BLE_TRACKERS,
+    DEFAULT_NEGATIVE_SPACE_ENABLED,
+    DEFAULT_NOTIFY_SLACK,
+    DEFAULT_SLACK_CHANNEL,
+    DEFAULT_SLACK_NOTIFY_SERVICE,
     DOMAIN,
     MAX_ROOM_REVISIONS,
     MAX_TIMELINE_EVENTS,
@@ -56,6 +63,10 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "llm_model": "gemini-2.5-flash",
     "llm_agent_id": "",
     "ble_trackers": list(DEFAULT_BLE_TRACKERS),
+    "notifications_enabled": True,
+    "slack_notify_service": DEFAULT_SLACK_NOTIFY_SERVICE,
+    "slack_channel": DEFAULT_SLACK_CHANNEL,
+    "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
 }
 
 
@@ -100,11 +111,50 @@ class PDDStore:
         if not stored.get("floorplan", {}).get("rooms"):
             stored["floorplan"] = get_default_floorplan()
             dirty = True
+        else:
+            default_fp = get_default_floorplan()
+            fp_dict = stored["floorplan"]
+            has_blueprint = any(
+                isinstance(fl, dict) and fl.get("underlay_svg")
+                for fl in fp_dict.get("floors", []) or []
+            )
+            if not has_blueprint:
+                fp_dict["floors"] = copy.deepcopy(default_fp.get("floors", []))
+                fp_dict["rooms"] = copy.deepcopy(default_fp.get("rooms", []))
+                fp_dict["cameras"] = copy.deepcopy(default_fp.get("cameras", []))
+                dirty = True
+            for layer_key in ("sensors", "ble_proxies"):
+                if not fp_dict.get(layer_key) and default_fp.get(layer_key):
+                    fp_dict[layer_key] = copy.deepcopy(default_fp[layer_key])
+                    dirty = True
+            # Backfill camera sub_zones if missing on stored cameras
+            default_cams = {c["id"]: c for c in default_fp.get("cameras", []) if c.get("id")}
+            for cam in fp_dict.get("cameras", []):
+                cid = cam.get("id")
+                if (
+                    cid in default_cams
+                    and not cam.get("sub_zones")
+                    and default_cams[cid].get("sub_zones")
+                ):
+                    cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
+                    dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
             if k not in stored["global_settings"]:
                 stored["global_settings"][k] = copy.deepcopy(v)
                 dirty = True
+
+        for _rid, rcfg in stored.get("rooms", {}).items():
+            if isinstance(rcfg, dict):
+                if rcfg.get(CONF_NOTIFY_SLACK) is None:
+                    rcfg[CONF_NOTIFY_SLACK] = DEFAULT_NOTIFY_SLACK
+                    dirty = True
+                if rcfg.get(CONF_NOTIFY_ON_OCCUPIED) is None:
+                    rcfg[CONF_NOTIFY_ON_OCCUPIED] = True
+                    dirty = True
+                if rcfg.get(CONF_NOTIFY_ON_CLEARED) is None:
+                    rcfg[CONF_NOTIFY_ON_CLEARED] = True
+                    dirty = True
 
         # Synchronize existing ConfigEntries into .storage rooms and global_settings
         if (
@@ -298,9 +348,15 @@ class PDDStore:
             "llm_api_key",
             "llm_model",
             "llm_agent_id",
+            "slack_notify_service",
+            "slack_channel",
         ):
             if key in updates and updates[key] is not None:
                 gs[key] = str(updates[key]).strip()
+
+        for bkey in ("notifications_enabled", "negative_space_enabled"):
+            if bkey in updates and updates[bkey] is not None:
+                gs[bkey] = bool(updates[bkey])
 
         if "ble_trackers" in updates and updates["ble_trackers"] is not None:
             raw_ble = updates["ble_trackers"]
@@ -318,6 +374,20 @@ class PDDStore:
         if not isinstance(fp, dict) or not fp.get("floors"):
             fp = get_default_floorplan()
             self._data["floorplan"] = fp
+        else:
+            default_fp = get_default_floorplan()
+            for layer_key in ("sensors", "ble_proxies"):
+                if not fp.get(layer_key) and default_fp.get(layer_key):
+                    fp[layer_key] = copy.deepcopy(default_fp[layer_key])
+            default_cams = {c["id"]: c for c in default_fp.get("cameras", []) if c.get("id")}
+            for cam in fp.get("cameras", []):
+                cid = cam.get("id")
+                if (
+                    cid in default_cams
+                    and not cam.get("sub_zones")
+                    and default_cams[cid].get("sub_zones")
+                ):
+                    cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
         return copy.deepcopy(fp)
 
     async def async_save_floorplan(self, floorplan: dict[str, Any]) -> dict[str, Any]:

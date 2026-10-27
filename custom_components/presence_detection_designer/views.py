@@ -52,6 +52,14 @@ from .replay_engine import (
     simulate_config_on_timelines,
     simulate_replay_comparison,
 )
+from .spatial_inference import (
+    ALL_SHADE_ENTITIES,
+    BLE_TRACKER_ENTITIES,
+    CAMERA_WHOLE_FRAME_ENTITY,
+    SUNLIT_STATIC_SUBZONES,
+    evaluate_spatial_frame,
+    reconstruct_house_timeline,
+)
 from .spatial_topology import (
     apply_compiled_topology_to_config,
     compile_floorplan_topology,
@@ -181,6 +189,7 @@ def serialize_room_coordinator(
         "ha_bayesian_yaml": coordinator.yaml_representations.get("ha_bayesian_yaml", ""),
         "designer_yaml": coordinator.yaml_representations.get("designer_yaml", ""),
         "combinatorics": combinatorics,
+        "spatial_estimate": coordinator.last_spatial_estimate,
         "config": coordinator.config,
         "revisions": [
             {
@@ -363,6 +372,22 @@ class PDDOverviewView(HomeAssistantView):
         rooms_payload.sort(key=lambda r: str(r.get("room_name", "")).lower())
         areas, entities = collect_ha_areas_and_entities(hass)
         floorplan = store.get_floorplan()
+        compiled_topology = compile_floorplan_topology(floorplan)
+        neg_space_enabled = bool(store.global_settings.get("negative_space_enabled", True))
+
+        def _live_state_str(eid: str) -> str:
+            st = _safe_state_getter(hass, eid)
+            return str(st.state) if st is not None else "off"
+
+        import time
+
+        spatial_inference = evaluate_spatial_frame(
+            floorplan=floorplan,
+            compiled_topology=compiled_topology,
+            state_getter=_live_state_str,
+            now_ts=time.time(),
+            negative_space_enabled=neg_space_enabled,
+        )
 
         return self.json(
             {
@@ -372,7 +397,8 @@ class PDDOverviewView(HomeAssistantView):
                 "entities": entities,
                 "presets": build_presets_metadata(),
                 "floorplan": floorplan,
-                "compiled_topology": compile_floorplan_topology(floorplan),
+                "compiled_topology": compiled_topology,
+                "spatial_inference": spatial_inference,
             }
         )
 
@@ -723,6 +749,13 @@ class PDDReplayView(HomeAssistantView):
         )
         cand_norm = parse_yaml_or_dict_to_config(raw_cand)
         merged_cand = {**baseline_cfg, **cand_norm}
+        if "negative_space" in body:
+            merged_cand["negative_space_enabled"] = bool(body["negative_space"])
+        if "baseline_negative_space" in body:
+            baseline_cfg = {
+                **baseline_cfg,
+                "negative_space_enabled": bool(body["baseline_negative_space"]),
+            }
 
         timelines, start_ts, end_ts = await async_fetch_room_history(
             hass=hass,
@@ -1020,6 +1053,99 @@ class PDDNotificationTestView(HomeAssistantView):
         )
 
 
+class PDDTimelineReconstructionView(HomeAssistantView):
+    """Reconstruct a chronological whole-house spatial timeline across all floorplan sensors and cameras."""
+
+    url = "/api/presence_detection_designer/timeline_reconstruction"
+    name = "api:presence_detection_designer:timeline_reconstruction"
+    requires_auth = True
+
+    async def get(self, request: Any) -> Any:
+        """Handle GET /api/presence_detection_designer/timeline_reconstruction?hours=6&negative_space=true."""
+        hass = request.app["hass"]
+        store = await async_get_store(hass)
+        fp = store.get_floorplan()
+
+        query = getattr(request, "query", {}) or {}
+        try:
+            hours = float(query.get("hours", 6.0))
+        except (ValueError, TypeError):
+            hours = 6.0
+
+        raw_ns = query.get("negative_space")
+        if raw_ns is None:
+            neg_space_enabled = bool(store.global_settings.get("negative_space_enabled", True))
+        else:
+            neg_space_enabled = str(raw_ns).strip().lower() not in ("false", "0", "no", "off")
+
+        # Collect all spatial entities across cameras, sub-zones, PIRs, doors, BLE trackers, shades, and room configs
+        house_entities: list[str] = (
+            list(CAMERA_WHOLE_FRAME_ENTITY.values())
+            + list(BLE_TRACKER_ENTITIES)
+            + list(ALL_SHADE_ENTITIES)
+        )
+        for sun_rule in SUNLIT_STATIC_SUBZONES.values():
+            for corr_eid in sun_rule.get("corroborating_entities", ()):
+                if corr_eid and corr_eid not in house_entities:
+                    house_entities.append(corr_eid)
+        for cam in fp.get("cameras", []) or []:
+            for sz in cam.get("sub_zones", []) or []:
+                eid = str(sz.get("entity_id", ""))
+                if eid and eid not in house_entities:
+                    house_entities.append(eid)
+        for sensor in fp.get("sensors", []) or []:
+            eid = str(sensor.get("entity_id", ""))
+            if eid and eid not in house_entities:
+                house_entities.append(eid)
+
+        room_configs: dict[str, dict[str, Any]] = {}
+        extra_cfgs: list[dict[str, Any]] = []
+        domain_data = hass.data.get(DOMAIN, {}) if hasattr(hass, "data") else {}
+        for eid, coord in domain_data.items():
+            if isinstance(coord, RoomPresenceCoordinator):
+                room_configs[eid] = dict(coord.config)
+                extra_cfgs.append(coord.config)
+        for eid, scfg in store.rooms.items():
+            if eid not in room_configs:
+                room_configs[eid] = dict(scfg)
+                extra_cfgs.append(scfg)
+
+        synthetic_cfg = {"trigger_entities": house_entities}
+        raw_timelines, start_ts, end_ts = await async_fetch_room_history(
+            hass=hass,
+            entry_id="house_timeline",
+            config=synthetic_cfg,
+            hours=hours,
+            extra_configs=extra_cfgs,
+        )
+
+        # Also merge any per-room timeline snapshots stored in PDDStore
+        tuple_timelines: dict[str, list[tuple[float, str]]] = {}
+        for eid, pts in raw_timelines.items():
+            tuple_timelines[eid] = [
+                (float(pt["ts"]), str(pt.get("state", "off"))) for pt in (pts or [])
+            ]
+
+        for r_eid in room_configs:
+            for ev in store.get_timeline_events(r_eid):
+                ev_ts = float(ev.get("ts", 0.0))
+                if start_ts <= ev_ts <= end_ts:
+                    ent_map = ev.get("entity_states") or {}
+                    if isinstance(ent_map, dict):
+                        for s_eid, s_val in ent_map.items():
+                            tuple_timelines.setdefault(str(s_eid), []).append((ev_ts, str(s_val)))
+
+        result = reconstruct_house_timeline(
+            floorplan=fp,
+            room_configs=room_configs,
+            entity_timelines=tuple_timelines,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            negative_space_enabled=neg_space_enabled,
+        )
+        return self.json(result)
+
+
 def async_register_views(hass: Any) -> None:
     """Register all HTTP API views for Presence Detection Designer once."""
     if not hass or not hasattr(hass, "http") or not hasattr(hass.http, "register_view"):
@@ -1037,5 +1163,6 @@ def async_register_views(hass: Any) -> None:
         PDDFloorplanView,
         PDDCameraAlignView,
         PDDNotificationTestView,
+        PDDTimelineReconstructionView,
     ):
         hass.http.register_view(view_cls())

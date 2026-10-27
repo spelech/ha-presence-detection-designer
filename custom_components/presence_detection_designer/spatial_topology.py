@@ -78,6 +78,48 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
                 "living_room_bay_windows",
                 "living_room_entry",
             ],
+            "sub_zones": [
+                {
+                    "id": "living_room_couch",
+                    "entity_id": "binary_sensor.living_room_couch_person_occupancy",
+                    "label": "Living Room Couch",
+                    "room": "Living Room",
+                    "x": 170,
+                    "y": 370,
+                    "width": 95,
+                    "height": 115,
+                },
+                {
+                    "id": "living_room_floor",
+                    "entity_id": "binary_sensor.living_room_floor_person_occupancy",
+                    "label": "Living Room Floor",
+                    "room": "Living Room",
+                    "x": 270,
+                    "y": 380,
+                    "width": 90,
+                    "height": 110,
+                },
+                {
+                    "id": "living_room_bay_windows",
+                    "entity_id": "binary_sensor.living_room_bay_windows_person_occupancy",
+                    "label": "Bay Windows",
+                    "room": "Living Room",
+                    "x": 175,
+                    "y": 495,
+                    "width": 140,
+                    "height": 42,
+                },
+                {
+                    "id": "living_room_entry",
+                    "entity_id": "binary_sensor.living_room_entry_person_occupancy",
+                    "label": "Front Entry Archway",
+                    "room": "Front Entry",
+                    "x": 380,
+                    "y": 365,
+                    "width": 70,
+                    "height": 95,
+                },
+            ],
         },
         {
             "floor": "main",
@@ -92,6 +134,28 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "x": 175,
             "y": 135,
             "zones": ["dining_room_table", "rileys_food"],
+            "sub_zones": [
+                {
+                    "id": "dining_room_table",
+                    "entity_id": "binary_sensor.dining_room_table_person_occupancy",
+                    "label": "Dining Table",
+                    "room": "Dining Room",
+                    "x": 185,
+                    "y": 175,
+                    "width": 110,
+                    "height": 110,
+                },
+                {
+                    "id": "rileys_food",
+                    "entity_id": "binary_sensor.rileys_food_person_occupancy",
+                    "label": "Riley's Food Corner",
+                    "room": "Dining Room",
+                    "x": 240,
+                    "y": 128,
+                    "width": 70,
+                    "height": 44,
+                },
+            ],
         },
         {
             "floor": "main",
@@ -111,6 +175,48 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
                 "family_room_floor",
                 "kitchen_island",
             ],
+            "sub_zones": [
+                {
+                    "id": "family_room_couch",
+                    "entity_id": "binary_sensor.family_room_couch_person_occupancy",
+                    "label": "Family Room Couch",
+                    "room": "Family Room",
+                    "x": 665,
+                    "y": 185,
+                    "width": 135,
+                    "height": 120,
+                },
+                {
+                    "id": "family_room_recliner",
+                    "entity_id": "binary_sensor.family_room_recliner_person_occupancy",
+                    "label": "Family Room Recliner",
+                    "room": "Family Room",
+                    "x": 585,
+                    "y": 135,
+                    "width": 80,
+                    "height": 75,
+                },
+                {
+                    "id": "family_room_floor",
+                    "entity_id": "binary_sensor.family_room_floor_person_occupancy",
+                    "label": "Family Room Floor",
+                    "room": "Family Room",
+                    "x": 580,
+                    "y": 215,
+                    "width": 85,
+                    "height": 115,
+                },
+                {
+                    "id": "kitchen_island",
+                    "entity_id": "binary_sensor.kitchen_island_person_occupancy",
+                    "label": "Kitchen Island",
+                    "room": "Kitchen",
+                    "x": 445,
+                    "y": 175,
+                    "width": 110,
+                    "height": 110,
+                },
+            ],
         },
         {
             "floor": "main",
@@ -125,6 +231,18 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "x": 680,
             "y": 390,
             "zones": ["garage_parking"],
+            "sub_zones": [
+                {
+                    "id": "garage_parking",
+                    "entity_id": "binary_sensor.garage_parking_person_occupancy",
+                    "label": "Garage Parking Bay",
+                    "room": "Garage",
+                    "x": 615,
+                    "y": 410,
+                    "width": 140,
+                    "height": 125,
+                }
+            ],
         },
         {
             "floor": "upstairs",
@@ -146,6 +264,58 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
                 "master_bedroom_entryway",
                 "master_bathroom",
             ],
+            "sub_zones": [
+                {
+                    "id": "master_bed",
+                    "entity_id": "binary_sensor.master_bed_person_occupancy",
+                    "label": "Master Bed",
+                    "room": "Master Bedroom",
+                    "x": 145,
+                    "y": 95,
+                    "width": 130,
+                    "height": 130,
+                },
+                {
+                    "id": "master_open_area",
+                    "entity_id": "binary_sensor.master_open_area_person_occupancy",
+                    "label": "Master Open Floor",
+                    "room": "Master Bedroom",
+                    "x": 155,
+                    "y": 240,
+                    "width": 130,
+                    "height": 140,
+                },
+                {
+                    "id": "master_bedroom_walkway",
+                    "entity_id": "binary_sensor.master_bedroom_walkway_person_occupancy",
+                    "label": "Master Walkway",
+                    "room": "Master Bedroom",
+                    "x": 290,
+                    "y": 175,
+                    "width": 65,
+                    "height": 180,
+                },
+                {
+                    "id": "master_bedroom_entryway",
+                    "entity_id": "binary_sensor.master_bedroom_entryway_person_occupancy",
+                    "label": "Master Hallway Entry",
+                    "room": "Master Bedroom",
+                    "x": 315,
+                    "y": 250,
+                    "width": 45,
+                    "height": 60,
+                },
+                {
+                    "id": "master_bathroom",
+                    "entity_id": "binary_sensor.master_bathroom_person_occupancy",
+                    "label": "Master Bath Doorway",
+                    "room": "Master Bathroom",
+                    "x": 340,
+                    "y": 380,
+                    "width": 45,
+                    "height": 60,
+                },
+            ],
         },
         {
             "floor": "upstairs",
@@ -160,6 +330,18 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "x": 550,
             "y": 230,
             "zones": ["nursery_bed"],
+            "sub_zones": [
+                {
+                    "id": "nursery_bed",
+                    "entity_id": "binary_sensor.nursery_bed_person_occupancy",
+                    "label": "Nursery Bed",
+                    "room": "Margot's Room",
+                    "x": 380,
+                    "y": 60,
+                    "width": 120,
+                    "height": 110,
+                }
+            ],
         },
         {
             "floor": "upstairs",
@@ -174,6 +356,48 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "x": 855,
             "y": 525,
             "zones": ["steves_desk", "sim_rig", "office_floor", "office_entryway"],
+            "sub_zones": [
+                {
+                    "id": "steves_desk",
+                    "entity_id": "binary_sensor.steves_desk_person_occupancy",
+                    "label": "Steve's Desk",
+                    "room": "Office",
+                    "x": 725,
+                    "y": 360,
+                    "width": 110,
+                    "height": 95,
+                },
+                {
+                    "id": "sim_rig",
+                    "entity_id": "binary_sensor.sim_rig_person_occupancy",
+                    "label": "Sim Rig",
+                    "room": "Office",
+                    "x": 635,
+                    "y": 410,
+                    "width": 85,
+                    "height": 100,
+                },
+                {
+                    "id": "office_floor",
+                    "entity_id": "binary_sensor.office_floor_person_occupancy",
+                    "label": "Office Center Floor",
+                    "room": "Office",
+                    "x": 655,
+                    "y": 300,
+                    "width": 120,
+                    "height": 95,
+                },
+                {
+                    "id": "office_entryway",
+                    "entity_id": "binary_sensor.office_entryway_person_occupancy",
+                    "label": "Office Doorway",
+                    "room": "Office",
+                    "x": 610,
+                    "y": 260,
+                    "width": 55,
+                    "height": 55,
+                },
+            ],
         },
         {
             "floor": "basement",
@@ -195,6 +419,68 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
                 "basement_play_area_far",
                 "basement_stairwell",
             ],
+            "sub_zones": [
+                {
+                    "id": "basement_theater_couch",
+                    "entity_id": "binary_sensor.basement_theater_couch_person_occupancy",
+                    "label": "Theater Couch",
+                    "room": "Basement Theater",
+                    "x": 650,
+                    "y": 430,
+                    "width": 110,
+                    "height": 90,
+                },
+                {
+                    "id": "basement_theater_playpen",
+                    "entity_id": "binary_sensor.basement_theater_playpen_person_occupancy",
+                    "label": "Theater Playpen",
+                    "room": "Basement Theater",
+                    "x": 645,
+                    "y": 375,
+                    "width": 85,
+                    "height": 55,
+                },
+                {
+                    "id": "basement_theater_floor",
+                    "entity_id": "binary_sensor.basement_theater_floor_person_occupancy",
+                    "label": "Theater Floor",
+                    "room": "Basement Theater",
+                    "x": 635,
+                    "y": 395,
+                    "width": 95,
+                    "height": 85,
+                },
+                {
+                    "id": "basement_bar",
+                    "entity_id": "binary_sensor.basement_bar_person_occupancy",
+                    "label": "Basement Wet Bar",
+                    "room": "Basement Play Area",
+                    "x": 520,
+                    "y": 360,
+                    "width": 110,
+                    "height": 95,
+                },
+                {
+                    "id": "basement_play_area_far",
+                    "entity_id": "binary_sensor.basement_play_area_far_person_occupancy",
+                    "label": "Play Area East",
+                    "room": "Basement Play Area",
+                    "x": 440,
+                    "y": 280,
+                    "width": 160,
+                    "height": 140,
+                },
+                {
+                    "id": "basement_stairwell",
+                    "entity_id": "binary_sensor.basement_stairwell_person_occupancy",
+                    "label": "Basement Stairwell",
+                    "room": "Basement Play Area",
+                    "x": 535,
+                    "y": 450,
+                    "width": 95,
+                    "height": 75,
+                },
+            ],
         },
         {
             "floor": "basement",
@@ -210,6 +496,38 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "x": 235,
             "y": 520,
             "zones": ["basement_play_floor", "basement_counter", "theater_rear_view"],
+            "sub_zones": [
+                {
+                    "id": "basement_play_floor",
+                    "entity_id": "binary_sensor.basement_play_floor_person_occupancy",
+                    "label": "Play Area Main Floor",
+                    "room": "Basement Play Area",
+                    "x": 260,
+                    "y": 240,
+                    "width": 220,
+                    "height": 220,
+                },
+                {
+                    "id": "basement_counter",
+                    "entity_id": "binary_sensor.basement_counter_person_occupancy",
+                    "label": "Play Area North Counter",
+                    "room": "Basement Play Area",
+                    "x": 250,
+                    "y": 70,
+                    "width": 180,
+                    "height": 120,
+                },
+                {
+                    "id": "theater_rear_view",
+                    "entity_id": "binary_sensor.theater_rear_view_person_occupancy",
+                    "label": "Theater Rear View",
+                    "room": "Basement Theater",
+                    "x": 635,
+                    "y": 380,
+                    "width": 110,
+                    "height": 110,
+                },
+            ],
         },
         {
             "floor": "basement",
@@ -224,6 +542,316 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "x": 650,
             "y": 55,
             "zones": ["storage_room_workout"],
+            "sub_zones": [
+                {
+                    "id": "storage_room_workout",
+                    "entity_id": "binary_sensor.storage_room_workout_person_occupancy",
+                    "label": "Gym / Workout Mat",
+                    "room": "Storage Room",
+                    "x": 645,
+                    "y": 75,
+                    "width": 125,
+                    "height": 135,
+                }
+            ],
+        },
+    ],
+    "sensors": [
+        {
+            "id": "binary_sensor.family_room_motion",
+            "entity_id": "binary_sensor.family_room_motion",
+            "name": "Family Room PIR (Ring)",
+            "sensor_type": "pir_motion",
+            "floor": "main",
+            "host_room": "Family Room",
+            "x": 825,
+            "y": 350,
+            "heading_deg": 225,
+            "fov_deg": 90,
+            "range_px": 260,
+        },
+        {
+            "id": "binary_sensor.family_room_motion_4",
+            "entity_id": "binary_sensor.family_room_motion_4",
+            "name": "Family/Kitchen PIR (Ecobee)",
+            "sensor_type": "pir_motion",
+            "floor": "main",
+            "host_room": "Family Room",
+            "x": 575,
+            "y": 145,
+            "heading_deg": 170,
+            "fov_deg": 110,
+            "range_px": 230,
+        },
+        {
+            "id": "binary_sensor.thermostat_motion",
+            "entity_id": "binary_sensor.thermostat_motion",
+            "name": "Main Thermostat PIR",
+            "sensor_type": "pir_motion",
+            "floor": "main",
+            "host_room": "Dining Room",
+            "x": 310,
+            "y": 220,
+            "heading_deg": 180,
+            "fov_deg": 110,
+            "range_px": 180,
+        },
+        {
+            "id": "binary_sensor.keypad_motion",
+            "entity_id": "binary_sensor.keypad_motion",
+            "name": "Front Entry Keypad PIR",
+            "sensor_type": "pir_motion",
+            "floor": "main",
+            "host_room": "Front Entry",
+            "x": 415,
+            "y": 525,
+            "heading_deg": 300,
+            "fov_deg": 100,
+            "range_px": 170,
+        },
+        {
+            "id": "binary_sensor.ratgdov25i_47a250_motion",
+            "entity_id": "binary_sensor.ratgdov25i_47a250_motion",
+            "name": "Garage Opener PIR",
+            "sensor_type": "pir_motion",
+            "floor": "main",
+            "host_room": "Garage",
+            "x": 700,
+            "y": 400,
+            "heading_deg": 90,
+            "fov_deg": 100,
+            "range_px": 170,
+        },
+        {
+            "id": "binary_sensor.master_bedroom_motion",
+            "entity_id": "binary_sensor.master_bedroom_motion",
+            "name": "Master Bedroom PIR (Ecobee)",
+            "sensor_type": "pir_motion",
+            "floor": "upstairs",
+            "host_room": "Master Bedroom",
+            "x": 150,
+            "y": 280,
+            "heading_deg": 0,
+            "fov_deg": 110,
+            "range_px": 220,
+        },
+        {
+            "id": "binary_sensor.nursery_motion",
+            "entity_id": "binary_sensor.nursery_motion",
+            "name": "Nursery PIR (Ecobee)",
+            "sensor_type": "pir_motion",
+            "floor": "upstairs",
+            "host_room": "Margot's Room",
+            "x": 380,
+            "y": 230,
+            "heading_deg": 315,
+            "fov_deg": 110,
+            "range_px": 210,
+        },
+        {
+            "id": "binary_sensor.guest_room_motion",
+            "entity_id": "binary_sensor.guest_room_motion",
+            "name": "Guest Room PIR (Ecobee)",
+            "sensor_type": "pir_motion",
+            "floor": "upstairs",
+            "host_room": "Guest Room",
+            "x": 850,
+            "y": 55,
+            "heading_deg": 140,
+            "fov_deg": 110,
+            "range_px": 240,
+        },
+        {
+            "id": "binary_sensor.office_motion",
+            "entity_id": "binary_sensor.office_motion",
+            "name": "Office PIR (Ecobee)",
+            "sensor_type": "pir_motion",
+            "floor": "upstairs",
+            "host_room": "Office",
+            "x": 850,
+            "y": 275,
+            "heading_deg": 145,
+            "fov_deg": 110,
+            "range_px": 230,
+        },
+        {
+            "id": "binary_sensor.upper_level_keypad_motion",
+            "entity_id": "binary_sensor.upper_level_keypad_motion",
+            "name": "Upstairs Hallway Keypad PIR",
+            "sensor_type": "pir_motion",
+            "floor": "upstairs",
+            "host_room": "Upstairs Hallway & Stairs",
+            "x": 485,
+            "y": 260,
+            "heading_deg": 90,
+            "fov_deg": 120,
+            "range_px": 150,
+        },
+        {
+            "id": "binary_sensor.motion_detector_basement1",
+            "entity_id": "binary_sensor.motion_detector_basement1",
+            "name": "Basement Theater PIR (Ring)",
+            "sensor_type": "pir_motion",
+            "floor": "basement",
+            "host_room": "Basement Theater",
+            "x": 765,
+            "y": 385,
+            "heading_deg": 140,
+            "fov_deg": 100,
+            "range_px": 200,
+        },
+        {
+            "id": "binary_sensor.motion_sensor_gen2_motion_detection",
+            "entity_id": "binary_sensor.motion_sensor_gen2_motion_detection",
+            "name": "Basement Play Area PIR (Z-Wave)",
+            "sensor_type": "pir_motion",
+            "floor": "basement",
+            "host_room": "Basement Play Area",
+            "x": 235,
+            "y": 60,
+            "heading_deg": 45,
+            "fov_deg": 105,
+            "range_px": 300,
+        },
+        {
+            "id": "binary_sensor.basement_motion",
+            "entity_id": "binary_sensor.basement_motion",
+            "name": "Basement PIR (Ecobee)",
+            "sensor_type": "pir_motion",
+            "floor": "basement",
+            "host_room": "Basement Play Area",
+            "x": 420,
+            "y": 515,
+            "heading_deg": 270,
+            "fov_deg": 110,
+            "range_px": 260,
+        },
+        {
+            "id": "binary_sensor.motion_utility_room",
+            "entity_id": "binary_sensor.motion_utility_room",
+            "name": "Storage / Gym PIR",
+            "sensor_type": "pir_motion",
+            "floor": "basement",
+            "host_room": "Storage Room",
+            "x": 765,
+            "y": 55,
+            "heading_deg": 135,
+            "fov_deg": 100,
+            "range_px": 180,
+        },
+        {
+            "id": "binary_sensor.front_door",
+            "entity_id": "binary_sensor.front_door",
+            "name": "Front Door Contact",
+            "sensor_type": "door_contact",
+            "floor": "main",
+            "host_room": "Front Entry",
+            "door_id": "door_front_entry",
+            "x": 477,
+            "y": 545,
+        },
+        {
+            "id": "binary_sensor.utility_room_door",
+            "entity_id": "binary_sensor.utility_room_door",
+            "name": "Laundry / Garage Door Contact",
+            "sensor_type": "door_contact",
+            "floor": "main",
+            "host_room": "Family Room",
+            "door_id": "door_fr_laundry",
+            "x": 625,
+            "y": 370,
+        },
+        {
+            "id": "binary_sensor.back_door",
+            "entity_id": "binary_sensor.back_door",
+            "name": "Back Patio Door Contact",
+            "sensor_type": "door_contact",
+            "floor": "main",
+            "host_room": "Kitchen",
+            "x": 520,
+            "y": 120,
+        },
+        {
+            "id": "binary_sensor.garage_side_door",
+            "entity_id": "binary_sensor.garage_side_door",
+            "name": "Garage Side Door Contact",
+            "sensor_type": "door_contact",
+            "floor": "main",
+            "host_room": "Garage",
+            "x": 845,
+            "y": 450,
+        },
+        {
+            "id": "cover.garage_door",
+            "entity_id": "cover.garage_door",
+            "name": "Garage Roll-Up Door",
+            "sensor_type": "door_contact",
+            "floor": "main",
+            "host_room": "Garage",
+            "x": 705,
+            "y": 545,
+        },
+    ],
+    "ble_proxies": [
+        {
+            "id": "living_room_speaker",
+            "entity_id": "sensor.living_room_speaker_bluetooth_proxy_status",
+            "name": "Living Room Speaker BLE Proxy",
+            "floor": "main",
+            "host_room": "Living Room",
+            "x": 260,
+            "y": 435,
+            "radius_px": 190,
+        },
+        {
+            "id": "family_room_speaker",
+            "entity_id": "sensor.family_room_speaker_bluetooth_proxy_status",
+            "name": "Family Room Speaker BLE Proxy",
+            "floor": "main",
+            "host_room": "Family Room",
+            "x": 710,
+            "y": 240,
+            "radius_px": 210,
+        },
+        {
+            "id": "master_bedroom_speaker",
+            "entity_id": "sensor.master_bedroom_speaker_bluetooth_proxy_status",
+            "name": "Master Bedroom Speaker BLE Proxy",
+            "floor": "upstairs",
+            "host_room": "Master Bedroom",
+            "x": 230,
+            "y": 180,
+            "radius_px": 210,
+        },
+        {
+            "id": "nursery_speaker",
+            "entity_id": "sensor.nursery_speaker_bluetooth_proxy_status",
+            "name": "Nursery Speaker BLE Proxy",
+            "floor": "upstairs",
+            "host_room": "Margot's Room",
+            "x": 480,
+            "y": 135,
+            "radius_px": 180,
+        },
+        {
+            "id": "office_speaker",
+            "entity_id": "sensor.office_speaker_bluetooth_proxy_status",
+            "name": "Office Speaker BLE Proxy",
+            "floor": "upstairs",
+            "host_room": "Office",
+            "x": 745,
+            "y": 395,
+            "radius_px": 195,
+        },
+        {
+            "id": "basement_speaker",
+            "entity_id": "sensor.basement_speaker_bluetooth_proxy_status",
+            "name": "Basement Speaker BLE Proxy",
+            "floor": "basement",
+            "host_room": "Basement Play Area",
+            "x": 450,
+            "y": 310,
+            "radius_px": 260,
         },
     ],
     "canvas": {"height": 600, "width": 1000},
@@ -1132,6 +1760,8 @@ def compile_floorplan_topology(
     rooms_list: list[dict[str, Any]] = list(fp.get("rooms", []) or [])
     connections_list: list[dict[str, Any]] = list(fp.get("connections", []) or [])
     cameras_list: list[dict[str, Any]] = list(fp.get("cameras", []) or [])
+    sensors_list: list[dict[str, Any]] = list(fp.get("sensors", []) or [])
+    ble_proxies_list: list[dict[str, Any]] = list(fp.get("ble_proxies", []) or [])
 
     rooms_by_name: dict[str, dict[str, Any]] = {
         str(r.get("name")): r for r in rooms_list if r.get("name")
@@ -1204,11 +1834,16 @@ def compile_floorplan_topology(
         name: {
             "primary_cameras": [],
             "spillover_cameras": [],
+            "pir_sensors": [],
+            "sub_zones": [],
+            "ble_proxies": [],
             "max_coverage_pct": 0.0,
+            "uncovered_pct": 100.0,
         }
         for name in rooms_by_name
     }
     camera_analysis: list[dict[str, Any]] = []
+    sub_zone_analysis: list[dict[str, Any]] = []
 
     for cam in cameras_list:
         cam_id = str(cam.get("id", ""))
@@ -1246,6 +1881,27 @@ def compile_floorplan_topology(
                         room_coverage[r_name]["max_coverage_pct"], eff_pct
                     )
 
+        sub_zones = list(cam.get("sub_zones", []) or [])
+        for sz in sub_zones:
+            if not isinstance(sz, dict):
+                continue
+            sz_item = {
+                "id": sz.get("id", ""),
+                "camera_id": cam_id,
+                "floor": cam_fl,
+                "entity_id": sz.get("entity_id", ""),
+                "label": sz.get("label", sz.get("id", "")),
+                "room": sz.get("room", host_room),
+                "x": float(sz.get("x", 0)),
+                "y": float(sz.get("y", 0)),
+                "width": float(sz.get("width", 60)),
+                "height": float(sz.get("height", 60)),
+            }
+            sub_zone_analysis.append(sz_item)
+            sz_room = str(sz_item["room"])
+            if sz_room in room_coverage:
+                room_coverage[sz_room]["sub_zones"].append(sz_item)
+
         camera_analysis.append(
             {
                 "camera_id": cam_id,
@@ -1253,11 +1909,103 @@ def compile_floorplan_topology(
                 "host_room": host_room,
                 "floor": cam.get("floor"),
                 "zones": list(cam.get("zones", []) or []),
+                "sub_zones": sub_zones,
                 "spillover_targets": overlaps,
                 "has_multi_room_bleed": len(overlaps) > 0,
                 "visibility_polygon": vis_poly,
             }
         )
+
+    # 3b. Compute PIR motion sensor cones & coverage
+    pir_analysis: list[dict[str, Any]] = []
+    for sensor in sensors_list:
+        if not isinstance(sensor, dict) or sensor.get("sensor_type") != "pir_motion":
+            continue
+        s_id = str(sensor.get("id", ""))
+        s_eid = str(sensor.get("entity_id", s_id))
+        s_host = str(sensor.get("host_room", ""))
+        s_fl = str(sensor.get("floor", ""))
+        segments = floor_segments.get(s_fl, [])
+        vis_poly = compute_camera_visibility_polygon(sensor, segments) if segments else []
+        covered_rooms: list[dict[str, Any]] = []
+        for r_name, r_box in rooms_by_name.items():
+            if str(r_box.get("floor", "")) != s_fl:
+                continue
+            pct = compute_cone_room_overlap_pct(
+                sensor, r_box, grid_steps=8, solid_segments=segments
+            )
+            if r_name == s_host or pct >= 5.0:
+                eff_pct = max(pct, 45.0 if r_name == s_host else pct)
+                covered_rooms.append({"room_name": r_name, "coverage_pct": eff_pct})
+                if r_name in room_coverage:
+                    room_coverage[r_name]["pir_sensors"].append(
+                        {
+                            "id": s_id,
+                            "entity_id": s_eid,
+                            "name": sensor.get("name", s_eid),
+                            "coverage_pct": eff_pct,
+                        }
+                    )
+        pir_analysis.append(
+            {
+                "id": s_id,
+                "entity_id": s_eid,
+                "name": sensor.get("name", s_eid),
+                "host_room": s_host,
+                "floor": s_fl,
+                "x": float(sensor.get("x", 0)),
+                "y": float(sensor.get("y", 0)),
+                "heading_deg": float(sensor.get("heading_deg", 0)),
+                "fov_deg": float(sensor.get("fov_deg", 110)),
+                "range_px": float(sensor.get("range_px", 200)),
+                "covered_rooms": covered_rooms,
+                "visibility_polygon": vis_poly,
+            }
+        )
+
+    # 3c. Compute BLE proxy radial coverage
+    ble_proxy_analysis: list[dict[str, Any]] = []
+    for proxy in ble_proxies_list:
+        if not isinstance(proxy, dict):
+            continue
+        p_id = str(proxy.get("id", ""))
+        p_host = str(proxy.get("host_room", ""))
+        p_fl = str(proxy.get("floor", ""))
+        px = float(proxy.get("x", 0))
+        py = float(proxy.get("y", 0))
+        radius = float(proxy.get("radius_px", 240))
+        reachable_rooms: list[str] = []
+        for r_name, r_box in rooms_by_name.items():
+            if str(r_box.get("floor", "")) != p_fl:
+                continue
+            rx1 = float(r_box.get("x", 0))
+            ry1 = float(r_box.get("y", 0))
+            rx2 = rx1 + float(r_box.get("width", 0))
+            ry2 = ry1 + float(r_box.get("height", 0))
+            closest_x = max(rx1, min(px, rx2))
+            closest_y = max(ry1, min(py, ry2))
+            if math.hypot(px - closest_x, py - closest_y) <= radius:
+                reachable_rooms.append(r_name)
+                if r_name in room_coverage:
+                    room_coverage[r_name]["ble_proxies"].append(
+                        {"id": p_id, "name": proxy.get("name", p_id), "host_room": p_host}
+                    )
+        ble_proxy_analysis.append(
+            {
+                "id": p_id,
+                "name": proxy.get("name", p_id),
+                "area_name": proxy.get("area_name", p_host),
+                "host_room": p_host,
+                "floor": p_fl,
+                "x": px,
+                "y": py,
+                "radius_px": radius,
+                "reachable_rooms": reachable_rooms,
+            }
+        )
+
+    for _r_name, cov in room_coverage.items():
+        cov["uncovered_pct"] = round(max(0.0, 100.0 - float(cov.get("max_coverage_pct", 0.0))), 1)
 
     # 4. Identify spatial ambiguities & blind spots
     ambiguities: list[dict[str, Any]] = []
@@ -1419,6 +2167,9 @@ def compile_floorplan_topology(
         "connected_rooms_map": connected_rooms_map,
         "seal_analysis": seal_analysis,
         "camera_analysis": camera_analysis,
+        "pir_analysis": pir_analysis,
+        "sub_zone_analysis": sub_zone_analysis,
+        "ble_proxy_analysis": ble_proxy_analysis,
         "room_coverage": room_coverage,
         "ambiguities": ambiguities,
         "compiled_room_rules": compiled_room_rules,

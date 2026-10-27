@@ -72,6 +72,35 @@ def collect_room_tracked_entities(config: dict[str, Any]) -> list[str]:
     for obs in build_effective_observations(config):
         _add(obs)
 
+    if config.get("negative_space_enabled"):
+        from .spatial_inference import (
+            BLE_TRACKER_ENTITIES,
+            BLIND_POCKET_DEFINITIONS,
+            CAMERA_WHOLE_FRAME_ENTITY,
+            ROOM_SHADE_ENTITIES,
+            SUNLIT_STATIC_SUBZONES,
+        )
+
+        r_name = str(config.get(CONF_ROOM_NAME, ""))
+        bp = BLIND_POCKET_DEFINITIONS.get(r_name)
+        if bp:
+            for e in bp.get("entry_entities", []):
+                _add(e)
+            for c_id in bp.get("excluding_cameras", []):
+                _add(CAMERA_WHOLE_FRAME_ENTITY.get(c_id))
+            for s_eid in bp.get("excluding_sensors", []):
+                _add(s_eid)
+        for sh_eid in ROOM_SHADE_ENTITIES.get(r_name, ()):
+            _add(sh_eid)
+        for sun_rule in SUNLIT_STATIC_SUBZONES.values():
+            if sun_rule.get("room") == r_name:
+                for corr_eid in sun_rule.get("corroborating_entities", ()):
+                    _add(corr_eid)
+        for wf_eid in CAMERA_WHOLE_FRAME_ENTITY.values():
+            _add(wf_eid)
+        for ble_eid in BLE_TRACKER_ENTITIES:
+            _add(ble_eid)
+
     return seen
 
 
@@ -101,6 +130,10 @@ async def async_fetch_room_history(
                 tracked_eids.append(eid)
 
     timelines: dict[str, list[dict[str, Any]]] = {eid: [] for eid in tracked_eids}
+    shade_eids_set: set[str] = {
+        eid for eid in tracked_eids if eid.startswith("cover.") and "garage" not in eid
+    }
+    non_shade_eids: list[str] = [eid for eid in tracked_eids if eid not in shade_eids_set]
 
     # 1. Query Home Assistant Recorder if available
     if hass and tracked_eids:
@@ -110,35 +143,51 @@ async def async_fetch_room_history(
 
             if type(get_significant_states).__name__ != "MagicMock":
                 rec_inst = get_instance(hass)
-                hist_map = await rec_inst.async_add_executor_job(
-                    get_significant_states,
-                    hass,
-                    start_dt,
-                    now_dt,
-                    tracked_eids,
-                    None,
-                    True,
-                    True,
-                )
-                if isinstance(hist_map, dict):
-                    for eid, states in hist_map.items():
-                        if eid not in timelines:
+                hist_map: dict[str, list[Any]] = {}
+                if non_shade_eids:
+                    res_main = await rec_inst.async_add_executor_job(
+                        get_significant_states,
+                        hass,
+                        start_dt,
+                        now_dt,
+                        non_shade_eids,
+                        None,
+                        True,
+                        True,
+                    )
+                    if isinstance(res_main, dict):
+                        hist_map.update(res_main)
+                if shade_eids_set:
+                    # Fetch full attribute updates (current_position / is_moving) for motorized shades
+                    res_shades = await rec_inst.async_add_executor_job(
+                        get_significant_states,
+                        hass,
+                        start_dt,
+                        now_dt,
+                        sorted(shade_eids_set),
+                        None,
+                        False,
+                        False,
+                    )
+                    if isinstance(res_shades, dict):
+                        hist_map.update(res_shades)
+
+                for eid, states in hist_map.items():
+                    if eid not in timelines:
+                        continue
+                    for st in states or []:
+                        st_val = getattr(st, "state", None)
+                        if not isinstance(st_val, str):
                             continue
-                        for st in states or []:
-                            st_val = getattr(st, "state", None)
-                            if not isinstance(st_val, str):
-                                continue
-                            lc = getattr(st, "last_changed", None) or getattr(
-                                st, "last_updated", None
-                            )
-                            ts_val = lc.timestamp() if hasattr(lc, "timestamp") else start_ts
-                            timelines[eid].append(
-                                {
-                                    "ts": max(start_ts, min(end_ts, float(ts_val))),
-                                    "state": st_val,
-                                    "attributes": dict(getattr(st, "attributes", {}) or {}),
-                                }
-                            )
+                        lc = getattr(st, "last_changed", None) or getattr(st, "last_updated", None)
+                        ts_val = lc.timestamp() if hasattr(lc, "timestamp") else start_ts
+                        timelines[eid].append(
+                            {
+                                "ts": max(start_ts, min(end_ts, float(ts_val))),
+                                "state": st_val,
+                                "attributes": dict(getattr(st, "attributes", {}) or {}),
+                            }
+                        )
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Recorder query unavailable or skipped for %s: %s", entry_id, err)
 
@@ -173,15 +222,52 @@ async def async_fetch_room_history(
 
         pts = sorted(timelines.get(eid) or [], key=lambda x: float(x["ts"]))
         cleaned: list[dict[str, Any]] = []
-        for pt in pts:
-            if not cleaned or cleaned[-1]["state"] != pt["state"]:
-                cleaned.append(
-                    {
-                        "ts": float(pt["ts"]),
-                        "state": str(pt["state"]),
-                        "attributes": pt.get("attributes") or live_attrs,
-                    }
+        if eid in shade_eids_set:
+            prev_pos: Any = None
+            prev_tilt: Any = None
+            for idx, pt in enumerate(pts):
+                ts_val = float(pt["ts"])
+                st_str = str(pt["state"])
+                attrs = pt.get("attributes") or live_attrs
+                pos = attrs.get("current_position")
+                tilt = attrs.get("current_tilt_position")
+                is_mov = (
+                    bool(attrs.get("is_moving"))
+                    or (prev_pos is not None and pos is not None and pos != prev_pos)
+                    or (prev_tilt is not None and tilt is not None and tilt != prev_tilt)
                 )
+                prev_pos = pos if pos is not None else prev_pos
+                prev_tilt = tilt if tilt is not None else prev_tilt
+                eff_state = "moving" if is_mov else st_str
+                if not cleaned or cleaned[-1]["state"] != eff_state:
+                    cleaned.append(
+                        {
+                            "ts": ts_val,
+                            "state": eff_state,
+                            "attributes": attrs,
+                        }
+                    )
+                if eff_state == "moving":
+                    next_ts = float(pts[idx + 1]["ts"]) if (idx + 1) < len(pts) else end_ts
+                    settle_ts = min(end_ts, ts_val + 90.0)
+                    if settle_ts < next_ts:
+                        cleaned.append(
+                            {
+                                "ts": settle_ts,
+                                "state": st_str if st_str != "moving" else "open",
+                                "attributes": attrs,
+                            }
+                        )
+        else:
+            for pt in pts:
+                if not cleaned or cleaned[-1]["state"] != pt["state"]:
+                    cleaned.append(
+                        {
+                            "ts": float(pt["ts"]),
+                            "state": str(pt["state"]),
+                            "attributes": pt.get("attributes") or live_attrs,
+                        }
+                    )
 
         if not cleaned:
             cleaned = [
@@ -315,8 +401,29 @@ def simulate_config_on_timelines(
             )
 
     series: list[dict[str, Any]] = []
+    neg_space_enabled = bool(config.get("negative_space_enabled", False))
+    room_name_str = str(config.get(CONF_ROOM_NAME, "Room"))
+    prev_spatial_frame: dict[str, Any] | None = None
 
     def _evaluate_at(ts: float, changed_eids: set[str]) -> None:
+        nonlocal prev_spatial_frame
+        r_est: dict[str, Any] | None = None
+        shade_excluded_eids: set[str] = set()
+        if neg_space_enabled:
+            from .spatial_inference import evaluate_spatial_frame
+
+            prev_spatial_frame = evaluate_spatial_frame(
+                state_getter=lambda eid: (
+                    current_states[eid].state if eid in current_states else "off"
+                ),
+                prev_frame=prev_spatial_frame,
+                now_ts=ts,
+                negative_space_enabled=True,
+            )
+            r_est = prev_spatial_frame.get("room_estimates", {}).get(room_name_str)
+            if isinstance(r_est, dict):
+                shade_excluded_eids = set(r_est.get("shade_sunlight_excluded_entities", []) or [])
+
         # 1. Boundaries
         for b_eid in boundaries:
             st_obj = current_states.get(b_eid)
@@ -328,7 +435,9 @@ def simulate_config_on_timelines(
         for t_eid in triggers:
             st_obj = current_states.get(t_eid)
             if st_obj is not None:
-                is_active = st_obj.state in ("on", "playing", "home")
+                is_active = (
+                    st_obj.state in ("on", "playing", "home") and t_eid not in shade_excluded_eids
+                )
                 if is_active or t_eid in changed_eids:
                     sm.handle_trigger(t_eid, is_active)
 
@@ -339,13 +448,40 @@ def simulate_config_on_timelines(
         )
         sm.handle_conditions(any_cond, cond_descs)
 
-        # 4. Bayesian evaluation
+        # 4. Bayesian evaluation (with optional negative-space spatial inference)
         active_labels: list[str] = []
         active_eids: list[str] = []
         if bayesian_enabled:
+            obs_to_eval = list(observations)
+            virtual_neg_eid = "__spatial_negative_space__"
+            has_neg_boost = False
+            if (
+                neg_space_enabled
+                and isinstance(r_est, dict)
+                and float(r_est.get("probability_boost", 0.0)) > 0.0
+            ):
+                has_neg_boost = True
+                obs_to_eval.append(
+                    {
+                        "entity_id": virtual_neg_eid,
+                        "prob_given_true": 0.85,
+                        "prob_given_false": 0.12,
+                        "target_state": "on",
+                        "label": r_est.get("inferred_subregion")
+                        or "Negative-Space Spatial Exclusion",
+                    }
+                )
+
+            def _sim_state_getter(eid: str) -> Any:
+                if eid == virtual_neg_eid and has_neg_boost:
+                    return _SimStateObj(entity_id=virtual_neg_eid, state="on", attributes={})
+                if eid in shade_excluded_eids:
+                    return _SimStateObj(entity_id=eid, state="off", attributes={})
+                return current_states.get(eid)
+
             evaluation = evaluate_bayesian(
-                observations,
-                lambda eid: current_states.get(eid),
+                obs_to_eval,
+                _sim_state_getter,
                 prior=prior,
                 threshold=threshold,
             )
@@ -356,7 +492,7 @@ def simulate_config_on_timelines(
                 summary=evaluation.natural_language_summary,
                 active_observations=evaluation.active_observations,
                 inactive_observations=evaluation.inactive_observations,
-                trigger_state_machine=has_explicit_bayesian,
+                trigger_state_machine=has_explicit_bayesian or has_neg_boost,
             )
             active_labels = [
                 str(o.get("label", o.get("entity_id"))) for o in evaluation.active_observations

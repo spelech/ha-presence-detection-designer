@@ -40,9 +40,12 @@ CONF_SLACK_CHANNEL = "slack_channel"
 CONF_NOTIFY_SLACK = "notify_slack"
 CONF_NOTIFY_ON_OCCUPIED = "notify_on_occupied"
 CONF_NOTIFY_ON_CLEARED = "notify_on_cleared"
+CONF_NEGATIVE_SPACE_ENABLED = "negative_space_enabled"
 
 DEFAULT_SLACK_NOTIFY_SERVICE = "notify.scdbots"
 DEFAULT_SLACK_CHANNEL = "#presence-alerts"
+DEFAULT_NOTIFY_SLACK = True
+DEFAULT_NEGATIVE_SPACE_ENABLED = True
 
 # Defaults
 DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
