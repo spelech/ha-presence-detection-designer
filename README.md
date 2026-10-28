@@ -1,16 +1,19 @@
 <div align="center">
 
-<img src="brand/logo.png" alt="Presence Detection Designer Logo" width="600" />
+<img src="logo.png" alt="Presence Detection Designer Logo" width="600" />
 
 # Presence Detection Designer (`ha-presence-detection-designer`)
 
 **Intelligent Home Assistant Presence State Machine with Hybrid Wasp-in-a-Box (WIB), Explainable Bayesian Sensor Fusion, Dynamic Sustaining Conditions & Bidirectional AI/LLM Integration.**
 
 [![CI Quality Gate](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml/badge.svg)](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml)
+[![HACS & Hassfest](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/validate.yml/badge.svg)](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/validate.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
 [![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen.svg)](https://github.com/spelech/ha-presence-detection-designer)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=spelech&repository=ha-presence-detection-designer&category=integration)
 
 </div>
 
