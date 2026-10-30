@@ -118,10 +118,11 @@ class PDDStore:
                 isinstance(fl, dict) and fl.get("underlay_svg")
                 for fl in fp_dict.get("floors", []) or []
             )
-            if not has_blueprint:
-                fp_dict["floors"] = copy.deepcopy(default_fp.get("floors", []))
-                fp_dict["rooms"] = copy.deepcopy(default_fp.get("rooms", []))
-                fp_dict["cameras"] = copy.deepcopy(default_fp.get("cameras", []))
+            if not has_blueprint or int(fp_dict.get("version", 0) or 0) < int(
+                default_fp.get("version", 4)
+            ):
+                stored["floorplan"] = copy.deepcopy(default_fp)
+                fp_dict = stored["floorplan"]
                 dirty = True
             for layer_key in ("sensors", "ble_proxies"):
                 if not fp_dict.get(layer_key) and default_fp.get(layer_key):

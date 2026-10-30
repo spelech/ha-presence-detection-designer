@@ -22,6 +22,7 @@ from custom_components.presence_detection_designer.const import (
 )
 from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
 from custom_components.presence_detection_designer.spatial_topology import (
+    DEVICE_MODEL_PRESETS,
     apply_compiled_topology_to_config,
     compile_floorplan_topology,
     compute_camera_visibility_polygon,
@@ -470,3 +471,52 @@ def test_floorplan_multi_sensor_layers_and_compilation():
     # Room coverage tracks uncovered negative-space percentage
     assert "uncovered_pct" in compiled["room_coverage"]["Master Bathroom"]
     assert compiled["room_coverage"]["Master Bathroom"]["uncovered_pct"] >= 50.0
+
+
+def test_calibrated_v4_floorplan_and_device_model_presets():
+    """Verify v4 blueprint calibration, uniform Tapo C110 model presets, and stepped room polygons."""
+    assert "tapo_c110_corner" in DEVICE_MODEL_PRESETS
+    assert DEVICE_MODEL_PRESETS["tapo_c110_corner"]["fov_deg"] == 110
+    assert "tapo_c110_overhead" in DEVICE_MODEL_PRESETS
+    assert DEVICE_MODEL_PRESETS["tapo_c110_overhead"]["fov_deg"] == 164
+
+    fp = get_default_floorplan()
+    assert fp["version"] == 4
+    assert "floor_wall_segments" in fp
+    assert set(fp["floor_wall_segments"].keys()) == {"upstairs", "main", "basement"}
+
+    rooms_by_name = {r["name"]: r for r in fp["rooms"]}
+    for required_room in (
+        "Master W.I.C",
+        "Upstairs Bathroom",
+        "Master Bathroom",
+        "Powder Bath",
+        "Laundry Room",
+    ):
+        assert required_room in rooms_by_name
+
+    # Verify stepped polygons on interlocking rooms
+    assert rooms_by_name["Upstairs Bathroom"].get("svg_path", "").startswith("M ")
+    assert rooms_by_name["Master Bathroom"].get("svg_path", "").startswith("M ")
+    assert rooms_by_name["Margot's Room"].get("svg_path", "").startswith("M ")
+    assert rooms_by_name["Guest Room"].get("svg_path", "").startswith("M ")
+
+    # Verify uniform Tapo C110 camera presets (9 corner @ 110 deg + 1 high overhead garage @ 164 deg)
+    cams_by_id = {c["id"]: c for c in fp["cameras"]}
+    assert len(cams_by_id) == 10
+    for cid, cam in cams_by_id.items():
+        if cid == "camera.garage":
+            assert cam["model_preset"] == "tapo_c110_overhead"
+            assert cam["fov_deg"] == 164
+        else:
+            assert cam["model_preset"] == "tapo_c110_corner"
+            assert cam["fov_deg"] == 110
+
+    # Verify Family Room camera does not leak through solid wall into Laundry Room
+    compiled = compile_floorplan_topology(fp)
+    fr_cam = next(
+        ca for ca in compiled["camera_analysis"] if ca["camera_id"] == "camera.family_room"
+    )
+    spill_rooms = {t["room_name"] for t in fr_cam["spillover_targets"]}
+    assert "Kitchen" in spill_rooms
+    assert "Laundry Room" not in spill_rooms
