@@ -520,3 +520,57 @@ def test_calibrated_v4_floorplan_and_device_model_presets():
     spill_rooms = {t["room_name"] for t in fr_cam["spillover_targets"]}
     assert "Kitchen" in spill_rooms
     assert "Laundry Room" not in spill_rooms
+
+
+def test_ikea_vallhorn_and_wyze_sense_presets_and_dual_lobe_raycast():
+    """Verify IKEA VALLHORN dual-lobe PIR and Wyze Sense PIR/Contact hardware presets."""
+    import math
+
+    from custom_components.presence_detection_designer.spatial_topology import (
+        DEVICE_MODEL_PRESETS,
+        compute_camera_visibility_polygon,
+    )
+
+    assert "ikea_vallhorn_pir" in DEVICE_MODEL_PRESETS
+    vallhorn = DEVICE_MODEL_PRESETS["ikea_vallhorn_pir"]
+    assert vallhorn["fov_deg"] == 120
+    assert vallhorn["default_range_px"] == 260
+    assert vallhorn["inner_fov_deg"] == 60
+    assert vallhorn["inner_range_px"] == 520
+    assert vallhorn["range_m"] == 5.0
+    assert vallhorn["inner_range_m"] == 10.0
+
+    assert "wyze_sense_pir" in DEVICE_MODEL_PRESETS
+    wyze_pir = DEVICE_MODEL_PRESETS["wyze_sense_pir"]
+    assert wyze_pir["fov_deg"] == 120
+    assert wyze_pir["default_range_px"] == 405
+    assert wyze_pir["range_ft"] == 25.5
+
+    assert "wyze_sense_contact" in DEVICE_MODEL_PRESETS
+    wyze_contact = DEVICE_MODEL_PRESETS["wyze_sense_contact"]
+    assert wyze_contact["category"] == "door_contact"
+    assert wyze_contact["actuation_gap_mm"] == 20
+
+    # Verify dual-lobe raycast for IKEA VALLHORN in an unoccluded space
+    sensor = {
+        "x": 100,
+        "y": 100,
+        "heading_deg": 0,
+        "fov_deg": 120,
+        "range_px": 260,
+        "model_preset": "ikea_vallhorn_pir",
+    }
+    poly = compute_camera_visibility_polygon(sensor, [])
+    dists = [math.hypot(px - 100.0, py - 100.0) for px, py in poly[1:]]
+    assert max(dists) > 515.0  # 60° center beam reaches 520px (10m)
+    assert min(dists) < 265.0  # 120° peripheral wings reach 260px (5m)
+
+    # Verify Basement Wyze Sense PIR sensors use wyze_sense_pir preset
+    fp = get_default_floorplan()
+    sensors_by_id = {s["id"]: s for s in fp["sensors"]}
+    assert (
+        sensors_by_id["binary_sensor.motion_detector_basement1"]["model_preset"] == "wyze_sense_pir"
+    )
+    assert sensors_by_id["binary_sensor.motion_detector_basement1"]["fov_deg"] == 120
+    assert sensors_by_id["binary_sensor.motion_utility_room"]["model_preset"] == "wyze_sense_pir"
+    assert sensors_by_id["binary_sensor.motion_utility_room"]["fov_deg"] == 120
