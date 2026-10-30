@@ -139,6 +139,28 @@ class PDDStore:
                 ):
                     cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
                     dirty = True
+            # Synchronize hardware model presets on default sensors
+            default_sens = {s["id"]: s for s in default_fp.get("sensors", []) if s.get("id")}
+            for sen in fp_dict.get("sensors", []):
+                sid = sen.get("id")
+                if sid in default_sens:
+                    ds = default_sens[sid]
+                    if not sen.get("model_preset") and ds.get("model_preset"):
+                        sen["model_preset"] = ds["model_preset"]
+                        dirty = True
+                    elif (
+                        sid
+                        in (
+                            "binary_sensor.motion_detector_basement1",
+                            "binary_sensor.motion_utility_room",
+                        )
+                        and sen.get("model_preset") == "ring_alarm_pir_gen2"
+                    ):
+                        sen["model_preset"] = ds["model_preset"]
+                        sen["name"] = ds["name"]
+                        sen["fov_deg"] = ds["fov_deg"]
+                        sen["range_px"] = ds["range_px"]
+                        dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
             if k not in stored["global_settings"]:
