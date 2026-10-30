@@ -67,7 +67,9 @@ DEVICE_MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "tapo_c110_corner": {
         "id": "tapo_c110_corner",
         "name": "TP-Link Tapo C110 (Corner / Wall Mount)",
+        "label": "TP-Link Tapo C110 (Corner / Wall Mount)",
         "category": "camera",
+        "device_type": "camera",
         "fov_deg": 110,
         "horizontal_fov_deg": 110,
         "vertical_fov_deg": 62,
@@ -78,7 +80,9 @@ DEVICE_MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "tapo_c110_overhead": {
         "id": "tapo_c110_overhead",
         "name": "TP-Link Tapo C110 (High Steep Downward Pitch)",
+        "label": "TP-Link Tapo C110 (High Steep Downward Pitch)",
         "category": "camera",
+        "device_type": "camera",
         "fov_deg": 164,
         "horizontal_fov_deg": 110,
         "vertical_fov_deg": 62,
@@ -89,7 +93,9 @@ DEVICE_MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "reolink_rlc_810a": {
         "id": "reolink_rlc_810a",
         "name": "Reolink RLC-810A / PoE Bullet (87° FOV)",
+        "label": "Reolink RLC-810A / PoE Bullet (87° FOV)",
         "category": "camera",
+        "device_type": "camera",
         "fov_deg": 87,
         "horizontal_fov_deg": 87,
         "vertical_fov_deg": 47,
@@ -100,7 +106,9 @@ DEVICE_MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "unifi_g4_instant": {
         "id": "unifi_g4_instant",
         "name": "UniFi Protect G4/G5 Instant (102° FOV)",
+        "label": "UniFi Protect G4/G5 Instant (102° FOV)",
         "category": "camera",
+        "device_type": "camera",
         "fov_deg": 102,
         "horizontal_fov_deg": 102,
         "vertical_fov_deg": 55,
@@ -111,55 +119,170 @@ DEVICE_MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "ecobee_smart_sensor": {
         "id": "ecobee_smart_sensor",
         "name": "Ecobee SmartSensor (110° Thermal PIR)",
+        "label": "Ecobee SmartSensor (110° Thermal PIR)",
         "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "ecobee",
+        "model": "SmartSensor / Room Sensor",
         "fov_deg": 110,
         "default_range_px": 230,
-        "description": "110° horizontal thermal PIR occupancy/motion sensor.",
+        "range_ft": 15.0,
+        "range_m": 4.5,
+        "cooldown_sec": 1800,
+        "description": "110° horizontal thermal PIR occupancy/motion sensor (15 ft / 4.5 m range).",
+    },
+    "ikea_vallhorn_pir": {
+        "id": "ikea_vallhorn_pir",
+        "name": "IKEA VALLHORN Wireless Motion Sensor (120°/5m + 60°/10m Dual-Lobe PIR)",
+        "label": "IKEA VALLHORN Wireless Motion Sensor (120°/5m + 60°/10m)",
+        "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "IKEA of Sweden",
+        "model": "VALLHORN E2134 (405.043.48)",
+        "fov_deg": 120,
+        "default_range_px": 260,
+        "inner_fov_deg": 60,
+        "inner_range_px": 520,
+        "range_ft": 16.4,
+        "range_m": 5.0,
+        "inner_range_ft": 32.8,
+        "inner_range_m": 10.0,
+        "cooldown_sec": 60,
+        "description": "Zigbee 3.0 dual-lobe Fresnel PIR: 120° wide-angle peripheral zone to 5m (16.4 ft / 260px) plus 60° center beam reaching 10m (32.8 ft / 520px).",
+    },
+    "wyze_sense_pir": {
+        "id": "wyze_sense_pir",
+        "name": "Wyze Sense Motion Sensor v1 (120° Wide PIR, 26 ft / 7.8m)",
+        "label": "Wyze Sense Motion Sensor v1 (120° PIR, 26 ft)",
+        "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "Wyze",
+        "model": "WYZESENSE-PIR (WYZEMS1)",
+        "fov_deg": 120,
+        "default_range_px": 405,
+        "range_ft": 25.5,
+        "range_m": 7.8,
+        "mount_pitch_deg": 12,
+        "cooldown_sec": 45,
+        "description": "915MHz ultra-compact 120° wide-angle PIR motion sensor with downward-slanted Fresnel lens and 25-26 ft (7.8m / 405px) range.",
     },
     "ring_alarm_pir_gen2": {
         "id": "ring_alarm_pir_gen2",
         "name": "Ring Alarm Motion Detector Gen 2 (90° PIR)",
+        "label": "Ring Alarm Motion Detector Gen 2 (90° PIR)",
         "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "Ring",
+        "model": "4SP1SZ (Gen 2 Z-Wave)",
         "fov_deg": 90,
         "default_range_px": 260,
+        "range_ft": 16.5,
+        "range_m": 5.0,
+        "cooldown_sec": 60,
         "description": "90° corner/wall Z-Wave PIR motion detector.",
     },
     "ring_keypad_pir": {
         "id": "ring_keypad_pir",
         "name": "Ring Alarm Keypad Proximity PIR (100°)",
+        "label": "Ring Alarm Keypad Proximity PIR (100°)",
         "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "Ring",
+        "model": "4AK1SZ Keypad",
         "fov_deg": 100,
         "default_range_px": 165,
+        "range_ft": 10.5,
+        "range_m": 3.2,
+        "cooldown_sec": 30,
         "description": "Short-range proximity PIR built into wall keypad.",
     },
     "aqara_fp2_mmwave": {
         "id": "aqara_fp2_mmwave",
         "name": "Aqara FP2 60GHz mmWave Radar (120°)",
+        "label": "Aqara FP2 60GHz mmWave Radar (120°)",
         "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "Aqara",
+        "model": "PS-S02D (FP2)",
         "fov_deg": 120,
         "default_range_px": 340,
+        "range_ft": 21.5,
+        "range_m": 6.5,
+        "cooldown_sec": 5,
         "description": "Wide 120° multi-zone 60GHz mmWave radar presence sensor.",
     },
     "apollo_msr_2": {
         "id": "apollo_msr_2",
         "name": "Apollo MSR-2 / LD2410 mmWave (110°)",
+        "label": "Apollo MSR-2 / LD2410 mmWave (110°)",
         "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "Apollo Automation",
+        "model": "MSR-2 (HLK-LD2410B)",
         "fov_deg": 110,
         "default_range_px": 300,
+        "range_ft": 19.0,
+        "range_m": 5.8,
+        "cooldown_sec": 5,
         "description": "24GHz mmWave radar presence sensor.",
     },
     "ratgdo_pir": {
         "id": "ratgdo_pir",
         "name": "ratgdo v2.5i Garage Opener PIR (100°)",
+        "label": "ratgdo v2.5i Garage Opener PIR (100°)",
         "category": "pir_motion",
+        "device_type": "pir_motion",
+        "manufacturer": "ratgdo",
+        "model": "v2.5i Security+ Wall Panel",
         "fov_deg": 100,
         "default_range_px": 175,
+        "range_ft": 11.0,
+        "range_m": 3.4,
+        "cooldown_sec": 60,
         "description": "Garage door wall control panel motion sensor.",
+    },
+    "wyze_sense_contact": {
+        "id": "wyze_sense_contact",
+        "name": "Wyze Sense Contact Sensor v1 (915MHz Magnetic Reed)",
+        "label": "Wyze Sense Contact Sensor v1 (915MHz Reed)",
+        "category": "door_contact",
+        "device_type": "door_contact",
+        "manufacturer": "Wyze",
+        "model": "WYZESENSE-CONTACT (WYZEC1)",
+        "actuation_gap_mm": 20,
+        "response_ms": 150,
+        "description": "Ultra-compact 915MHz magnetic door/window reed contact sensor (<=20mm actuation gap) via WyzeSense2MQTT bridge.",
+    },
+    "ring_contact_sensor": {
+        "id": "ring_contact_sensor",
+        "name": "Ring Alarm Contact Sensor Gen 2 (Z-Wave Reed)",
+        "label": "Ring Alarm Contact Sensor Gen 2 (Z-Wave)",
+        "category": "door_contact",
+        "device_type": "door_contact",
+        "manufacturer": "Ring",
+        "model": "5AT2S2 (Gen 2 Z-Wave)",
+        "actuation_gap_mm": 25,
+        "response_ms": 200,
+        "description": "Z-Wave perimeter door and window magnetic reed contact sensor.",
+    },
+    "ikea_parasoll_contact": {
+        "id": "ikea_parasoll_contact",
+        "name": "IKEA PARASOLL Door/Window Sensor (Zigbee 3.0 Reed)",
+        "label": "IKEA PARASOLL Door/Window Sensor (Zigbee 3.0)",
+        "category": "door_contact",
+        "device_type": "door_contact",
+        "manufacturer": "IKEA of Sweden",
+        "model": "PARASOLL E2013",
+        "actuation_gap_mm": 15,
+        "response_ms": 150,
+        "description": "Slim Zigbee 3.0 magnetic door/window contact sensor powered by 1x AAA battery.",
     },
     "google_home_speaker_ble": {
         "id": "google_home_speaker_ble",
         "name": "Google Home / Nest Speaker BLE Proxy",
+        "label": "Google Home / Nest Speaker BLE Proxy",
         "category": "ble_proxy",
+        "device_type": "ble_proxy",
         "radius_px": 210,
         "description": "Indoor smart speaker Bluetooth Low Energy RSSI anchor.",
     },
@@ -943,16 +1066,16 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
         {
             "id": "binary_sensor.motion_detector_basement1",
             "entity_id": "binary_sensor.motion_detector_basement1",
-            "name": "Basement Theater PIR (Ring)",
+            "name": "Basement Theater PIR (Wyze Sense)",
             "sensor_type": "pir_motion",
-            "model_preset": "ring_alarm_pir_gen2",
+            "model_preset": "wyze_sense_pir",
             "floor": "basement",
             "host_room": "Basement Theater",
             "x": 108,
             "y": 465,
             "heading_deg": 315,
-            "fov_deg": 90,
-            "range_px": 260,
+            "fov_deg": 120,
+            "range_px": 405,
         },
         {
             "id": "binary_sensor.motion_sensor_gen2_motion_detection",
@@ -985,22 +1108,23 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
         {
             "id": "binary_sensor.motion_utility_room",
             "entity_id": "binary_sensor.motion_utility_room",
-            "name": "Storage / Gym PIR",
+            "name": "Storage / Gym PIR (Wyze Sense)",
             "sensor_type": "pir_motion",
-            "model_preset": "ring_alarm_pir_gen2",
+            "model_preset": "wyze_sense_pir",
             "floor": "basement",
             "host_room": "Storage Room",
             "x": 710,
             "y": 58,
             "heading_deg": 45,
-            "fov_deg": 90,
-            "range_px": 220,
+            "fov_deg": 120,
+            "range_px": 405,
         },
         {
             "id": "binary_sensor.front_door",
             "entity_id": "binary_sensor.front_door",
             "name": "Front Door Contact",
             "sensor_type": "door_contact",
+            "model_preset": "ring_contact_sensor",
             "floor": "main",
             "host_room": "Front Entry",
             "door_id": "door_front_entry",
@@ -1012,6 +1136,7 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "entity_id": "binary_sensor.utility_room_door",
             "name": "Laundry / Garage Door Contact",
             "sensor_type": "door_contact",
+            "model_preset": "ring_contact_sensor",
             "floor": "main",
             "host_room": "Laundry Room",
             "door_id": "door_fr_laundry",
@@ -1023,6 +1148,7 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "entity_id": "binary_sensor.back_door",
             "name": "Back Patio Door Contact",
             "sensor_type": "door_contact",
+            "model_preset": "ring_contact_sensor",
             "floor": "main",
             "host_room": "Kitchen",
             "x": 475,
@@ -1033,6 +1159,7 @@ DEFAULT_HOUSE_FLOORPLAN: dict[str, Any] = {
             "entity_id": "binary_sensor.garage_side_door",
             "name": "Garage Side Door Contact",
             "sensor_type": "door_contact",
+            "model_preset": "ring_contact_sensor",
             "floor": "main",
             "host_room": "Garage",
             "x": 832,
@@ -1966,12 +2093,18 @@ def compute_camera_visibility_polygon(
     solid_segments: list[tuple[tuple[float, float], tuple[float, float]]],
     step_deg: float = 1.5,
 ) -> list[tuple[float, float]]:
-    """Compute 2D visibility polygon vertices for camera origin occluded by solid wall segments."""
+    """Compute 2D visibility polygon vertices for camera/PIR origin occluded by solid wall segments."""
     cx = float(cam.get("x", 0))
     cy = float(cam.get("y", 0))
     heading = float(cam.get("heading_deg", 0))
     fov = max(5.0, min(360.0, float(cam.get("fov_deg", 90))))
     reach = max(10.0, float(cam.get("range_px", 200)))
+
+    preset = DEVICE_MODEL_PRESETS.get(str(cam.get("model_preset") or "")) or {}
+    inner_fov = float(cam.get("inner_fov_deg") or preset.get("inner_fov_deg") or 0.0)
+    inner_reach = float(cam.get("inner_range_px") or preset.get("inner_range_px") or 0.0)
+    has_dual_lobe = 0.0 < inner_fov < fov and inner_reach > reach
+    max_reach = max(reach, inner_reach) if has_dual_lobe else reach
 
     start_deg = heading - fov / 2.0
     end_deg = heading + fov / 2.0
@@ -1981,12 +2114,20 @@ def compute_camera_visibility_polygon(
     for i in range(num_steps + 1):
         angles.add(round(start_deg + (i / num_steps) * fov, 4))
 
+    if has_dual_lobe:
+        lobe_left = heading - inner_fov / 2.0
+        lobe_right = heading + inner_fov / 2.0
+        for edge_deg in (lobe_left, lobe_right):
+            angles.add(round(edge_deg - 0.05, 4))
+            angles.add(round(edge_deg, 4))
+            angles.add(round(edge_deg + 0.05, 4))
+
     for (x1, y1), (x2, y2) in solid_segments:
         for px, py in ((x1, y1), (x2, y2)):
             dx = px - cx
             dy = py - cy
             dist = math.hypot(dx, dy)
-            if dist < 1e-3 or dist > reach * 1.5:
+            if dist < 1e-3 or dist > max_reach * 1.5:
                 continue
             deg = math.degrees(math.atan2(dy, dx))
             diff = (deg - heading + 180.0) % 360.0 - 180.0
@@ -2002,7 +2143,12 @@ def compute_camera_visibility_polygon(
         rad = math.radians(deg)
         dx = math.cos(rad)
         dy = math.sin(rad)
-        min_t = reach
+        ray_reach = (
+            inner_reach
+            if (has_dual_lobe and abs(deg - heading) <= (inner_fov / 2.0) + 1e-3)
+            else reach
+        )
+        min_t = ray_reach
         for (x1, y1), (x2, y2) in solid_segments:
             t = ray_segment_intersection(cx, cy, dx, dy, x1, y1, x2, y2)
             if t is not None and t < min_t:
@@ -2032,13 +2178,21 @@ def compute_cone_room_overlap_pct(
     fov = float(cam.get("fov_deg", 90))
     reach = float(cam.get("range_px", 300))
 
+    preset = DEVICE_MODEL_PRESETS.get(str(cam.get("model_preset") or "")) or {}
+    inner_fov = float(cam.get("inner_fov_deg") or preset.get("inner_fov_deg") or 0.0)
+    inner_reach = float(cam.get("inner_range_px") or preset.get("inner_range_px") or 0.0)
+    has_dual_lobe = 0.0 < inner_fov < fov and inner_reach > reach
+
     hits = 0
     total = grid_steps * grid_steps
     for ix in range(grid_steps):
         px = rx + (ix + 0.5) * (rw / grid_steps)
         for iy in range(grid_steps):
             py = ry + (iy + 0.5) * (rh / grid_steps)
-            if point_in_cone(px, py, cx, cy, heading, fov, reach):
+            in_cone = point_in_cone(px, py, cx, cy, heading, fov, reach) or (
+                has_dual_lobe and point_in_cone(px, py, cx, cy, heading, inner_fov, inner_reach)
+            )
+            if in_cone:
                 if solid_segments is not None:
                     if not line_segment_intersects_solid_wall(cx, cy, px, py, solid_segments):
                         hits += 1
