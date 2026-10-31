@@ -151,14 +151,15 @@ class PDDStore:
                 dirty = True
             default_sens = {s["id"]: s for s in default_fp.get("sensors", []) if s.get("id")}
             existing_sensor_ids = {s.get("id") for s in fp_dict.get("sensors", [])}
-            if (
-                "binary_sensor.family_room_motion" in default_sens
-                and "binary_sensor.family_room_motion" not in existing_sensor_ids
+            for new_sid in (
+                "binary_sensor.family_room_motion",
+                "binary_sensor.guest_room_motion_occupancy",
             ):
-                fp_dict.setdefault("sensors", []).insert(
-                    1, copy.deepcopy(default_sens["binary_sensor.family_room_motion"])
-                )
-                dirty = True
+                if new_sid in default_sens and new_sid not in existing_sensor_ids:
+                    fp_dict.setdefault("sensors", []).insert(
+                        1, copy.deepcopy(default_sens[new_sid])
+                    )
+                    dirty = True
             for sen in fp_dict.get("sensors", []):
                 sid = sen.get("id")
                 if sid in default_sens:
