@@ -219,6 +219,27 @@ class PDDStore:
                 if rcfg.get(CONF_NOTIFY_ON_CLEARED) is None:
                     rcfg[CONF_NOTIFY_ON_CLEARED] = True
                     dirty = True
+                if rcfg.get("room_name") == "Guest Room":
+                    obs = list(rcfg.get("bayesian_observations") or [])
+                    if not any(
+                        isinstance(o, dict)
+                        and o.get("entity_id") == "binary_sensor.guest_room_motion_occupancy"
+                        for o in obs
+                    ):
+                        obs.insert(
+                            0,
+                            {
+                                "entity_id": "binary_sensor.guest_room_motion_occupancy",
+                                "label": "Guest Room VALLHORN PIR Motion",
+                                "operator": "equals",
+                                "preset": "strong",
+                                "state": "on",
+                                "prob_given_true": 0.90,
+                                "prob_given_false": 0.05,
+                            },
+                        )
+                        rcfg["bayesian_observations"] = obs
+                        dirty = True
 
         # Synchronize existing ConfigEntries into .storage rooms and global_settings
         if (
