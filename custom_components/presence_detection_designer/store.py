@@ -158,12 +158,18 @@ class PDDStore:
                     if not sen.get("model_preset") and ds.get("model_preset"):
                         sen["model_preset"] = ds["model_preset"]
                         dirty = True
-                    if (
-                        sid == "binary_sensor.motion_sensor_gen2_motion_detection"
+                    if sid == "binary_sensor.motion_sensor_gen2_motion_detection" and (
+                        sen.get("range_px") == 260 or sen.get("x") == 525
+                    ):
+                        for k in ("name", "x", "y", "heading_deg", "fov_deg", "range_px"):
+                            sen[k] = ds[k]
+                        dirty = True
+                    elif (
+                        ds.get("model_preset") in ("ecobee_smart_sensor", "ecobee_thermostat_pir")
                         and sen.get("range_px") == 260
                     ):
-                        sen["range_px"] = ds["range_px"]
-                        sen["name"] = ds["name"]
+                        for k in ("model_preset", "fov_deg", "range_px"):
+                            sen[k] = ds[k]
                         dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
