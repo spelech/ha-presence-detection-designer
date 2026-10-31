@@ -551,6 +551,12 @@ def test_ikea_vallhorn_and_wyze_sense_presets_and_dual_lobe_raycast():
     assert wyze_contact["category"] == "door_contact"
     assert wyze_contact["actuation_gap_mm"] == 20
 
+    assert "ring_alarm_pir_gen2" in DEVICE_MODEL_PRESETS
+    ring_pir = DEVICE_MODEL_PRESETS["ring_alarm_pir_gen2"]
+    assert ring_pir["fov_deg"] == 90
+    assert ring_pir["default_range_px"] == 475
+    assert ring_pir["range_ft"] == 30.0
+
     # Verify dual-lobe raycast for IKEA VALLHORN in an unoccluded space
     sensor = {
         "x": 100,

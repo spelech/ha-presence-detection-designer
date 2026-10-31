@@ -139,10 +139,11 @@ class PDDStore:
                 ):
                     cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
                     dirty = True
-            # Remove decommissioned basement Wyze PIR sensors and backfill presets
+            # Remove decommissioned basement Wyze PIR sensors and old Ring Stick Up Cam motion entity
             removed_sensor_ids = {
                 "binary_sensor.motion_detector_basement1",
                 "binary_sensor.motion_utility_room",
+                "binary_sensor.family_room_motion",
             }
             orig_sensors = list(fp_dict.get("sensors", []) or [])
             filtered_sensors = [s for s in orig_sensors if s.get("id") not in removed_sensor_ids]
@@ -156,6 +157,13 @@ class PDDStore:
                     ds = default_sens[sid]
                     if not sen.get("model_preset") and ds.get("model_preset"):
                         sen["model_preset"] = ds["model_preset"]
+                        dirty = True
+                    if (
+                        sid == "binary_sensor.motion_sensor_gen2_motion_detection"
+                        and sen.get("range_px") == 260
+                    ):
+                        sen["range_px"] = ds["range_px"]
+                        sen["name"] = ds["name"]
                         dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
