@@ -2568,18 +2568,18 @@ def compile_floorplan_topology(
             elif r_name == "Guest Room":
                 ambiguities.append(
                     {
-                        "severity": "medium",
+                        "severity": "low",
                         "category": "blind_pocket",
-                        "title": "Guest Room (between Nursery & Office) has zero camera coverage",
+                        "title": "Guest Room (between Nursery & Office) relies on IKEA VALLHORN PIR (no camera)",
                         "rooms": ["Guest Room", "Margot's Room", "Office"],
                         "camera_id": None,
                         "description": (
                             "Guest Room sits between Margot's Room and Office off the Upstairs Hallway with "
-                            "no camera view cone and its Ecobee sensor awaiting battery replacement."
+                            "no camera view cone; covered by `binary_sensor.guest_room_motion_occupancy` (IKEA VALLHORN dual-lobe PIR)."
                         ),
                         "resolution": (
-                            "Use `guest_room_motion` (moderate) + `guest_room_occupancy` (supporting) + BLE "
-                            "corroboration, with instant timer hand-off to Office, Nursery, and Master Bedroom."
+                            "Use `binary_sensor.guest_room_motion_occupancy` (strong, 60s reset) as primary trigger + "
+                            "`guest_room_motion` / `guest_room_occupancy` (supporting Ecobee sustainers) + BLE corroboration."
                         ),
                     }
                 )
@@ -2722,6 +2722,22 @@ def apply_compiled_topology_to_config(
         updated[CONF_TRIGGER_ENTITIES] = triggers
 
     obs_list = list(updated.get(CONF_BAYESIAN_OBSERVATIONS, []) or [])
+    if room_name == "Guest Room" and not any(
+        isinstance(o, dict) and o.get("entity_id") == "binary_sensor.guest_room_motion_occupancy"
+        for o in obs_list
+    ):
+        obs_list.insert(
+            0,
+            {
+                "entity_id": "binary_sensor.guest_room_motion_occupancy",
+                "label": "Guest Room VALLHORN PIR Motion",
+                "operator": "equals",
+                "preset": str(BayesianWeightPreset.STRONG),
+                "state": "on",
+                "prob_given_true": 0.90,
+                "prob_given_false": 0.05,
+            },
+        )
     new_obs: list[dict[str, Any]] = []
     for obs in obs_list:
         if not isinstance(obs, dict):
