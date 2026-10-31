@@ -139,11 +139,10 @@ class PDDStore:
                 ):
                     cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
                     dirty = True
-            # Remove decommissioned basement Wyze PIR sensors and old Ring Stick Up Cam motion entity
+            # Remove decommissioned basement Wyze PIR sensors
             removed_sensor_ids = {
                 "binary_sensor.motion_detector_basement1",
                 "binary_sensor.motion_utility_room",
-                "binary_sensor.family_room_motion",
             }
             orig_sensors = list(fp_dict.get("sensors", []) or [])
             filtered_sensors = [s for s in orig_sensors if s.get("id") not in removed_sensor_ids]
@@ -151,6 +150,15 @@ class PDDStore:
                 fp_dict["sensors"] = filtered_sensors
                 dirty = True
             default_sens = {s["id"]: s for s in default_fp.get("sensors", []) if s.get("id")}
+            existing_sensor_ids = {s.get("id") for s in fp_dict.get("sensors", [])}
+            if (
+                "binary_sensor.family_room_motion" in default_sens
+                and "binary_sensor.family_room_motion" not in existing_sensor_ids
+            ):
+                fp_dict.setdefault("sensors", []).insert(
+                    1, copy.deepcopy(default_sens["binary_sensor.family_room_motion"])
+                )
+                dirty = True
             for sen in fp_dict.get("sensors", []):
                 sid = sen.get("id")
                 if sid in default_sens:
@@ -162,6 +170,21 @@ class PDDStore:
                         sen.get("range_px") == 260 or sen.get("x") == 525
                     ):
                         for k in ("name", "x", "y", "heading_deg", "fov_deg", "range_px"):
+                            sen[k] = ds[k]
+                        dirty = True
+                    elif (
+                        sid == "binary_sensor.family_room_motion"
+                        and sen.get("model_preset") != "ring_stick_up_cam_gen3"
+                    ):
+                        for k in (
+                            "name",
+                            "model_preset",
+                            "x",
+                            "y",
+                            "heading_deg",
+                            "fov_deg",
+                            "range_px",
+                        ):
                             sen[k] = ds[k]
                         dirty = True
                     elif (
