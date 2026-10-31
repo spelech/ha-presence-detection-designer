@@ -139,9 +139,10 @@ class PDDStore:
                 ):
                     cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
                     dirty = True
-            # Remove decommissioned basement Wyze PIR sensor (77A64367)
+            # Remove decommissioned basement Wyze PIR sensor (77A64367) and unused ratgdo PIR
             removed_sensor_ids = {
                 "binary_sensor.motion_detector_basement1",
+                "binary_sensor.ratgdov25i_47a250_motion",
             }
             orig_sensors = list(fp_dict.get("sensors", []) or [])
             filtered_sensors = [s for s in orig_sensors if s.get("id") not in removed_sensor_ids]
@@ -201,7 +202,7 @@ class PDDStore:
                     elif sid in (
                         "binary_sensor.keypad_motion",
                         "binary_sensor.upper_level_keypad_motion",
-                    ) and sen.get("x") in (415, 485):
+                    ) and sen.get("x") in (380, 415, 485):
                         for k in ("name", "host_room", "x", "y", "heading_deg"):
                             sen[k] = ds[k]
                         dirty = True
