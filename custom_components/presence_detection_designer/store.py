@@ -204,6 +204,10 @@ class PDDStore:
                         for k in ("name", "host_room", "x", "y", "heading_deg"):
                             sen[k] = ds[k]
                         dirty = True
+                    elif sid == "binary_sensor.wyzesense_77a63dd9" and sen.get("y") == 260:
+                        for k in ("name", "x", "y", "heading_deg"):
+                            sen[k] = ds[k]
+                        dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
             if k not in stored["global_settings"]:
