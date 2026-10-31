@@ -565,12 +565,9 @@ def test_ikea_vallhorn_and_wyze_sense_presets_and_dual_lobe_raycast():
     assert max(dists) > 515.0  # 60° center beam reaches 520px (10m)
     assert min(dists) < 265.0  # 120° peripheral wings reach 260px (5m)
 
-    # Verify Basement Wyze Sense PIR sensors use wyze_sense_pir preset
+    # Verify decommissioned basement Wyze sensors are not on the default floorplan and PARASOLL is excluded
+    assert "ikea_parasoll_contact" not in DEVICE_MODEL_PRESETS
     fp = get_default_floorplan()
     sensors_by_id = {s["id"]: s for s in fp["sensors"]}
-    assert (
-        sensors_by_id["binary_sensor.motion_detector_basement1"]["model_preset"] == "wyze_sense_pir"
-    )
-    assert sensors_by_id["binary_sensor.motion_detector_basement1"]["fov_deg"] == 120
-    assert sensors_by_id["binary_sensor.motion_utility_room"]["model_preset"] == "wyze_sense_pir"
-    assert sensors_by_id["binary_sensor.motion_utility_room"]["fov_deg"] == 120
+    assert "binary_sensor.motion_detector_basement1" not in sensors_by_id
+    assert "binary_sensor.motion_utility_room" not in sensors_by_id
