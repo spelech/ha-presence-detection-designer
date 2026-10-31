@@ -154,6 +154,8 @@ class PDDStore:
                 "binary_sensor.family_room_motion",
                 "binary_sensor.guest_room_motion_occupancy",
                 "binary_sensor.motion_utility_room",
+                "binary_sensor.wyzesense_77a63dd9",
+                "binary_sensor.wyzesense_77a64d3c",
             ):
                 if new_sid in default_sens and new_sid not in existing_sensor_ids:
                     fp_dict.setdefault("sensors", []).insert(
