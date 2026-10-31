@@ -139,7 +139,16 @@ class PDDStore:
                 ):
                     cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
                     dirty = True
-            # Synchronize hardware model presets on default sensors
+            # Remove decommissioned basement Wyze PIR sensors and backfill presets
+            removed_sensor_ids = {
+                "binary_sensor.motion_detector_basement1",
+                "binary_sensor.motion_utility_room",
+            }
+            orig_sensors = list(fp_dict.get("sensors", []) or [])
+            filtered_sensors = [s for s in orig_sensors if s.get("id") not in removed_sensor_ids]
+            if len(filtered_sensors) != len(orig_sensors):
+                fp_dict["sensors"] = filtered_sensors
+                dirty = True
             default_sens = {s["id"]: s for s in default_fp.get("sensors", []) if s.get("id")}
             for sen in fp_dict.get("sensors", []):
                 sid = sen.get("id")
@@ -147,19 +156,6 @@ class PDDStore:
                     ds = default_sens[sid]
                     if not sen.get("model_preset") and ds.get("model_preset"):
                         sen["model_preset"] = ds["model_preset"]
-                        dirty = True
-                    elif (
-                        sid
-                        in (
-                            "binary_sensor.motion_detector_basement1",
-                            "binary_sensor.motion_utility_room",
-                        )
-                        and sen.get("model_preset") == "ring_alarm_pir_gen2"
-                    ):
-                        sen["model_preset"] = ds["model_preset"]
-                        sen["name"] = ds["name"]
-                        sen["fov_deg"] = ds["fov_deg"]
-                        sen["range_px"] = ds["range_px"]
                         dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
