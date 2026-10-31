@@ -156,6 +156,7 @@ class PDDStore:
                 "binary_sensor.motion_utility_room",
                 "binary_sensor.wyzesense_77a63dd9",
                 "binary_sensor.wyzesense_77a64d3c",
+                "binary_sensor.wyzesense_77a65433",
             ):
                 if new_sid in default_sens and new_sid not in existing_sensor_ids:
                     fp_dict.setdefault("sensors", []).insert(
@@ -237,6 +238,27 @@ class PDDStore:
                             {
                                 "entity_id": "binary_sensor.guest_room_motion_occupancy",
                                 "label": "Guest Room VALLHORN PIR Motion",
+                                "operator": "equals",
+                                "preset": "strong",
+                                "state": "on",
+                                "prob_given_true": 0.90,
+                                "prob_given_false": 0.05,
+                            },
+                        )
+                        rcfg["bayesian_observations"] = obs
+                        dirty = True
+                elif rcfg.get("room_name") == "Master Bathroom":
+                    obs = list(rcfg.get("bayesian_observations") or [])
+                    if not any(
+                        isinstance(o, dict)
+                        and o.get("entity_id") == "binary_sensor.wyzesense_77a65433"
+                        for o in obs
+                    ):
+                        obs.insert(
+                            0,
+                            {
+                                "entity_id": "binary_sensor.wyzesense_77a65433",
+                                "label": "Master Bathroom Wyze PIR Motion",
                                 "operator": "equals",
                                 "preset": "strong",
                                 "state": "on",
