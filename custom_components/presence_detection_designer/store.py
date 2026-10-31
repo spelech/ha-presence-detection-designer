@@ -194,6 +194,13 @@ class PDDStore:
                         for k in ("model_preset", "fov_deg", "range_px"):
                             sen[k] = ds[k]
                         dirty = True
+                    elif sid in (
+                        "binary_sensor.keypad_motion",
+                        "binary_sensor.upper_level_keypad_motion",
+                    ) and sen.get("x") in (415, 485):
+                        for k in ("name", "host_room", "x", "y", "heading_deg"):
+                            sen[k] = ds[k]
+                        dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
             if k not in stored["global_settings"]:
