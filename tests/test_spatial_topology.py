@@ -576,4 +576,6 @@ def test_ikea_vallhorn_and_wyze_sense_presets_and_dual_lobe_raycast():
     fp = get_default_floorplan()
     sensors_by_id = {s["id"]: s for s in fp["sensors"]}
     assert "binary_sensor.motion_detector_basement1" not in sensors_by_id
-    assert "binary_sensor.motion_utility_room" not in sensors_by_id
+    assert "binary_sensor.motion_utility_room" in sensors_by_id
+    assert sensors_by_id["binary_sensor.motion_utility_room"]["host_room"] == "Laundry Room"
+    assert sensors_by_id["binary_sensor.motion_utility_room"]["model_preset"] == "wyze_sense_pir"
