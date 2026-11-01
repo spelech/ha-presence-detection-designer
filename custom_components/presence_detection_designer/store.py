@@ -218,6 +218,10 @@ class PDDStore:
                         for k in ("name", "x", "y", "heading_deg"):
                             sen[k] = ds[k]
                         dirty = True
+                    elif sid == "binary_sensor.guest_room_motion" and sen.get("x") == 858:
+                        for k in ("name", "x", "y", "heading_deg"):
+                            sen[k] = ds[k]
+                        dirty = True
 
         for k, v in DEFAULT_GLOBAL_SETTINGS.items():
             if k not in stored["global_settings"]:
