@@ -321,9 +321,35 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         out = {"status": "not_found", "room_name": target_name}
         return out if getattr(call, "return_response", True) else None
 
+    async def handle_set_guest_mode(call: Any) -> None:
+        """Enable or disable global Guest Mode across all rooms."""
+        enabled = bool(call.data.get("enabled", True))
+        store = await async_get_store(hass)
+        await store.async_save_global_settings({"guest_mode_enabled": enabled})
+        for coordinator in hass.data[DOMAIN].values():
+            if isinstance(coordinator, RoomPresenceCoordinator):
+                coordinator.async_refresh_all_states()
+                coordinator.async_update_listeners()
+
+    async def handle_clear_manual_intent(call: Any) -> None:
+        """Reset manual switch / Google Assistant override state back to 'auto' for one or all rooms."""
+        entry_id = call.data.get("entry_id")
+        room_name_filter = str(call.data.get("room_name", "")).strip().lower()
+        for eid, coordinator in hass.data[DOMAIN].items():
+            if not isinstance(coordinator, RoomPresenceCoordinator):
+                continue
+            if entry_id and eid != entry_id:
+                continue
+            if room_name_filter and coordinator.room_name.strip().lower() != room_name_filter:
+                continue
+            coordinator.actuation_tracker.clear_manual_intent()
+            coordinator.async_update_listeners()
+
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)
         _register_service(hass, "force_refresh", handle_force_refresh)
+        _register_service(hass, "set_guest_mode", handle_set_guest_mode)
+        _register_service(hass, "clear_manual_intent", handle_clear_manual_intent)
         _register_service(
             hass, "explain_presence", handle_explain_presence, supports_optional_response=True
         )

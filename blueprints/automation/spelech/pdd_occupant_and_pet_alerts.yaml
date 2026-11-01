@@ -1,0 +1,157 @@
+blueprint:
+  name: "PDD — Occupant & Animal Activity Monitor (Untracked Child / Pet Zone Rules)"
+  description: >
+    Monitors Presence Detection Designer (`binary_sensor.<room>_presence`) occupant
+    classification attributes (`occupant_type`, `pet_present`, `human_present`,
+    `inferred_subregion`, and `presence_summary`) to trigger targeted alerts or
+    automations for untracked humans (e.g., Margot or guests moving without BLE tags),
+    tracked humans (e.g., Steve), or pets (e.g., Riley entering a restricted zone or
+    waiting by an exterior door).
+  domain: automation
+  author: Steven T. Pelech
+  input:
+    presence_sensor:
+      name: PDD Room Presence Binary Sensor
+      description: The `binary_sensor.<room>_presence` entity exposed by Presence Detection Designer.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: occupancy
+    target_occupant_category:
+      name: Target Occupant Category
+      description: Filter activations by PDD occupant classification (`untracked_human` for Margot/Guest, `tracked_human` for Steve, `pet` for Riley, or `any`).
+      default: "untracked_human"
+      selector:
+        select:
+          options:
+            - label: "Untracked Human (Child / Margot / Guest)"
+              value: "untracked_human"
+            - label: "Pet (Animal / Riley)"
+              value: "pet"
+            - label: "Tracked Human (BLE Tag / Steve)"
+              value: "tracked_human"
+            - label: "Any Occupant or Animal"
+              value: "any"
+    subregion_filter:
+      name: Inferred Sub-Region Filter (Optional)
+      description: Optional substring or sub-region name to match against `state_attr(presence_sensor, 'inferred_subregion')` (leave blank to match all sub-regions in the room).
+      default: ""
+      selector:
+        text: {}
+    sustained_seconds:
+      name: Minimum Dwell Duration (Seconds)
+      description: Seconds the presence state or occupant classification must persist before firing.
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 600
+          unit_of_measurement: "s"
+    active_start_time:
+      name: Active Window Start Time
+      description: Start of the time window during which this monitor is active.
+      default: "00:00:00"
+      selector:
+        time: {}
+    active_end_time:
+      name: Active Window End Time
+      description: End of the time window during which this monitor is active (set both to `00:00:00` for 24/7 monitoring).
+      default: "00:00:00"
+      selector:
+        time: {}
+    notify_service:
+      name: Notification Service (Optional)
+      description: Optional Home Assistant notify service (e.g., `notify.mobile_app_pixel` or `notify.persistent_notification`) to receive a formatted PDD presence summary.
+      default: ""
+      selector:
+        text: {}
+    custom_actions:
+      name: Custom Actions (Optional)
+      description: Additional actions to run when the occupant/pet condition matches.
+      default: []
+      selector:
+        action: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  presence_sensor: !input presence_sensor
+  target_occupant_category: !input target_occupant_category
+  subregion_filter: !input subregion_filter
+  active_start_time: !input active_start_time
+  active_end_time: !input active_end_time
+  notify_service: !input notify_service
+  occupant_type: "{{ state_attr(presence_sensor, 'occupant_type') | default('unknown', true) }}"
+  pet_present: "{{ state_attr(presence_sensor, 'pet_present') | default(false, true) }}"
+  human_present: "{{ state_attr(presence_sensor, 'human_present') | default(false, true) }}"
+  inferred_subregion: "{{ state_attr(presence_sensor, 'inferred_subregion') | default('room', true) }}"
+  presence_summary: "{{ state_attr(presence_sensor, 'presence_summary') | default(states(presence_sensor), true) }}"
+  room_name: "{{ state_attr(presence_sensor, 'friendly_name') | default(presence_sensor, true) }}"
+
+trigger:
+  - platform: state
+    entity_id: !input presence_sensor
+    to: "on"
+    for:
+      seconds: !input sustained_seconds
+    id: presence_on
+  - platform: state
+    entity_id: !input presence_sensor
+    attribute: occupant_type
+    for:
+      seconds: !input sustained_seconds
+    id: occupant_type_changed
+  - platform: state
+    entity_id: !input presence_sensor
+    attribute: pet_present
+    to: true
+    for:
+      seconds: !input sustained_seconds
+    id: pet_detected
+
+condition:
+  - condition: state
+    entity_id: !input presence_sensor
+    state: "on"
+  - condition: template
+    value_template: >-
+      {% if active_start_time == active_end_time %}
+        true
+      {% else %}
+        {% set now_t = now().strftime('%H:%M:%S') %}
+        {% if active_start_time > active_end_time %}
+          {{ now_t >= active_start_time or now_t < active_end_time }}
+        {% else %}
+          {{ active_start_time <= now_t < active_end_time }}
+        {% endif %}
+      {% endif %}
+  - condition: template
+    value_template: >-
+      {% if target_occupant_category == 'any' %}
+        true
+      {% elif target_occupant_category == 'pet' %}
+        {{ occupant_type == 'pet' or pet_present == true }}
+      {% elif target_occupant_category == 'untracked_human' %}
+        {{ occupant_type in ['untracked_human', 'mixed_humans'] }}
+      {% elif target_occupant_category == 'tracked_human' %}
+        {{ occupant_type in ['tracked_human', 'mixed_humans'] }}
+      {% else %}
+        false
+      {% endif %}
+  - condition: template
+    value_template: >-
+      {{ subregion_filter == '' or (subregion_filter | lower) in (inferred_subregion | string | lower) }}
+
+action:
+  - if:
+      - condition: template
+        value_template: "{{ notify_service | trim != '' }}"
+    then:
+      - service: "{{ notify_service | trim }}"
+        data:
+          title: "PDD Activity: {{ room_name }}"
+          message: >-
+            {{ presence_summary }} (Occupant: {{ occupant_type }}, Sub-region: {{ inferred_subregion }})
+  - choose: []
+    default: !input custom_actions

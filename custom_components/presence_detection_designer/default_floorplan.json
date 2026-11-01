@@ -1,0 +1,2471 @@
+{
+  "version": 4,
+  "canvas": {
+    "width": 1000,
+    "height": 580
+  },
+  "floor_wall_segments": {
+    "upstairs": [
+      [
+        [
+          126,
+          32
+        ],
+        [
+          874,
+          32
+        ]
+      ],
+      [
+        [
+          874,
+          32
+        ],
+        [
+          874,
+          548
+        ]
+      ],
+      [
+        [
+          126,
+          548
+        ],
+        [
+          874,
+          548
+        ]
+      ],
+      [
+        [
+          126,
+          32
+        ],
+        [
+          126,
+          548
+        ]
+      ],
+      [
+        [
+          353,
+          32
+        ],
+        [
+          353,
+          256
+        ]
+      ],
+      [
+        [
+          353,
+          312
+        ],
+        [
+          353,
+          484
+        ]
+      ],
+      [
+        [
+          563,
+          32
+        ],
+        [
+          563,
+          143
+        ]
+      ],
+      [
+        [
+          563,
+          143
+        ],
+        [
+          610,
+          143
+        ]
+      ],
+      [
+        [
+          610,
+          32
+        ],
+        [
+          610,
+          42
+        ]
+      ],
+      [
+        [
+          610,
+          130
+        ],
+        [
+          610,
+          254
+        ]
+      ],
+      [
+        [
+          563,
+          143
+        ],
+        [
+          563,
+          152
+        ]
+      ],
+      [
+        [
+          563,
+          242
+        ],
+        [
+          563,
+          254
+        ]
+      ],
+      [
+        [
+          353,
+          254
+        ],
+        [
+          508,
+          254
+        ]
+      ],
+      [
+        [
+          508,
+          254
+        ],
+        [
+          508,
+          258
+        ]
+      ],
+      [
+        [
+          508,
+          258
+        ],
+        [
+          558,
+          258
+        ]
+      ],
+      [
+        [
+          558,
+          258
+        ],
+        [
+          558,
+          254
+        ]
+      ],
+      [
+        [
+          558,
+          254
+        ],
+        [
+          612,
+          254
+        ]
+      ],
+      [
+        [
+          662,
+          254
+        ],
+        [
+          874,
+          254
+        ]
+      ],
+      [
+        [
+          353,
+          316
+        ],
+        [
+          368,
+          316
+        ]
+      ],
+      [
+        [
+          446,
+          316
+        ],
+        [
+          508,
+          316
+        ]
+      ],
+      [
+        [
+          553,
+          316
+        ],
+        [
+          610,
+          316
+        ]
+      ],
+      [
+        [
+          353,
+          355
+        ],
+        [
+          462,
+          355
+        ]
+      ],
+      [
+        [
+          462,
+          316
+        ],
+        [
+          462,
+          449
+        ]
+      ],
+      [
+        [
+          353,
+          484
+        ],
+        [
+          398,
+          484
+        ]
+      ],
+      [
+        [
+          398,
+          484
+        ],
+        [
+          440,
+          484
+        ]
+      ],
+      [
+        [
+          440,
+          449
+        ],
+        [
+          560,
+          449
+        ]
+      ],
+      [
+        [
+          560,
+          417
+        ],
+        [
+          610,
+          417
+        ]
+      ],
+      [
+        [
+          560,
+          417
+        ],
+        [
+          560,
+          449
+        ]
+      ],
+      [
+        [
+          610,
+          316
+        ],
+        [
+          610,
+          548
+        ]
+      ],
+      [
+        [
+          440,
+          449
+        ],
+        [
+          440,
+          498
+        ]
+      ],
+      [
+        [
+          440,
+          544
+        ],
+        [
+          440,
+          548
+        ]
+      ],
+      [
+        [
+          671,
+          254
+        ],
+        [
+          671,
+          258
+        ]
+      ],
+      [
+        [
+          671,
+          258
+        ],
+        [
+          665,
+          258
+        ]
+      ],
+      [
+        [
+          665,
+          258
+        ],
+        [
+          665,
+          315
+        ]
+      ],
+      [
+        [
+          665,
+          315
+        ],
+        [
+          671,
+          315
+        ]
+      ],
+      [
+        [
+          671,
+          315
+        ],
+        [
+          671,
+          548
+        ]
+      ],
+      [
+        [
+          735,
+          254
+        ],
+        [
+          735,
+          296
+        ]
+      ],
+      [
+        [
+          735,
+          296
+        ],
+        [
+          750,
+          296
+        ]
+      ],
+      [
+        [
+          858,
+          296
+        ],
+        [
+          874,
+          296
+        ]
+      ]
+    ],
+    "main": [
+      [
+        [
+          68,
+          87
+        ],
+        [
+          832,
+          87
+        ]
+      ],
+      [
+        [
+          68,
+          87
+        ],
+        [
+          68,
+          508
+        ]
+      ],
+      [
+        [
+          68,
+          508
+        ],
+        [
+          534,
+          508
+        ]
+      ],
+      [
+        [
+          832,
+          87
+        ],
+        [
+          832,
+          290
+        ]
+      ],
+      [
+        [
+          251,
+          87
+        ],
+        [
+          251,
+          190
+        ]
+      ],
+      [
+        [
+          251,
+          250
+        ],
+        [
+          251,
+          290
+        ]
+      ],
+      [
+        [
+          68,
+          290
+        ],
+        [
+          96,
+          290
+        ]
+      ],
+      [
+        [
+          212,
+          290
+        ],
+        [
+          251,
+          290
+        ]
+      ],
+      [
+        [
+          251,
+          290
+        ],
+        [
+          410,
+          290
+        ]
+      ],
+      [
+        [
+          341,
+          290
+        ],
+        [
+          341,
+          418
+        ]
+      ],
+      [
+        [
+          410,
+          290
+        ],
+        [
+          410,
+          345
+        ]
+      ],
+      [
+        [
+          341,
+          382
+        ],
+        [
+          410,
+          382
+        ]
+      ],
+      [
+        [
+          410,
+          382
+        ],
+        [
+          410,
+          418
+        ]
+      ],
+      [
+        [
+          341,
+          502
+        ],
+        [
+          341,
+          508
+        ]
+      ],
+      [
+        [
+          534,
+          290
+        ],
+        [
+          832,
+          290
+        ]
+      ],
+      [
+        [
+          534,
+          290
+        ],
+        [
+          534,
+          300
+        ]
+      ],
+      [
+        [
+          534,
+          348
+        ],
+        [
+          534,
+          508
+        ]
+      ],
+      [
+        [
+          708,
+          290
+        ],
+        [
+          708,
+          421
+        ]
+      ],
+      [
+        [
+          534,
+          421
+        ],
+        [
+          832,
+          421
+        ]
+      ],
+      [
+        [
+          534,
+          421
+        ],
+        [
+          534,
+          555
+        ]
+      ],
+      [
+        [
+          832,
+          421
+        ],
+        [
+          832,
+          555
+        ]
+      ],
+      [
+        [
+          534,
+          555
+        ],
+        [
+          832,
+          555
+        ]
+      ]
+    ],
+    "basement": [
+      [
+        [
+          93,
+          42
+        ],
+        [
+          695,
+          42
+        ]
+      ],
+      [
+        [
+          93,
+          42
+        ],
+        [
+          93,
+          532
+        ]
+      ],
+      [
+        [
+          93,
+          478
+        ],
+        [
+          130,
+          478
+        ]
+      ],
+      [
+        [
+          220,
+          478
+        ],
+        [
+          265,
+          478
+        ]
+      ],
+      [
+        [
+          355,
+          478
+        ],
+        [
+          430,
+          478
+        ]
+      ],
+      [
+        [
+          430,
+          478
+        ],
+        [
+          445,
+          495
+        ]
+      ],
+      [
+        [
+          445,
+          495
+        ],
+        [
+          445,
+          532
+        ]
+      ],
+      [
+        [
+          93,
+          532
+        ],
+        [
+          635,
+          532
+        ]
+      ],
+      [
+        [
+          572,
+          230
+        ],
+        [
+          572,
+          532
+        ]
+      ],
+      [
+        [
+          635,
+          410
+        ],
+        [
+          635,
+          532
+        ]
+      ],
+      [
+        [
+          524,
+          42
+        ],
+        [
+          524,
+          135
+        ]
+      ],
+      [
+        [
+          524,
+          135
+        ],
+        [
+          575,
+          135
+        ]
+      ],
+      [
+        [
+          620,
+          135
+        ],
+        [
+          695,
+          135
+        ]
+      ],
+      [
+        [
+          572,
+          230
+        ],
+        [
+          695,
+          230
+        ]
+      ],
+      [
+        [
+          695,
+          42
+        ],
+        [
+          695,
+          145
+        ]
+      ],
+      [
+        [
+          695,
+          215
+        ],
+        [
+          695,
+          360
+        ]
+      ],
+      [
+        [
+          695,
+          42
+        ],
+        [
+          915,
+          42
+        ]
+      ],
+      [
+        [
+          915,
+          42
+        ],
+        [
+          915,
+          360
+        ]
+      ],
+      [
+        [
+          695,
+          360
+        ],
+        [
+          915,
+          360
+        ]
+      ]
+    ]
+  },
+  "floors": [
+    {
+      "id": "upstairs",
+      "name": "Upstairs Level",
+      "order": 0,
+      "underlay_svg": {
+        "url": "/presence_detection_designer_static/floor_upstairs.webp?v=4",
+        "x": 114,
+        "y": 20,
+        "width": 772,
+        "height": 540
+      }
+    },
+    {
+      "id": "main",
+      "name": "Main Floor",
+      "order": 1,
+      "underlay_svg": {
+        "url": "/presence_detection_designer_static/floor_main.webp?v=4",
+        "x": 60,
+        "y": 30,
+        "width": 784,
+        "height": 520
+      }
+    },
+    {
+      "id": "basement",
+      "name": "Basement Level",
+      "order": 2,
+      "underlay_svg": {
+        "url": "/presence_detection_designer_static/floor_basement.webp?v=4",
+        "x": 80,
+        "y": 30,
+        "width": 620,
+        "height": 520
+      }
+    }
+  ],
+  "cameras": [
+    {
+      "id": "camera.living_room",
+      "name": "Living Room Camera",
+      "floor": "main",
+      "host_room": "Living Room",
+      "model_preset": "tapo_c110_corner",
+      "x": 76,
+      "y": 335,
+      "heading_deg": 30,
+      "fov_deg": 110,
+      "range_px": 520,
+      "spills_into": [
+        "Front Entry"
+      ],
+      "notes": "Mounted on West wall below Dining opening; sees North cube shelf wall, Foyer archway/stairs, and South bay windows.",
+      "zones": [
+        "living_room_couch",
+        "living_room_floor",
+        "living_room_bay_windows",
+        "living_room_entry"
+      ],
+      "sub_zones": [
+        {
+          "id": "living_room_couch",
+          "entity_id": "binary_sensor.living_room_couch_person_occupancy",
+          "label": "Living Room Couch",
+          "room": "Living Room",
+          "x": 105,
+          "y": 355,
+          "width": 125,
+          "height": 100
+        },
+        {
+          "id": "living_room_floor",
+          "entity_id": "binary_sensor.living_room_floor_person_occupancy",
+          "label": "Living Room Floor",
+          "room": "Living Room",
+          "x": 235,
+          "y": 365,
+          "width": 95,
+          "height": 100
+        },
+        {
+          "id": "living_room_bay_windows",
+          "entity_id": "binary_sensor.living_room_bay_windows_person_occupancy",
+          "label": "Bay Windows",
+          "room": "Living Room",
+          "x": 115,
+          "y": 468,
+          "width": 165,
+          "height": 38
+        },
+        {
+          "id": "living_room_entry",
+          "entity_id": "binary_sensor.living_room_entry_person_occupancy",
+          "label": "Front Entry Archway",
+          "room": "Front Entry",
+          "x": 350,
+          "y": 415,
+          "width": 80,
+          "height": 80
+        }
+      ]
+    },
+    {
+      "id": "camera.dining_room",
+      "name": "Dining Room Camera",
+      "floor": "main",
+      "host_room": "Dining Room",
+      "model_preset": "tapo_c110_corner",
+      "x": 242,
+      "y": 96,
+      "heading_deg": 128,
+      "fov_deg": 110,
+      "range_px": 320,
+      "spills_into": [
+        "Living Room"
+      ],
+      "notes": "Upper-right corner of Dining Room looking SW across dining table and through wide opening into Living Room.",
+      "zones": [
+        "dining_room_table",
+        "rileys_food"
+      ],
+      "sub_zones": [
+        {
+          "id": "dining_room_table",
+          "entity_id": "binary_sensor.dining_room_table_person_occupancy",
+          "label": "Dining Table",
+          "room": "Dining Room",
+          "x": 105,
+          "y": 145,
+          "width": 110,
+          "height": 110
+        },
+        {
+          "id": "rileys_food",
+          "entity_id": "binary_sensor.rileys_food_person_occupancy",
+          "label": "Riley's Food Corner",
+          "room": "Dining Room",
+          "x": 170,
+          "y": 96,
+          "width": 65,
+          "height": 42
+        }
+      ]
+    },
+    {
+      "id": "camera.family_room",
+      "name": "Family Room Camera",
+      "floor": "main",
+      "host_room": "Family Room",
+      "model_preset": "tapo_c110_corner",
+      "x": 818,
+      "y": 96,
+      "heading_deg": 142,
+      "fov_deg": 110,
+      "range_px": 620,
+      "spills_into": [
+        "Kitchen",
+        "Front Entry"
+      ],
+      "notes": "Mounted on North wall to the right of the right window looking left across Family Room, green South couch wall, and Kitchen.",
+      "zones": [
+        "family_room_couch",
+        "family_room_recliner",
+        "family_room_floor",
+        "kitchen_island"
+      ],
+      "sub_zones": [
+        {
+          "id": "family_room_couch",
+          "entity_id": "binary_sensor.family_room_couch_person_occupancy",
+          "label": "Family Room Couch",
+          "room": "Family Room",
+          "x": 635,
+          "y": 195,
+          "width": 150,
+          "height": 88
+        },
+        {
+          "id": "family_room_recliner",
+          "entity_id": "binary_sensor.family_room_recliner_person_occupancy",
+          "label": "Family Room Recliner",
+          "room": "Family Room",
+          "x": 545,
+          "y": 115,
+          "width": 80,
+          "height": 75
+        },
+        {
+          "id": "family_room_floor",
+          "entity_id": "binary_sensor.family_room_floor_person_occupancy",
+          "label": "Family Room Floor",
+          "room": "Family Room",
+          "x": 545,
+          "y": 195,
+          "width": 85,
+          "height": 88
+        },
+        {
+          "id": "kitchen_island",
+          "entity_id": "binary_sensor.kitchen_island_person_occupancy",
+          "label": "Kitchen Island",
+          "room": "Kitchen",
+          "x": 335,
+          "y": 155,
+          "width": 120,
+          "height": 95
+        }
+      ]
+    },
+    {
+      "id": "camera.garage",
+      "name": "Garage Camera",
+      "floor": "main",
+      "host_room": "Garage",
+      "model_preset": "tapo_c110_overhead",
+      "x": 680,
+      "y": 423,
+      "heading_deg": 90,
+      "fov_deg": 164,
+      "range_px": 250,
+      "spills_into": [],
+      "notes": "Mounted high on North interior wall pointing steeply down, covering nearly the full North wall and parking bay.",
+      "zones": [
+        "garage_parking"
+      ],
+      "sub_zones": [
+        {
+          "id": "garage_parking",
+          "entity_id": "binary_sensor.garage_parking_person_occupancy",
+          "label": "Garage Parking Bay",
+          "room": "Garage",
+          "x": 595,
+          "y": 438,
+          "width": 170,
+          "height": 108
+        }
+      ]
+    },
+    {
+      "id": "camera.master_bedroom",
+      "name": "Master Bedroom Camera",
+      "floor": "upstairs",
+      "host_room": "Master Bedroom",
+      "model_preset": "tapo_c110_corner",
+      "x": 134,
+      "y": 536,
+      "heading_deg": 313,
+      "fov_deg": 110,
+      "range_px": 620,
+      "spills_into": [
+        "Upstairs Hallway & Stairs",
+        "Master Bathroom"
+      ],
+      "notes": "Lower-left corner of Master Bedroom looking NE; hugs West headboard wall, clips W.I.C, and sees into Master Bath & Hallway doors.",
+      "zones": [
+        "master_bed",
+        "master_open_area",
+        "master_bedroom_walkway",
+        "master_bedroom_entryway",
+        "master_bathroom"
+      ],
+      "sub_zones": [
+        {
+          "id": "master_bed",
+          "entity_id": "binary_sensor.master_bed_person_occupancy",
+          "label": "Master Bed",
+          "room": "Master Bedroom",
+          "x": 134,
+          "y": 250,
+          "width": 135,
+          "height": 155
+        },
+        {
+          "id": "master_open_area",
+          "entity_id": "binary_sensor.master_open_area_person_occupancy",
+          "label": "Master Open Floor",
+          "room": "Master Bedroom",
+          "x": 140,
+          "y": 55,
+          "width": 145,
+          "height": 165
+        },
+        {
+          "id": "master_bedroom_walkway",
+          "entity_id": "binary_sensor.master_bedroom_walkway_person_occupancy",
+          "label": "Master Walkway",
+          "room": "Master Bedroom",
+          "x": 278,
+          "y": 225,
+          "width": 68,
+          "height": 220
+        },
+        {
+          "id": "master_bedroom_entryway",
+          "entity_id": "binary_sensor.master_bedroom_entryway_person_occupancy",
+          "label": "Master Hallway Entry",
+          "room": "Master Bedroom",
+          "x": 305,
+          "y": 256,
+          "width": 48,
+          "height": 56
+        },
+        {
+          "id": "master_bathroom",
+          "entity_id": "binary_sensor.master_bathroom_person_occupancy",
+          "label": "Master Bath Doorway",
+          "room": "Master Bathroom",
+          "x": 425,
+          "y": 486,
+          "width": 55,
+          "height": 56
+        }
+      ]
+    },
+    {
+      "id": "camera.nursery",
+      "name": "Nursery Camera",
+      "floor": "upstairs",
+      "host_room": "Margot's Room",
+      "model_preset": "tapo_c110_corner",
+      "x": 358,
+      "y": 246,
+      "heading_deg": 311,
+      "fov_deg": 110,
+      "range_px": 340,
+      "spills_into": [],
+      "notes": "Lower-left corner of Nursery looking NE; sees West wall posters, bed, dresser, open East reach-in closet, and hallway door.",
+      "zones": [
+        "nursery_bed"
+      ],
+      "sub_zones": [
+        {
+          "id": "nursery_bed",
+          "entity_id": "binary_sensor.nursery_bed_person_occupancy",
+          "label": "Nursery Bed",
+          "room": "Margot's Room",
+          "x": 370,
+          "y": 95,
+          "width": 125,
+          "height": 115
+        }
+      ]
+    },
+    {
+      "id": "camera.office",
+      "name": "Office Camera",
+      "floor": "upstairs",
+      "host_room": "Office",
+      "model_preset": "tapo_c110_corner",
+      "x": 678,
+      "y": 538,
+      "heading_deg": 313,
+      "fov_deg": 110,
+      "range_px": 380,
+      "spills_into": [
+        "Upstairs Hallway & Stairs"
+      ],
+      "notes": "Lower-left corner of Office looking NE; sees West wall and Office door, open North closet, Steve's desk, and sim rig.",
+      "zones": [
+        "steves_desk",
+        "sim_rig",
+        "office_floor",
+        "office_entryway"
+      ],
+      "sub_zones": [
+        {
+          "id": "steves_desk",
+          "entity_id": "binary_sensor.steves_desk_person_occupancy",
+          "label": "Steve's Desk",
+          "room": "Office",
+          "x": 745,
+          "y": 360,
+          "width": 105,
+          "height": 95
+        },
+        {
+          "id": "sim_rig",
+          "entity_id": "binary_sensor.sim_rig_person_occupancy",
+          "label": "Sim Rig",
+          "room": "Office",
+          "x": 680,
+          "y": 425,
+          "width": 65,
+          "height": 95
+        },
+        {
+          "id": "office_floor",
+          "entity_id": "binary_sensor.office_floor_person_occupancy",
+          "label": "Office Center Floor",
+          "room": "Office",
+          "x": 685,
+          "y": 310,
+          "width": 95,
+          "height": 95
+        },
+        {
+          "id": "office_entryway",
+          "entity_id": "binary_sensor.office_entryway_person_occupancy",
+          "label": "Office Doorway",
+          "room": "Office",
+          "x": 665,
+          "y": 258,
+          "width": 45,
+          "height": 55
+        }
+      ]
+    },
+    {
+      "id": "camera.basement_theater",
+      "name": "Basement Theater Camera",
+      "floor": "basement",
+      "host_room": "Basement Theater",
+      "model_preset": "tapo_c110_corner",
+      "x": 104,
+      "y": 64,
+      "heading_deg": 42,
+      "fov_deg": 110,
+      "range_px": 700,
+      "spills_into": [
+        "Basement Play Area"
+      ],
+      "notes": "Upper-left corner of Basement Theater looking SE; sees North wall ballpit leading to Wet Bar, sectional couch, South closets, and East wall.",
+      "zones": [
+        "basement_theater_couch",
+        "basement_theater_playpen",
+        "basement_theater_floor",
+        "basement_bar",
+        "basement_play_area_far",
+        "basement_stairwell"
+      ],
+      "sub_zones": [
+        {
+          "id": "basement_theater_couch",
+          "entity_id": "binary_sensor.basement_theater_couch_person_occupancy",
+          "label": "Theater Couch",
+          "room": "Basement Theater",
+          "x": 150,
+          "y": 235,
+          "width": 165,
+          "height": 165
+        },
+        {
+          "id": "basement_theater_playpen",
+          "entity_id": "binary_sensor.basement_theater_playpen_person_occupancy",
+          "label": "Ballpit / Playpen",
+          "room": "Basement Theater",
+          "x": 160,
+          "y": 50,
+          "width": 165,
+          "height": 75
+        },
+        {
+          "id": "basement_theater_floor",
+          "entity_id": "binary_sensor.basement_theater_floor_person_occupancy",
+          "label": "Theater Floor",
+          "room": "Basement Theater",
+          "x": 160,
+          "y": 135,
+          "width": 165,
+          "height": 90
+        },
+        {
+          "id": "basement_bar",
+          "entity_id": "binary_sensor.basement_bar_person_occupancy",
+          "label": "Basement Wet Bar",
+          "room": "Basement Play Area",
+          "x": 365,
+          "y": 55,
+          "width": 150,
+          "height": 140
+        },
+        {
+          "id": "basement_play_area_far",
+          "entity_id": "binary_sensor.basement_play_area_far_person_occupancy",
+          "label": "Play Area East",
+          "room": "Basement Play Area",
+          "x": 370,
+          "y": 230,
+          "width": 190,
+          "height": 175
+        },
+        {
+          "id": "basement_stairwell",
+          "entity_id": "binary_sensor.basement_stairwell_person_occupancy",
+          "label": "Basement Stairwell",
+          "room": "Basement Play Area",
+          "x": 495,
+          "y": 415,
+          "width": 75,
+          "height": 105
+        }
+      ]
+    },
+    {
+      "id": "camera.basement_play_area",
+      "name": "Basement Play Area Camera",
+      "floor": "basement",
+      "host_room": "Basement Play Area",
+      "model_preset": "tapo_c110_corner",
+      "x": 505,
+      "y": 68,
+      "heading_deg": 121,
+      "fov_deg": 110,
+      "range_px": 680,
+      "spills_into": [
+        "Basement Theater"
+      ],
+      "notes": "Behind Wet Bar looking SW across bar counter, East basement wall (not into stairs), play mats, and Theater.",
+      "zones": [
+        "basement_play_floor",
+        "basement_counter",
+        "theater_rear_view"
+      ],
+      "sub_zones": [
+        {
+          "id": "basement_play_floor",
+          "entity_id": "binary_sensor.basement_play_floor_person_occupancy",
+          "label": "Play Area Main Floor",
+          "room": "Basement Play Area",
+          "x": 365,
+          "y": 225,
+          "width": 195,
+          "height": 220
+        },
+        {
+          "id": "basement_counter",
+          "entity_id": "binary_sensor.basement_counter_person_occupancy",
+          "label": "Wet Bar Counter",
+          "room": "Basement Play Area",
+          "x": 365,
+          "y": 60,
+          "width": 150,
+          "height": 140
+        },
+        {
+          "id": "theater_rear_view",
+          "entity_id": "binary_sensor.theater_rear_view_person_occupancy",
+          "label": "Theater Rear View",
+          "room": "Basement Theater",
+          "x": 135,
+          "y": 230,
+          "width": 185,
+          "height": 175
+        }
+      ]
+    },
+    {
+      "id": "camera.storage_room",
+      "name": "Storage Room Camera",
+      "floor": "basement",
+      "host_room": "Storage Room",
+      "model_preset": "tapo_c110_corner",
+      "x": 905,
+      "y": 54,
+      "heading_deg": 135,
+      "fov_deg": 110,
+      "range_px": 420,
+      "spills_into": [],
+      "notes": "Upper-right corner of Storage Room looking SW across green gym floor toward South storage shelves and West door to hallway.",
+      "zones": [
+        "storage_room_workout"
+      ],
+      "sub_zones": [
+        {
+          "id": "storage_room_workout",
+          "entity_id": "binary_sensor.storage_room_workout_person_occupancy",
+          "label": "Storage Room Floor",
+          "room": "Storage Room",
+          "x": 705,
+          "y": 80,
+          "width": 195,
+          "height": 265
+        }
+      ]
+    }
+  ],
+  "sensors": [
+    {
+      "id": "binary_sensor.family_room_ecobee_motion",
+      "entity_id": "binary_sensor.family_room_ecobee_motion",
+      "name": "Family Room PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "main",
+      "host_room": "Family Room",
+      "x": 555,
+      "y": 115,
+      "heading_deg": 165,
+      "fov_deg": 110,
+      "range_px": 190
+    },
+    {
+      "id": "binary_sensor.family_room_ring_motion",
+      "entity_id": "binary_sensor.family_room_ring_motion",
+      "name": "Family Room Ring Cam Motion (Kitchen / Back Door)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ring_stick_up_cam_gen3",
+      "floor": "main",
+      "host_room": "Family Room",
+      "x": 635,
+      "y": 275,
+      "heading_deg": 215,
+      "fov_deg": 110,
+      "range_px": 380
+    },
+    {
+      "id": "binary_sensor.thermostat_motion",
+      "entity_id": "binary_sensor.thermostat_motion",
+      "name": "Main Thermostat PIR (Ecobee4)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_thermostat_pir",
+      "floor": "main",
+      "host_room": "Dining Room",
+      "x": 242,
+      "y": 180,
+      "heading_deg": 180,
+      "fov_deg": 120,
+      "range_px": 220
+    },
+    {
+      "id": "binary_sensor.kitchen_motion",
+      "entity_id": "binary_sensor.kitchen_motion",
+      "name": "Kitchen PIR (Stove Hood Alcove)",
+      "sensor_type": "pir_motion",
+      "model_preset": "wyze_sense_pir",
+      "floor": "main",
+      "host_room": "Kitchen",
+      "x": 258,
+      "y": 140,
+      "heading_deg": 0,
+      "fov_deg": 120,
+      "range_px": 405
+    },
+    {
+      "id": "binary_sensor.keypad_motion",
+      "entity_id": "binary_sensor.keypad_motion",
+      "name": "Main Floor Keypad PIR (Between Peninsula & Powder Bath)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ring_keypad_pir",
+      "floor": "main",
+      "host_room": "Front Entry",
+      "x": 410,
+      "y": 315,
+      "heading_deg": 0,
+      "fov_deg": 100,
+      "range_px": 165
+    },
+    {
+      "id": "binary_sensor.laundry_room_motion",
+      "entity_id": "binary_sensor.laundry_room_motion",
+      "name": "Laundry Room PIR (Wyze Sense v1)",
+      "sensor_type": "pir_motion",
+      "model_preset": "wyze_sense_pir",
+      "floor": "main",
+      "host_room": "Laundry Room",
+      "x": 700,
+      "y": 298,
+      "heading_deg": 145,
+      "fov_deg": 120,
+      "range_px": 405
+    },
+    {
+      "id": "binary_sensor.garage_ring_motion",
+      "entity_id": "binary_sensor.garage_ring_motion",
+      "name": "Garage PIR (Ring Alarm Gen 2)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ring_alarm_pir_gen2",
+      "floor": "main",
+      "host_room": "Garage",
+      "x": 685,
+      "y": 428,
+      "heading_deg": 135,
+      "fov_deg": 90,
+      "range_px": 475
+    },
+    {
+      "id": "binary_sensor.upstairs_hallway_motion",
+      "entity_id": "binary_sensor.upstairs_hallway_motion",
+      "name": "Upstairs Hallway PIR (Above Master Door)",
+      "sensor_type": "pir_motion",
+      "model_preset": "wyze_sense_pir",
+      "floor": "upstairs",
+      "host_room": "Upstairs Hallway & Stairs",
+      "x": 360,
+      "y": 285,
+      "heading_deg": 0,
+      "fov_deg": 120,
+      "range_px": 405
+    },
+    {
+      "id": "binary_sensor.upstairs_stairs_motion",
+      "entity_id": "binary_sensor.upstairs_stairs_motion",
+      "name": "Upstairs Stairs PIR (Bottom of Stairwell)",
+      "sensor_type": "pir_motion",
+      "model_preset": "wyze_sense_pir",
+      "floor": "upstairs",
+      "host_room": "Upstairs Hallway & Stairs",
+      "x": 640,
+      "y": 540,
+      "heading_deg": 270,
+      "fov_deg": 120,
+      "range_px": 405
+    },
+    {
+      "id": "binary_sensor.master_bathroom_motion",
+      "entity_id": "binary_sensor.master_bathroom_motion",
+      "name": "Master Bathroom PIR (Above Door)",
+      "sensor_type": "pir_motion",
+      "model_preset": "wyze_sense_pir",
+      "floor": "upstairs",
+      "host_room": "Master Bathroom",
+      "x": 448,
+      "y": 521,
+      "heading_deg": 0,
+      "fov_deg": 120,
+      "range_px": 405
+    },
+    {
+      "id": "binary_sensor.master_bedroom_motion",
+      "entity_id": "binary_sensor.master_bedroom_motion",
+      "name": "Master Bedroom PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "upstairs",
+      "host_room": "Master Bedroom",
+      "x": 140,
+      "y": 280,
+      "heading_deg": 0,
+      "fov_deg": 110,
+      "range_px": 190
+    },
+    {
+      "id": "binary_sensor.nursery_motion",
+      "entity_id": "binary_sensor.nursery_motion",
+      "name": "Nursery PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "upstairs",
+      "host_room": "Margot's Room",
+      "x": 370,
+      "y": 235,
+      "heading_deg": 315,
+      "fov_deg": 110,
+      "range_px": 190
+    },
+    {
+      "id": "binary_sensor.guest_room_motion_occupancy",
+      "entity_id": "binary_sensor.guest_room_motion_occupancy",
+      "name": "Guest Room PIR (IKEA VALLHORN)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ikea_vallhorn_pir",
+      "floor": "upstairs",
+      "host_room": "Guest Room",
+      "x": 860,
+      "y": 42,
+      "heading_deg": 135,
+      "fov_deg": 120,
+      "range_px": 260,
+      "inner_fov_deg": 60,
+      "inner_range_px": 520
+    },
+    {
+      "id": "binary_sensor.guest_room_motion",
+      "entity_id": "binary_sensor.guest_room_motion",
+      "name": "Guest Room PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "upstairs",
+      "host_room": "Guest Room",
+      "x": 745,
+      "y": 48,
+      "heading_deg": 90,
+      "fov_deg": 110,
+      "range_px": 190
+    },
+    {
+      "id": "binary_sensor.office_motion",
+      "entity_id": "binary_sensor.office_motion",
+      "name": "Office PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "upstairs",
+      "host_room": "Office",
+      "x": 858,
+      "y": 305,
+      "heading_deg": 145,
+      "fov_deg": 110,
+      "range_px": 190
+    },
+    {
+      "id": "binary_sensor.upper_level_keypad_motion",
+      "entity_id": "binary_sensor.upper_level_keypad_motion",
+      "name": "Master Bedside Keypad PIR",
+      "sensor_type": "pir_motion",
+      "model_preset": "ring_keypad_pir",
+      "floor": "upstairs",
+      "host_room": "Master Bedroom",
+      "x": 138,
+      "y": 420,
+      "heading_deg": 0,
+      "fov_deg": 100,
+      "range_px": 165
+    },
+    {
+      "id": "binary_sensor.basement_stairs_ring_motion",
+      "entity_id": "binary_sensor.basement_stairs_ring_motion",
+      "name": "Basement Stairs Ring PIR (Z-Wave)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ring_alarm_pir_gen2",
+      "floor": "basement",
+      "host_room": "Basement Play Area",
+      "x": 535,
+      "y": 395,
+      "heading_deg": 90,
+      "fov_deg": 90,
+      "range_px": 475
+    },
+    {
+      "id": "binary_sensor.basement_ecobee_motion",
+      "entity_id": "binary_sensor.basement_ecobee_motion",
+      "name": "Basement Theater PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "basement",
+      "host_room": "Basement Theater",
+      "x": 420,
+      "y": 518,
+      "heading_deg": 270,
+      "fov_deg": 110,
+      "range_px": 190
+    },
+    {
+      "id": "binary_sensor.front_door",
+      "entity_id": "binary_sensor.front_door",
+      "name": "Front Door Contact",
+      "sensor_type": "door_contact",
+      "model_preset": "ring_contact_sensor",
+      "floor": "main",
+      "host_room": "Front Entry",
+      "door_id": "door_front_entry",
+      "x": 452,
+      "y": 508
+    },
+    {
+      "id": "binary_sensor.laundry_room_door",
+      "entity_id": "binary_sensor.laundry_room_door",
+      "name": "Laundry / Garage Door Contact",
+      "sensor_type": "door_contact",
+      "model_preset": "ring_contact_sensor",
+      "floor": "main",
+      "host_room": "Laundry Room",
+      "door_id": "door_fr_laundry",
+      "x": 642,
+      "y": 395
+    },
+    {
+      "id": "binary_sensor.back_door",
+      "entity_id": "binary_sensor.back_door",
+      "name": "Back Patio Door Contact",
+      "sensor_type": "door_contact",
+      "model_preset": "ring_contact_sensor",
+      "floor": "main",
+      "host_room": "Kitchen",
+      "x": 475,
+      "y": 87
+    },
+    {
+      "id": "binary_sensor.garage_side_door",
+      "entity_id": "binary_sensor.garage_side_door",
+      "name": "Garage Side Door Contact",
+      "sensor_type": "door_contact",
+      "model_preset": "ring_contact_sensor",
+      "floor": "main",
+      "host_room": "Garage",
+      "x": 832,
+      "y": 465
+    },
+    {
+      "id": "cover.garage_door",
+      "entity_id": "cover.garage_door",
+      "name": "Garage Roll-Up Door",
+      "sensor_type": "door_contact",
+      "floor": "main",
+      "host_room": "Garage",
+      "x": 680,
+      "y": 555
+    }
+  ],
+  "ble_proxies": [
+    {
+      "id": "living_room_speaker",
+      "entity_id": "sensor.living_room_speaker_bluetooth_proxy_status",
+      "name": "Living Room Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "main",
+      "host_room": "Living Room",
+      "x": 210,
+      "y": 410,
+      "radius_px": 210
+    },
+    {
+      "id": "family_room_speaker",
+      "entity_id": "sensor.family_room_speaker_bluetooth_proxy_status",
+      "name": "Family Room Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "main",
+      "host_room": "Family Room",
+      "x": 680,
+      "y": 200,
+      "radius_px": 210
+    },
+    {
+      "id": "master_bedroom_speaker",
+      "entity_id": "sensor.master_bedroom_speaker_bluetooth_proxy_status",
+      "name": "Master Bedroom Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "upstairs",
+      "host_room": "Master Bedroom",
+      "x": 230,
+      "y": 180,
+      "radius_px": 210
+    },
+    {
+      "id": "nursery_speaker",
+      "entity_id": "sensor.nursery_speaker_bluetooth_proxy_status",
+      "name": "Nursery Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "upstairs",
+      "host_room": "Margot's Room",
+      "x": 465,
+      "y": 140,
+      "radius_px": 190
+    },
+    {
+      "id": "office_speaker",
+      "entity_id": "sensor.office_speaker_bluetooth_proxy_status",
+      "name": "Office Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "upstairs",
+      "host_room": "Office",
+      "x": 765,
+      "y": 400,
+      "radius_px": 200
+    },
+    {
+      "id": "basement_speaker",
+      "entity_id": "sensor.basement_speaker_bluetooth_proxy_status",
+      "name": "Basement Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "basement",
+      "host_room": "Basement Play Area",
+      "x": 450,
+      "y": 295,
+      "radius_px": 260
+    }
+  ],
+  "connections": [
+    {
+      "from_room": "Front Entry",
+      "id": "conn_entry_lr",
+      "label": "Open Archway (Entry <-> Living Room)",
+      "to_room": "Living Room",
+      "type": "open_passage"
+    },
+    {
+      "from_room": "Front Entry",
+      "id": "conn_entry_kitchen",
+      "label": "Pathway (Entry <-> Kitchen)",
+      "to_room": "Kitchen",
+      "type": "open_passage"
+    },
+    {
+      "from_room": "Front Entry",
+      "id": "conn_entry_fr",
+      "label": "Pathway (Entry <-> Family/Laundry/Basement)",
+      "to_room": "Family Room",
+      "type": "open_passage"
+    },
+    {
+      "from_room": "Front Entry",
+      "id": "conn_entry_powder",
+      "label": "Powder Bath Doorway",
+      "to_room": "Powder Bath",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Front Entry",
+      "id": "conn_entry_laundry",
+      "label": "Laundry Room Doorway",
+      "to_room": "Laundry Room",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Living Room",
+      "id": "conn_lr_dr",
+      "label": "Open Passage (Living <-> Dining)",
+      "to_room": "Dining Room",
+      "type": "open_passage"
+    },
+    {
+      "from_room": "Dining Room",
+      "id": "conn_dr_kitchen",
+      "label": "Open Passage (Dining <-> Kitchen)",
+      "to_room": "Kitchen",
+      "type": "open_passage"
+    },
+    {
+      "from_room": "Kitchen",
+      "id": "conn_kitchen_fr",
+      "label": "Open Concept (Kitchen <-> Family Room)",
+      "to_room": "Family Room",
+      "type": "open_passage"
+    },
+    {
+      "entity_id": "binary_sensor.laundry_room_door",
+      "from_room": "Family Room",
+      "id": "conn_fr_garage",
+      "label": "Laundry / Garage Pathway",
+      "to_room": "Garage",
+      "type": "unmonitored_door"
+    },
+    {
+      "entity_id": "binary_sensor.laundry_room_door",
+      "from_room": "Laundry Room",
+      "id": "conn_laundry_garage",
+      "label": "Laundry -> Garage Door",
+      "to_room": "Garage",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Front Entry",
+      "id": "conn_entry_upstairs",
+      "label": "Main Stairs to Upstairs",
+      "to_room": "Upstairs Hallway & Stairs",
+      "type": "stairs"
+    },
+    {
+      "from_room": "Family Room",
+      "id": "conn_fr_basement_play",
+      "label": "Basement Stairs",
+      "to_room": "Basement Play Area",
+      "type": "stairs"
+    },
+    {
+      "from_room": "Family Room",
+      "id": "conn_fr_basement_theater",
+      "label": "Basement Stairs (Partial Sightline)",
+      "to_room": "Basement Theater",
+      "type": "stairs"
+    },
+    {
+      "from_room": "Upstairs Hallway & Stairs",
+      "id": "conn_hall_office",
+      "label": "Office Doorway (Next to Stairs)",
+      "to_room": "Office",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Upstairs Hallway & Stairs",
+      "id": "conn_hall_guest",
+      "label": "Guest Room Doorway (No Sensor)",
+      "to_room": "Guest Room",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Upstairs Hallway & Stairs",
+      "id": "conn_hall_nursery",
+      "label": "Nursery Doorway (Seen Partially by Cam)",
+      "to_room": "Margot's Room",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Upstairs Hallway & Stairs",
+      "id": "conn_hall_master",
+      "label": "Master Bedroom Entryway",
+      "to_room": "Master Bedroom",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Master Bedroom",
+      "id": "conn_master_wic",
+      "label": "Master Walk-In Closet Door",
+      "to_room": "Master W.I.C",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Master Bedroom",
+      "id": "conn_master_bath",
+      "label": "Master Bath / Shower Stall Entry",
+      "to_room": "Master Bathroom",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Upstairs Hallway & Stairs",
+      "id": "conn_hall_ubath",
+      "label": "Shared Bathroom (Double Vanity & Tub)",
+      "to_room": "Upstairs Bathroom",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Basement Play Area",
+      "id": "conn_play_theater",
+      "label": "Open Basement Divide (Play <-> Theater)",
+      "to_room": "Basement Theater",
+      "type": "open_passage"
+    },
+    {
+      "from_room": "Basement Play Area",
+      "id": "conn_play_storage",
+      "label": "Storage Room Door (Off East Basement Hall)",
+      "to_room": "Storage Room",
+      "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Basement Play Area",
+      "id": "conn_play_bbath",
+      "label": "Basement Bath Door (Off East Basement Hall)",
+      "to_room": "Basement Bathroom",
+      "type": "unmonitored_door"
+    }
+  ],
+  "rooms": [
+    {
+      "id": "master_bedroom",
+      "name": "Master Bedroom",
+      "floor": "upstairs",
+      "room_type": "room",
+      "x": 126,
+      "y": 32,
+      "width": 227,
+      "height": 516,
+      "svg_path": "M 126,32 L 353,32 L 353,484 L 440,484 L 440,548 L 126,548 Z",
+      "notes": "West wing front-to-back with lower vestibule leading to Master W.I.C and Master Bathroom.",
+      "entryways": [
+        {
+          "id": "door_master_hallway",
+          "wall": "right",
+          "offset": 224,
+          "width": 56,
+          "type": "door",
+          "target_room": "Upstairs Hallway & Stairs"
+        },
+        {
+          "id": "door_master_bath",
+          "wall": "right",
+          "offset": 452,
+          "width": 60,
+          "type": "door",
+          "target_room": "Master Bathroom"
+        }
+      ]
+    },
+    {
+      "id": "master_wic",
+      "name": "Master W.I.C",
+      "floor": "upstairs",
+      "room_type": "room",
+      "x": 353,
+      "y": 355,
+      "width": 109,
+      "height": 129,
+      "notes": "Standalone Master Walk-In Closet (6'3\" x 7'0\") opening South into the Master Bedroom vestibule.",
+      "entryways": [
+        {
+          "id": "door_wic_master",
+          "wall": "bottom",
+          "offset": 45,
+          "width": 42,
+          "type": "door",
+          "target_room": "Master Bedroom"
+        }
+      ]
+    },
+    {
+      "id": "upstairs_bathroom",
+      "name": "Upstairs Bathroom",
+      "floor": "upstairs",
+      "room_type": "room",
+      "x": 462,
+      "y": 316,
+      "width": 148,
+      "height": 133,
+      "svg_path": "M 462,316 L 610,316 L 610,417 L 560,417 L 560,449 L 462,449 Z",
+      "notes": "Upper shared bathroom (7'8\" x 4'11\") with tub & vanity opening North into Upstairs Hallway.",
+      "entryways": [
+        {
+          "id": "door_ubath_hall",
+          "wall": "top",
+          "offset": 46,
+          "width": 45,
+          "type": "door",
+          "target_room": "Upstairs Hallway & Stairs"
+        }
+      ]
+    },
+    {
+      "id": "master_bathroom",
+      "name": "Master Bathroom",
+      "floor": "upstairs",
+      "room_type": "room",
+      "x": 440,
+      "y": 417,
+      "width": 170,
+      "height": 131,
+      "svg_path": "M 440,449 L 560,449 L 560,417 L 610,417 L 610,548 L 440,548 Z",
+      "notes": "Lower en-suite Master Bathroom (6'5\" x 7'7\") with double vanity and walk-in shower stall.",
+      "entryways": [
+        {
+          "id": "door_mbath_master",
+          "wall": "left",
+          "offset": 81,
+          "width": 46,
+          "type": "door",
+          "target_room": "Master Bedroom"
+        }
+      ]
+    },
+    {
+      "id": "margots_room",
+      "name": "Margot's Room",
+      "floor": "upstairs",
+      "room_type": "room",
+      "x": 353,
+      "y": 32,
+      "width": 257,
+      "height": 222,
+      "svg_path": "M 353,32 L 563,32 L 563,143 L 610,143 L 610,254 L 353,254 Z",
+      "notes": "Top-center Nursery (10'6\" x 11'5\") including lower-right reach-in closet (Y=143..254).",
+      "entryways": [
+        {
+          "id": "door_margot_hallway",
+          "wall": "bottom",
+          "offset": 155,
+          "width": 50,
+          "type": "door",
+          "target_room": "Upstairs Hallway & Stairs"
+        }
+      ]
+    },
+    {
+      "id": "guest_room",
+      "name": "Guest Room",
+      "floor": "upstairs",
+      "room_type": "room",
+      "x": 563,
+      "y": 32,
+      "width": 311,
+      "height": 222,
+      "svg_path": "M 563,32 L 874,32 L 874,254 L 610,254 L 610,143 L 563,143 Z",
+      "notes": "Top-right Guest Room (13'6\" x 11'5\") including upper-left reach-in closet (Y=32..143).",
+      "entryways": [
+        {
+          "id": "door_guest_hallway",
+          "wall": "bottom",
+          "offset": 49,
+          "width": 50,
+          "type": "door",
+          "target_room": "Upstairs Hallway & Stairs"
+        }
+      ]
+    },
+    {
+      "id": "office",
+      "name": "Office",
+      "floor": "upstairs",
+      "room_type": "room",
+      "x": 671,
+      "y": 254,
+      "width": 203,
+      "height": 294,
+      "notes": "Bottom-right Office (10'3\" x 13'1\") including upper reach-in closet.",
+      "entryways": [
+        {
+          "id": "door_office_hallway",
+          "wall": "left",
+          "offset": 4,
+          "width": 57,
+          "type": "door",
+          "target_room": "Upstairs Hallway & Stairs"
+        }
+      ]
+    },
+    {
+      "id": "upstairs_hallway",
+      "name": "Upstairs Hallway & Stairs",
+      "floor": "upstairs",
+      "room_type": "transit",
+      "x": 353,
+      "y": 254,
+      "width": 318,
+      "height": 101,
+      "svg_path": "M 353,254 L 671,254 L 671,548 L 610,548 L 610,316 L 462,316 L 462,355 L 353,355 Z",
+      "notes": "Central upstairs hallway (16'3\" x 3'2\"), North-facing hallway linen closet, and stairwell.",
+      "entryways": [
+        {
+          "id": "door_hall_master",
+          "wall": "left",
+          "offset": 2,
+          "width": 56,
+          "type": "door",
+          "target_room": "Master Bedroom"
+        },
+        {
+          "id": "door_hall_margot",
+          "wall": "top",
+          "offset": 155,
+          "width": 50,
+          "type": "door",
+          "target_room": "Margot's Room"
+        },
+        {
+          "id": "door_hall_guest",
+          "wall": "top",
+          "offset": 259,
+          "width": 50,
+          "type": "door",
+          "target_room": "Guest Room"
+        },
+        {
+          "id": "door_hall_office",
+          "wall": "right",
+          "offset": 4,
+          "width": 57,
+          "type": "door",
+          "target_room": "Office"
+        }
+      ]
+    },
+    {
+      "id": "dining_room",
+      "name": "Dining Room",
+      "floor": "main",
+      "room_type": "room",
+      "x": 68,
+      "y": 87,
+      "width": 183,
+      "height": 203,
+      "notes": "Northwest Dining Room (11'5\" x 13'0\") opening to Kitchen and Living Room.",
+      "entryways": [
+        {
+          "id": "arch_dr_kitchen",
+          "wall": "right",
+          "offset": 103,
+          "width": 60,
+          "type": "open_passage",
+          "target_room": "Kitchen"
+        },
+        {
+          "id": "arch_dr_lr",
+          "wall": "bottom",
+          "offset": 28,
+          "width": 116,
+          "type": "open_passage",
+          "target_room": "Living Room"
+        }
+      ]
+    },
+    {
+      "id": "living_room",
+      "name": "Living Room",
+      "floor": "main",
+      "room_type": "room",
+      "x": 68,
+      "y": 290,
+      "width": 273,
+      "height": 218,
+      "notes": "Southwest Living Room (17'5\" x 13'9\") with South bay windows and wide opening to Foyer.",
+      "entryways": [
+        {
+          "id": "arch_lr_dr",
+          "wall": "top",
+          "offset": 28,
+          "width": 116,
+          "type": "open_passage",
+          "target_room": "Dining Room"
+        },
+        {
+          "id": "arch_lr_entry",
+          "wall": "right",
+          "offset": 128,
+          "width": 84,
+          "type": "open_passage",
+          "target_room": "Front Entry"
+        }
+      ]
+    },
+    {
+      "id": "kitchen",
+      "name": "Kitchen",
+      "floor": "main",
+      "room_type": "room",
+      "x": 251,
+      "y": 87,
+      "width": 283,
+      "height": 203,
+      "notes": "Central Kitchen (10'3\" x 13'0\") and Breakfast Nook (8'1\" x 13'0\") with island counter.",
+      "entryways": [
+        {
+          "id": "arch_kitchen_dr",
+          "wall": "left",
+          "offset": 103,
+          "width": 60,
+          "type": "open_passage",
+          "target_room": "Dining Room"
+        },
+        {
+          "id": "arch_kitchen_fr",
+          "wall": "right",
+          "offset": 10,
+          "width": 185,
+          "type": "open_passage",
+          "target_room": "Family Room"
+        },
+        {
+          "id": "path_kitchen_entry",
+          "wall": "bottom",
+          "offset": 159,
+          "width": 124,
+          "type": "open_passage",
+          "target_room": "Front Entry"
+        }
+      ]
+    },
+    {
+      "id": "powder_bath",
+      "name": "Powder Bath",
+      "floor": "main",
+      "room_type": "room",
+      "x": 341,
+      "y": 290,
+      "width": 69,
+      "height": 92,
+      "notes": "Main floor half-bath (4'3\" x 4'11\") off Foyer.",
+      "entryways": [
+        {
+          "id": "door_powder_foyer",
+          "wall": "right",
+          "offset": 55,
+          "width": 33,
+          "type": "door",
+          "target_room": "Front Entry"
+        }
+      ]
+    },
+    {
+      "id": "front_entry",
+      "name": "Front Entry",
+      "floor": "main",
+      "room_type": "room",
+      "x": 341,
+      "y": 290,
+      "width": 193,
+      "height": 218,
+      "svg_path": "M 410,290 L 534,290 L 534,508 L 341,508 L 341,382 L 410,382 Z",
+      "notes": "Main Foyer (8'9\" x 13'6\"), coat closet, front door, and stairs to Upper Level.",
+      "entryways": [
+        {
+          "id": "arch_entry_lr",
+          "wall": "left",
+          "offset": 128,
+          "width": 84,
+          "type": "open_passage",
+          "target_room": "Living Room"
+        },
+        {
+          "id": "path_entry_kitchen",
+          "wall": "top",
+          "offset": 69,
+          "width": 124,
+          "type": "open_passage",
+          "target_room": "Kitchen"
+        },
+        {
+          "id": "door_front_entry",
+          "wall": "bottom",
+          "offset": 85,
+          "width": 50,
+          "type": "door",
+          "target_room": "Exterior"
+        }
+      ]
+    },
+    {
+      "id": "family_room",
+      "name": "Family Room",
+      "floor": "main",
+      "room_type": "room",
+      "x": 534,
+      "y": 87,
+      "width": 298,
+      "height": 203,
+      "notes": "East Family Room (19'4\" x 12'9\") with North fireplace and solid green South wall.",
+      "entryways": [
+        {
+          "id": "arch_fr_kitchen",
+          "wall": "left",
+          "offset": 10,
+          "width": 185,
+          "type": "open_passage",
+          "target_room": "Kitchen"
+        }
+      ]
+    },
+    {
+      "id": "laundry_room",
+      "name": "Laundry Room",
+      "floor": "main",
+      "room_type": "room",
+      "x": 534,
+      "y": 290,
+      "width": 174,
+      "height": 131,
+      "notes": "Main floor Laundry / Mudroom (11'3\" x 8'5\") with door on West wall to Hallway/Foyer and South door to Garage.",
+      "entryways": [
+        {
+          "id": "door_laundry_hall",
+          "wall": "left",
+          "offset": 10,
+          "width": 48,
+          "type": "door",
+          "target_room": "Front Entry"
+        },
+        {
+          "id": "door_fr_laundry",
+          "wall": "bottom",
+          "offset": 85,
+          "width": 48,
+          "type": "door",
+          "target_room": "Garage"
+        }
+      ]
+    },
+    {
+      "id": "garage",
+      "name": "Garage",
+      "floor": "main",
+      "room_type": "room",
+      "x": 534,
+      "y": 421,
+      "width": 298,
+      "height": 134,
+      "notes": "2-car Garage below Laundry Room.",
+      "entryways": [
+        {
+          "id": "door_garage_fr",
+          "wall": "top",
+          "offset": 85,
+          "width": 48,
+          "type": "door",
+          "target_room": "Laundry Room"
+        }
+      ]
+    },
+    {
+      "id": "basement_theater",
+      "name": "Basement Theater",
+      "floor": "basement",
+      "room_type": "room",
+      "x": 93,
+      "y": 42,
+      "width": 267,
+      "height": 490,
+      "notes": "West side of Recreation Room with TV/fireplace wall, sectional couch, North wall ballpit, and South bi-fold closets.",
+      "entryways": [
+        {
+          "id": "arch_theater_play",
+          "wall": "right",
+          "offset": 20,
+          "width": 430,
+          "type": "open_passage",
+          "target_room": "Basement Play Area"
+        }
+      ]
+    },
+    {
+      "id": "basement_play_area",
+      "name": "Basement Play Area",
+      "floor": "basement",
+      "room_type": "room",
+      "x": 360,
+      "y": 42,
+      "width": 335,
+      "height": 490,
+      "svg_path": "M 360,42 L 524,42 L 524,135 L 695,135 L 695,230 L 572,230 L 572,410 L 635,410 L 635,532 L 360,532 Z",
+      "notes": "East side of Recreation Room including Wet Bar (9'0\" x 8'5\"), Play Area mats, East hallway (7'0\" x 4'8\"), and stairs.",
+      "entryways": [
+        {
+          "id": "arch_play_theater",
+          "wall": "left",
+          "offset": 20,
+          "width": 430,
+          "type": "open_passage",
+          "target_room": "Basement Theater"
+        },
+        {
+          "id": "door_play_bbath",
+          "wall": "top",
+          "offset": 215,
+          "width": 45,
+          "type": "door",
+          "target_room": "Basement Bathroom"
+        },
+        {
+          "id": "door_play_storage",
+          "wall": "right",
+          "offset": 103,
+          "width": 70,
+          "type": "door",
+          "target_room": "Storage Room"
+        }
+      ]
+    },
+    {
+      "id": "basement_bathroom",
+      "name": "Basement Bathroom",
+      "floor": "basement",
+      "room_type": "transit",
+      "x": 524,
+      "y": 42,
+      "width": 171,
+      "height": 93,
+      "notes": "Basement Bathroom (5'11\" x 4'7\") to the right of Wet Bar opening South into basement hallway.",
+      "entryways": [
+        {
+          "id": "door_bbath_play",
+          "wall": "bottom",
+          "offset": 51,
+          "width": 45,
+          "type": "door",
+          "target_room": "Basement Play Area"
+        }
+      ]
+    },
+    {
+      "id": "storage_room",
+      "name": "Storage Room",
+      "floor": "basement",
+      "room_type": "room",
+      "x": 695,
+      "y": 42,
+      "width": 220,
+      "height": 318,
+      "notes": "East Storage Room / Gym opening West into the basement hallway.",
+      "entryways": [
+        {
+          "id": "door_storage_play",
+          "wall": "left",
+          "offset": 103,
+          "width": 70,
+          "type": "door",
+          "target_room": "Basement Play Area"
+        }
+      ]
+    }
+  ]
+}

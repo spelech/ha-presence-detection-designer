@@ -2,44 +2,21 @@
 
 from __future__ import annotations
 
-import itertools
 import logging
+import time
 from typing import Any
-
-try:
-    from homeassistant.components.http import HomeAssistantView
-
-    if type(HomeAssistantView).__name__ == "MagicMock":
-        raise ImportError
-except Exception:  # noqa: BLE001
-
-    class HomeAssistantView:  # type: ignore[no-redef]
-        """Fallback HomeAssistantView when running outside Home Assistant."""
-
-        url: str = ""
-        name: str = ""
-        requires_auth: bool = True
-
-        def json(self, result: Any, status_code: int = 200) -> dict[str, Any]:
-            return {"status_code": status_code, "body": result}
-
 
 from .bayesian_engine import (
     build_effective_observations,
     config_to_yaml_representations,
     evaluate_bayesian,
     explain_config_in_natural_language,
-    normalize_observation,
     parse_yaml_or_dict_to_config,
-    prior_and_lrs_to_posterior,
 )
 from .const import (
-    BAYESIAN_PRESET_DESCRIPTIONS,
-    BAYESIAN_PRESET_WEIGHTS,
     CONF_BAYESIAN_OBSERVATIONS,
     CONF_BAYESIAN_PRIOR,
     CONF_BAYESIAN_THRESHOLD,
-    CONF_ROOM_NAME,
     DEFAULT_BAYESIAN_PRIOR,
     DEFAULT_BAYESIAN_THRESHOLD,
     DOMAIN,
@@ -47,311 +24,52 @@ from .const import (
 )
 from .coordinator import RoomPresenceCoordinator, _safe_state_getter
 from .llm_verifier import LLMVerifier
-from .replay_engine import (
-    async_fetch_room_history,
-    simulate_config_on_timelines,
-    simulate_replay_comparison,
-)
-from .spatial_inference import (
-    ALL_SHADE_ENTITIES,
-    BLE_TRACKER_ENTITIES,
-    CAMERA_WHOLE_FRAME_ENTITY,
-    SUNLIT_STATIC_SUBZONES,
-    evaluate_spatial_frame,
-    reconstruct_house_timeline,
-)
-from .spatial_topology import (
-    apply_compiled_topology_to_config,
-    compile_floorplan_topology,
-    get_default_floorplan,
-)
+from .spatial_inference import evaluate_spatial_frame
+from .spatial_topology import compile_floorplan_topology
 from .store import async_get_store
+from .view_serializers import (
+    HomeAssistantView,
+    async_apply_and_persist_room_config,
+    build_combinatorics_preview,
+    build_presets_metadata,
+    collect_ha_areas_and_entities,
+    serialize_room_coordinator,
+)
+from .views_analytics import (
+    PDDReplayView,
+    PDDStatisticsView,
+    PDDTimelineReconstructionView,
+)
+from .views_spatial import (
+    PDDCameraAlignView,
+    PDDFloorplanView,
+    PDDNotificationTestView,
+)
+
+__all__ = [
+    "HomeAssistantView",
+    "PDDCameraAlignView",
+    "PDDFloorplanView",
+    "PDDGlobalSettingsView",
+    "PDDNotificationTestView",
+    "PDDOverviewView",
+    "PDDPreviewBayesianView",
+    "PDDReplayView",
+    "PDDRoomActionView",
+    "PDDRoomConfigView",
+    "PDDRoomRollbackView",
+    "PDDStatisticsView",
+    "PDDTimelineReconstructionView",
+    "PDDTranslateView",
+    "async_apply_and_persist_room_config",
+    "async_register_views",
+    "build_combinatorics_preview",
+    "build_presets_metadata",
+    "collect_ha_areas_and_entities",
+    "serialize_room_coordinator",
+]
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def build_combinatorics_preview(
-    prior: float,
-    threshold: float,
-    observations: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Compute solo and pair Bayesian posteriors to show which sensor combinations cross the threshold."""
-    normalized = [normalize_observation(o) for o in observations if isinstance(o, dict)]
-    prior_clamped = max(0.01, min(0.99, float(prior)))
-    thresh_pct = round(float(threshold) * 100.0, 1)
-
-    solo_triggers: list[dict[str, Any]] = []
-    solo_sub_threshold: list[dict[str, Any]] = []
-
-    for obs in normalized:
-        lr = float(obs["likelihood_ratio"])
-        post = prior_and_lrs_to_posterior(prior_clamped, [lr])
-        post_pct = round(post * 100.0, 1)
-        item = {
-            "entity_id": obs["entity_id"],
-            "label": obs["label"],
-            "preset": obs["preset"],
-            "prob_given_true": obs["prob_given_true"],
-            "prob_given_false": obs["prob_given_false"],
-            "likelihood_ratio": round(lr, 2),
-            "posterior_pct": post_pct,
-            "delta_pct": round((post - prior_clamped) * 100.0, 1),
-        }
-        if post >= threshold:
-            solo_triggers.append(item)
-        else:
-            solo_sub_threshold.append(item)
-
-    solo_triggers.sort(key=lambda x: x["posterior_pct"], reverse=True)
-    solo_sub_threshold.sort(key=lambda x: x["posterior_pct"], reverse=True)
-
-    pair_triggers: list[dict[str, Any]] = []
-    pair_sub_threshold: list[dict[str, Any]] = []
-
-    # Check all pairs of sub-threshold sensors (where both don't already solo-trigger)
-    for obs_a, obs_b in itertools.combinations(normalized, 2):
-        # Skip pairs of mutually exclusive observations on the exact same entity_id
-        if obs_a["entity_id"] == obs_b["entity_id"]:
-            continue
-        post_a = prior_and_lrs_to_posterior(prior_clamped, [float(obs_a["likelihood_ratio"])])
-        post_b = prior_and_lrs_to_posterior(prior_clamped, [float(obs_b["likelihood_ratio"])])
-        if post_a >= threshold or post_b >= threshold:
-            continue
-
-        combined = prior_and_lrs_to_posterior(
-            prior_clamped,
-            [float(obs_a["likelihood_ratio"]), float(obs_b["likelihood_ratio"])],
-        )
-        combined_pct = round(combined * 100.0, 1)
-        pair_item = {
-            "labels": f"{obs_a['label']} + {obs_b['label']}",
-            "entities": [obs_a["entity_id"], obs_b["entity_id"]],
-            "presets": f"{obs_a['preset']} + {obs_b['preset']}",
-            "posterior_pct": combined_pct,
-            "crosses_threshold": combined >= threshold,
-        }
-        if combined >= threshold:
-            pair_triggers.append(pair_item)
-        else:
-            pair_sub_threshold.append(pair_item)
-
-    pair_triggers.sort(key=lambda x: x["posterior_pct"], reverse=True)
-    pair_sub_threshold.sort(key=lambda x: x["posterior_pct"], reverse=True)
-
-    return {
-        "prior_pct": round(prior_clamped * 100.0, 1),
-        "threshold_pct": thresh_pct,
-        "solo_triggers": solo_triggers,
-        "solo_sub_threshold": solo_sub_threshold,
-        "pair_triggers": pair_triggers[:20],
-        "pair_sub_threshold": pair_sub_threshold[:15],
-    }
-
-
-def serialize_room_coordinator(
-    coordinator: RoomPresenceCoordinator,
-    revisions: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Serialize a RoomPresenceCoordinator and its live state for the Design Studio UI."""
-    coordinator._eval_conditions_and_update()
-    sm = coordinator.state_machine
-    combinatorics = build_combinatorics_preview(
-        prior=coordinator.bayesian_prior,
-        threshold=coordinator.bayesian_threshold,
-        observations=coordinator.bayesian_observations,
-    )
-    return {
-        "entry_id": coordinator.entry_id,
-        "room_name": coordinator.room_name,
-        "area_id": coordinator.area_id,
-        "mode": str(coordinator.mode),
-        "connected_rooms": coordinator.connected_rooms,
-        "is_present": sm.is_present,
-        "box_state": str(sm.box_state),
-        "perimeter_sealed": sm.is_perimeter_sealed,
-        "vacating_countdown": sm.vacating_countdown,
-        "override": sm.override,
-        "bayesian_probability": sm.bayesian_probability,
-        "bayesian_probability_pct": sm.bayesian_probability_pct,
-        "bayesian_prior": coordinator.bayesian_prior,
-        "bayesian_prior_pct": round(coordinator.bayesian_prior * 100.0, 1),
-        "bayesian_threshold": coordinator.bayesian_threshold,
-        "bayesian_threshold_pct": round(coordinator.bayesian_threshold * 100.0, 1),
-        "bayesian_occupied": sm.bayesian_occupied,
-        "active_observations": sm.active_observations,
-        "inactive_observations": sm.inactive_observations,
-        "active_conditions": sm.active_conditions,
-        "last_trigger_entity": sm.last_trigger_entity,
-        "last_llm_result": sm.last_llm_result,
-        "natural_language_summary": sm.bayesian_summary,
-        "natural_language_explanation": sm.build_natural_language_explanation(),
-        "rule_guide": coordinator.rule_guide,
-        "ha_bayesian_yaml": coordinator.yaml_representations.get("ha_bayesian_yaml", ""),
-        "designer_yaml": coordinator.yaml_representations.get("designer_yaml", ""),
-        "combinatorics": combinatorics,
-        "spatial_estimate": coordinator.last_spatial_estimate,
-        "config": coordinator.config,
-        "revisions": [
-            {
-                "index": idx,
-                "timestamp": rev.get("timestamp", ""),
-                "note": rev.get("note", ""),
-                "config": rev.get("config", {}),
-            }
-            for idx, rev in enumerate(revisions or [])
-        ],
-    }
-
-
-def collect_ha_areas_and_entities(hass: Any) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-    """Collect Home Assistant areas and candidate entities for the Design Studio."""
-    areas: list[dict[str, str]] = []
-    entity_area_map: dict[str, str] = {}
-
-    if hass:
-        try:
-            from homeassistant.helpers import (
-                area_registry as ar,
-            )
-            from homeassistant.helpers import (
-                device_registry as dr,
-            )
-            from homeassistant.helpers import (
-                entity_registry as er,
-            )
-
-            area_reg = ar.async_get(hass)
-            if hasattr(area_reg, "async_list_areas"):
-                for area in area_reg.async_list_areas():
-                    areas.append({"id": str(area.id), "name": str(area.name)})
-
-            dev_reg = dr.async_get(hass)
-            ent_reg = er.async_get(hass)
-            if hasattr(ent_reg, "entities") and isinstance(ent_reg.entities, dict):
-                for eid, entry in ent_reg.entities.items():
-                    aid = getattr(entry, "area_id", None)
-                    if (
-                        not aid
-                        and getattr(entry, "device_id", None)
-                        and hasattr(dev_reg, "async_get")
-                    ):
-                        dev = dev_reg.async_get(entry.device_id)
-                        if dev:
-                            aid = getattr(dev, "area_id", None)
-                    if aid:
-                        entity_area_map[str(eid)] = str(aid)
-        except Exception:  # noqa: BLE001
-            pass
-
-    areas.sort(key=lambda a: a["name"].lower())
-
-    entities: list[dict[str, Any]] = []
-    allowed_prefixes = (
-        "binary_sensor.",
-        "sensor.",
-        "media_player.",
-        "camera.",
-        "light.",
-        "fan.",
-        "switch.",
-        "person.",
-        "device_tracker.",
-        "input_boolean.",
-    )
-    if hass and hasattr(hass, "states") and hasattr(hass.states, "async_all"):
-        try:
-            for st in hass.states.async_all():
-                eid = str(getattr(st, "entity_id", ""))
-                if not eid.startswith(allowed_prefixes):
-                    continue
-                attrs = getattr(st, "attributes", {}) or {}
-                entities.append(
-                    {
-                        "entity_id": eid,
-                        "name": str(attrs.get("friendly_name", eid)),
-                        "domain": eid.split(".", 1)[0],
-                        "state": str(getattr(st, "state", "")),
-                        "device_class": str(attrs.get("device_class", "")),
-                        "area_id": entity_area_map.get(eid, ""),
-                    }
-                )
-        except Exception:  # noqa: BLE001
-            pass
-
-    entities.sort(key=lambda e: e["entity_id"])
-    return areas, entities
-
-
-def build_presets_metadata() -> dict[str, dict[str, Any]]:
-    """Return metadata for each Bayesian weight preset."""
-    presets: dict[str, dict[str, Any]] = {}
-    for preset_key, (p_true, p_false) in BAYESIAN_PRESET_WEIGHTS.items():
-        presets[str(preset_key)] = {
-            "prob_given_true": p_true,
-            "prob_given_false": p_false,
-            "likelihood_ratio": round(p_true / p_false, 2),
-            "description": BAYESIAN_PRESET_DESCRIPTIONS.get(preset_key, ""),
-        }
-    presets["custom"] = {
-        "prob_given_true": 0.75,
-        "prob_given_false": 0.15,
-        "likelihood_ratio": 5.0,
-        "description": BAYESIAN_PRESET_DESCRIPTIONS.get("custom", ""),
-    }
-    return presets
-
-
-async def async_apply_and_persist_room_config(
-    hass: Any,
-    entry_id: str,
-    raw_config: dict[str, Any] | str,
-    note: str = "Updated via Design Studio",
-    record_revision: bool = True,
-) -> dict[str, Any]:
-    """Normalize, persist to .storage + ConfigEntry, and hot-apply a room configuration."""
-    store = await async_get_store(hass)
-    normalized = parse_yaml_or_dict_to_config(raw_config)
-
-    coordinator: RoomPresenceCoordinator | None = hass.data.get(DOMAIN, {}).get(entry_id)
-    base_cfg: dict[str, Any] = {}
-    if isinstance(coordinator, RoomPresenceCoordinator):
-        base_cfg = dict(coordinator.config)
-    else:
-        stored_room = store.get_room(entry_id)
-        if stored_room:
-            base_cfg = stored_room
-
-    merged = {**base_cfg, **normalized}
-
-    # 1. Persist to .storage/presence_detection_designer with revision snapshot
-    await store.async_save_room(
-        entry_id=entry_id,
-        config=merged,
-        note=note,
-        record_revision=record_revision,
-    )
-
-    # 2. Update Home Assistant ConfigEntry data in-place (without triggering a full entry reload)
-    if hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_get_entry"):
-        entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is not None and hasattr(hass.config_entries, "async_update_entry"):
-            update_kwargs: dict[str, Any] = {
-                "title": str(merged.get(CONF_ROOM_NAME, getattr(entry, "title", "Room"))),
-                "data": merged,
-            }
-            if getattr(entry, "options", None):
-                update_kwargs["options"] = {**entry.options, **merged}
-            hass.config_entries.async_update_entry(
-                entry,
-                **update_kwargs,
-            )
-
-    # 3. Hot-update running coordinator in-place
-    if isinstance(coordinator, RoomPresenceCoordinator):
-        await coordinator.async_apply_config_in_place(merged)
-        return serialize_room_coordinator(coordinator, revisions=store.get_revisions(entry_id))
-
-    return {"entry_id": entry_id, "config": merged, "revisions": store.get_revisions(entry_id)}
 
 
 class PDDOverviewView(HomeAssistantView):
@@ -378,13 +96,15 @@ class PDDOverviewView(HomeAssistantView):
         areas, entities = collect_ha_areas_and_entities(hass)
         floorplan = store.get_floorplan()
         compiled_topology = compile_floorplan_topology(floorplan)
-        neg_space_enabled = bool(store.global_settings.get("negative_space_enabled", True))
+        guest_mode_enabled = bool(store.global_settings.get("guest_mode_enabled", False))
+        neg_space_enabled = (
+            bool(store.global_settings.get("negative_space_enabled", True))
+            and not guest_mode_enabled
+        )
 
         def _live_state_str(eid: str) -> str:
             st = _safe_state_getter(hass, eid)
             return str(st.state) if st is not None else "off"
-
-        import time
 
         spatial_inference = evaluate_spatial_frame(
             floorplan=floorplan,
@@ -392,6 +112,7 @@ class PDDOverviewView(HomeAssistantView):
             state_getter=_live_state_str,
             now_ts=time.time(),
             negative_space_enabled=neg_space_enabled,
+            guest_mode_enabled=guest_mode_enabled,
         )
 
         return self.json(
@@ -586,7 +307,6 @@ class PDDGlobalSettingsView(HomeAssistantView):
 
         updated_gs = await store.async_update_global_settings(body)
 
-        # Refresh coordinators so they pick up any updated global LLM defaults
         for coord in hass.data.get(DOMAIN, {}).values():
             if isinstance(coord, RoomPresenceCoordinator):
                 coord._apply_config_fields(coord.config, preserve_state=True)
@@ -669,485 +389,6 @@ class PDDTranslateView(HomeAssistantView):
             result["natural_language"] = result["natural_language_explanation"]
         if "designer_config" in result and "config" not in result:
             result["config"] = result["designer_config"]
-        return self.json(result)
-
-
-class PDDStatisticsView(HomeAssistantView):
-    """Return historical occupancy statistics, time-series curve, and sensor swimlanes for a room."""
-
-    url = "/api/presence_detection_designer/room/{entry_id}/statistics"
-    name = "api:presence_detection_designer:room_statistics"
-    requires_auth = True
-
-    async def get(self, request: Any, entry_id: str) -> Any:
-        """Handle GET /api/presence_detection_designer/room/{entry_id}/statistics."""
-        hass = request.app["hass"]
-        store = await async_get_store(hass)
-        coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
-
-        if isinstance(coordinator, RoomPresenceCoordinator):
-            config = dict(coordinator.config)
-        else:
-            stored = store.get_room(entry_id)
-            if not stored:
-                return self.json({"error": f"Room {entry_id} not found"}, status_code=404)
-            config = stored
-
-        query = getattr(request, "query", {}) or {}
-        try:
-            hours = float(query.get("hours", 6.0))
-        except (ValueError, TypeError):
-            hours = 6.0
-
-        timelines, start_ts, end_ts = await async_fetch_room_history(
-            hass=hass,
-            entry_id=entry_id,
-            config=config,
-            hours=hours,
-        )
-        stats = simulate_config_on_timelines(
-            raw_config=config,
-            entity_timelines=timelines,
-            start_ts=start_ts,
-            end_ts=end_ts,
-        )
-        stats["entry_id"] = entry_id
-        return self.json(stats)
-
-
-class PDDReplayView(HomeAssistantView):
-    """Run a historical What-If Replay comparing Baseline vs. Tuned Candidate configuration."""
-
-    url = "/api/presence_detection_designer/room/{entry_id}/replay"
-    name = "api:presence_detection_designer:room_replay"
-    requires_auth = True
-
-    async def post(self, request: Any, entry_id: str) -> Any:
-        """Handle POST /api/presence_detection_designer/room/{entry_id}/replay."""
-        hass = request.app["hass"]
-        store = await async_get_store(hass)
-        coordinator = hass.data.get(DOMAIN, {}).get(entry_id)
-
-        if isinstance(coordinator, RoomPresenceCoordinator):
-            baseline_cfg = dict(coordinator.config)
-        else:
-            stored = store.get_room(entry_id)
-            if not stored:
-                return self.json({"error": f"Room {entry_id} not found"}, status_code=404)
-            baseline_cfg = stored
-
-        try:
-            body = await request.json()
-        except Exception as err:  # noqa: BLE001
-            return self.json({"error": f"Invalid JSON: {err}"}, status_code=400)
-
-        try:
-            hours = float(body.get("hours", 6.0))
-        except (ValueError, TypeError):
-            hours = 6.0
-
-        raw_cand = (
-            body.get("candidate_config")
-            or body.get("yaml_config")
-            or body.get("config")
-            or baseline_cfg
-        )
-        cand_norm = parse_yaml_or_dict_to_config(raw_cand)
-        merged_cand = {**baseline_cfg, **cand_norm}
-        if "negative_space" in body:
-            merged_cand["negative_space_enabled"] = bool(body["negative_space"])
-        if "baseline_negative_space" in body:
-            baseline_cfg = {
-                **baseline_cfg,
-                "negative_space_enabled": bool(body["baseline_negative_space"]),
-            }
-
-        timelines, start_ts, end_ts = await async_fetch_room_history(
-            hass=hass,
-            entry_id=entry_id,
-            config=baseline_cfg,
-            hours=hours,
-            extra_configs=[merged_cand],
-        )
-        comparison = simulate_replay_comparison(
-            baseline_config=baseline_cfg,
-            candidate_config=merged_cand,
-            entity_timelines=timelines,
-            start_ts=start_ts,
-            end_ts=end_ts,
-        )
-        comparison["entry_id"] = entry_id
-        return self.json(comparison)
-
-
-class PDDFloorplanView(HomeAssistantView):
-    """Get, save, reset, and compile 2D spatial floorplan & camera view cones into room rules."""
-
-    url = "/api/presence_detection_designer/floorplan"
-    name = "api:presence_detection_designer:floorplan"
-    requires_auth = True
-
-    async def get(self, request: Any) -> Any:
-        """Handle GET /api/presence_detection_designer/floorplan."""
-        hass = request.app["hass"]
-        store = await async_get_store(hass)
-        fp = store.get_floorplan()
-        return self.json(
-            {
-                "floorplan": fp,
-                "compiled_topology": compile_floorplan_topology(fp),
-            }
-        )
-
-    async def post(self, request: Any) -> Any:
-        """Handle POST /api/presence_detection_designer/floorplan."""
-        hass = request.app["hass"]
-        store = await async_get_store(hass)
-        try:
-            body = await request.json()
-        except Exception as err:  # noqa: BLE001
-            return self.json({"error": f"Invalid JSON: {err}"}, status_code=400)
-
-        action = str(body.get("action") or "save")
-        if action == "reset":
-            fp = await store.async_save_floorplan(get_default_floorplan())
-            compiled = compile_floorplan_topology(fp)
-            return self.json(
-                {
-                    "status": "ok",
-                    "floorplan": fp,
-                    "compiled_topology": compiled,
-                }
-            )
-
-        incoming_fp = body.get("floorplan")
-        if isinstance(incoming_fp, dict) and incoming_fp.get("floors"):
-            fp = await store.async_save_floorplan(incoming_fp)
-        else:
-            fp = store.get_floorplan()
-
-        compiled = compile_floorplan_topology(fp)
-        updated_rooms: list[dict[str, Any]] = []
-
-        if action == "compile_and_apply" or bool(body.get("apply", False)):
-            domain_data = hass.data.get(DOMAIN, {}) if hasattr(hass, "data") else {}
-            seen_eids: set[str] = set()
-
-            for eid, coordinator in list(domain_data.items()):
-                if not isinstance(coordinator, RoomPresenceCoordinator):
-                    continue
-                seen_eids.add(eid)
-                updated_cfg = apply_compiled_topology_to_config(coordinator.config, compiled)
-                room_payload = await async_apply_and_persist_room_config(
-                    hass=hass,
-                    entry_id=eid,
-                    raw_config=updated_cfg,
-                    note="Compiled from 2D Floorplan & Camera View Cones",
-                    record_revision=True,
-                )
-                updated_rooms.append(room_payload)
-
-            for eid, stored_cfg in store.rooms.items():
-                if eid in seen_eids:
-                    continue
-                updated_cfg = apply_compiled_topology_to_config(stored_cfg, compiled)
-                room_payload = await async_apply_and_persist_room_config(
-                    hass=hass,
-                    entry_id=eid,
-                    raw_config=updated_cfg,
-                    note="Compiled from 2D Floorplan & Camera View Cones",
-                    record_revision=True,
-                )
-                updated_rooms.append(room_payload)
-
-        return self.json(
-            {
-                "status": "ok",
-                "floorplan": fp,
-                "compiled_topology": compiled,
-                "updated_rooms": updated_rooms,
-            }
-        )
-
-
-class PDDCameraAlignView(HomeAssistantView):
-    """View to analyze camera snapshots for vanishing horizon tilt and opening azimuth alignment."""
-
-    url = "/api/presence_detection_designer/camera/{camera_id}/align"
-    name = "api:presence_detection_designer:camera_align"
-    requires_auth = True
-
-    async def post(self, request: Any, camera_id: str) -> Any:
-        """Handle POST /api/presence_detection_designer/camera/{camera_id}/align."""
-        hass = request.app["hass"]
-        store = await async_get_store(hass)
-        fp = store.get_floorplan()
-
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            body = {}
-
-        # 1. Locate camera in floorplan or request body
-        cameras = fp.get("cameras", [])
-        cam_dict: dict[str, Any] | None = None
-        for c in cameras:
-            if c.get("id") == camera_id or c.get("camera_entity") == camera_id:
-                cam_dict = dict(c)
-                break
-
-        if not cam_dict:
-            cam_dict = body.get("camera_dict") or {"id": camera_id}
-
-        # Override any camera properties passed in body
-        if body.get("camera_dict"):
-            cam_dict.update(body["camera_dict"])
-
-        # 2. Acquire snapshot image bytes
-        image_bytes: bytes | None = None
-        image_b64 = body.get("image_b64")
-        if image_b64:
-            if "," in image_b64:
-                image_b64 = image_b64.split(",", 1)[1]
-            try:
-                import base64
-
-                image_bytes = base64.b64decode(image_b64)
-            except Exception as err:  # noqa: BLE001
-                return self.json({"error": f"Invalid base64 image: {err}"}, status_code=400)
-
-        if not image_bytes:
-            camera_entity = (
-                body.get("camera_entity")
-                or cam_dict.get("camera_entity")
-                or (camera_id if camera_id.startswith("camera.") else None)
-            )
-            if camera_entity and hass is not None:
-                try:
-                    from homeassistant.components.camera import async_get_image
-
-                    image_data = await async_get_image(hass, camera_entity)
-                    image_bytes = image_data.content
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Could not fetch camera snapshot for %s: %s", camera_entity, err
-                    )
-
-        if not image_bytes:
-            return self.json(
-                {
-                    "error": (
-                        f"No image snapshot available for camera '{camera_id}'. "
-                        "Provide 'image_b64' or ensure an active HA camera entity exists."
-                    )
-                },
-                status_code=400,
-            )
-
-        # 3. Locate room and entryways
-        host_room_name = cam_dict.get("host_room")
-        room_box = body.get("room_box")
-        entryways = body.get("entryways")
-
-        if not room_box or not entryways:
-            rooms = fp.get("rooms", [])
-            matched_room = next((r for r in rooms if r.get("name") == host_room_name), None)
-            if matched_room:
-                if not room_box:
-                    room_box = {
-                        "name": matched_room.get("name"),
-                        "x": matched_room.get("x", 0),
-                        "y": matched_room.get("y", 0),
-                        "width": matched_room.get("width", 100),
-                        "height": matched_room.get("height", 100),
-                    }
-                if not entryways:
-                    entryways = list(matched_room.get("entryways", []))
-
-        if not room_box:
-            room_box = {
-                "name": host_room_name or "Unknown",
-                "x": 0,
-                "y": 0,
-                "width": 200,
-                "height": 200,
-            }
-        if entryways is None:
-            entryways = []
-
-        try:
-            from .camera_alignment_cv import analyze_camera_view_alignment
-
-            result = analyze_camera_view_alignment(image_bytes, cam_dict, entryways, room_box)
-            return self.json(result)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.exception("Failed to analyze camera view alignment: %s", err)
-            return self.json({"error": f"Alignment analysis failed: {err}"}, status_code=500)
-
-
-class PDDNotificationTestView(HomeAssistantView):
-    """View to dispatch a test Slack notification."""
-
-    url = "/api/presence_detection_designer/notifications/test"
-    name = "api:presence_detection_designer:notifications:test"
-    requires_auth = True
-
-    async def post(self, request: Any) -> Any:
-        """Handle test notification request."""
-        hass = request.app["hass"]
-        body: dict[str, Any] = {}
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-
-        service = body.get("slack_notify_service")
-        channel = body.get("slack_channel")
-
-        from .const import DATA_STORE, DOMAIN
-        from .coordinator import RoomPresenceCoordinator
-        from .notifications import NotificationDispatcher, TransitionAttribution
-
-        domain_data = getattr(hass, "data", {}).get(DOMAIN, {})
-        coordinators = [c for c in domain_data.values() if isinstance(c, RoomPresenceCoordinator)]
-        if coordinators:
-            success = await coordinators[0].async_send_test_notification(
-                service=service, channel=channel
-            )
-            return self.json(
-                {
-                    "success": success,
-                    "message": f"Test alert sent via {service or 'notify.scdbots'} to {channel or '#presence-alerts'}",
-                }
-            )
-
-        # Fallback if no coordinator is active
-        store = domain_data.get(DATA_STORE)
-        global_settings = dict(getattr(store, "global_settings", {}) or {})
-        if service:
-            global_settings["slack_notify_service"] = service
-        if channel:
-            global_settings["slack_channel"] = channel
-
-        dispatcher = NotificationDispatcher()
-        attribution = TransitionAttribution(
-            room_id="studio_test",
-            room_name="Design Studio",
-            from_state="clear",
-            to_state="occupied",
-            primary_driver="Manual Studio Verification Ping",
-            driver_type="sensor",
-            confidence_pct=95.0,
-            threshold_pct=75.0,
-            active_sensors=["test_sensor.manual_ping"],
-            sustaining_conditions=[],
-            arrival_context="Manual Studio Test",
-            duration_occupied_str=None,
-        )
-        success = await dispatcher.async_dispatch_notification(
-            hass,
-            attribution,
-            global_settings,
-            {"notify_slack": True, "notify_on_occupied": True},
-        )
-        return self.json(
-            {
-                "success": success,
-                "message": f"Test alert sent via {global_settings.get('slack_notify_service', 'notify.scdbots')} to {global_settings.get('slack_channel', '#presence-alerts')}",
-            }
-        )
-
-
-class PDDTimelineReconstructionView(HomeAssistantView):
-    """Reconstruct a chronological whole-house spatial timeline across all floorplan sensors and cameras."""
-
-    url = "/api/presence_detection_designer/timeline_reconstruction"
-    name = "api:presence_detection_designer:timeline_reconstruction"
-    requires_auth = True
-
-    async def get(self, request: Any) -> Any:
-        """Handle GET /api/presence_detection_designer/timeline_reconstruction?hours=6&negative_space=true."""
-        hass = request.app["hass"]
-        store = await async_get_store(hass)
-        fp = store.get_floorplan()
-
-        query = getattr(request, "query", {}) or {}
-        try:
-            hours = float(query.get("hours", 6.0))
-        except (ValueError, TypeError):
-            hours = 6.0
-
-        raw_ns = query.get("negative_space")
-        if raw_ns is None:
-            neg_space_enabled = bool(store.global_settings.get("negative_space_enabled", True))
-        else:
-            neg_space_enabled = str(raw_ns).strip().lower() not in ("false", "0", "no", "off")
-
-        # Collect all spatial entities across cameras, sub-zones, PIRs, doors, BLE trackers, shades, and room configs
-        house_entities: list[str] = (
-            list(CAMERA_WHOLE_FRAME_ENTITY.values())
-            + list(BLE_TRACKER_ENTITIES)
-            + list(ALL_SHADE_ENTITIES)
-        )
-        for sun_rule in SUNLIT_STATIC_SUBZONES.values():
-            for corr_eid in sun_rule.get("corroborating_entities", ()):
-                if corr_eid and corr_eid not in house_entities:
-                    house_entities.append(corr_eid)
-        for cam in fp.get("cameras", []) or []:
-            for sz in cam.get("sub_zones", []) or []:
-                eid = str(sz.get("entity_id", ""))
-                if eid and eid not in house_entities:
-                    house_entities.append(eid)
-        for sensor in fp.get("sensors", []) or []:
-            eid = str(sensor.get("entity_id", ""))
-            if eid and eid not in house_entities:
-                house_entities.append(eid)
-
-        room_configs: dict[str, dict[str, Any]] = {}
-        extra_cfgs: list[dict[str, Any]] = []
-        domain_data = hass.data.get(DOMAIN, {}) if hasattr(hass, "data") else {}
-        for eid, coord in domain_data.items():
-            if isinstance(coord, RoomPresenceCoordinator):
-                room_configs[eid] = dict(coord.config)
-                extra_cfgs.append(coord.config)
-        for eid, scfg in store.rooms.items():
-            if eid not in room_configs:
-                room_configs[eid] = dict(scfg)
-                extra_cfgs.append(scfg)
-
-        synthetic_cfg = {"trigger_entities": house_entities}
-        raw_timelines, start_ts, end_ts = await async_fetch_room_history(
-            hass=hass,
-            entry_id="house_timeline",
-            config=synthetic_cfg,
-            hours=hours,
-            extra_configs=extra_cfgs,
-        )
-
-        # Also merge any per-room timeline snapshots stored in PDDStore
-        tuple_timelines: dict[str, list[tuple[float, str]]] = {}
-        for eid, pts in raw_timelines.items():
-            tuple_timelines[eid] = [
-                (float(pt["ts"]), str(pt.get("state", "off"))) for pt in (pts or [])
-            ]
-
-        for r_eid in room_configs:
-            for ev in store.get_timeline_events(r_eid):
-                ev_ts = float(ev.get("ts", 0.0))
-                if start_ts <= ev_ts <= end_ts:
-                    ent_map = ev.get("entity_states") or {}
-                    if isinstance(ent_map, dict):
-                        for s_eid, s_val in ent_map.items():
-                            tuple_timelines.setdefault(str(s_eid), []).append((ev_ts, str(s_val)))
-
-        result = reconstruct_house_timeline(
-            floorplan=fp,
-            room_configs=room_configs,
-            entity_timelines=tuple_timelines,
-            start_ts=start_ts,
-            end_ts=end_ts,
-            negative_space_enabled=neg_space_enabled,
-        )
         return self.json(result)
 
 

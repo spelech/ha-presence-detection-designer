@@ -117,10 +117,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     }
     const bg =
       this._toast.type === "error"
-        ? "var(--error-color, #dc2626)"
+        ? "var(--ha-danger, #b91c1c)"
         : this._toast.type === "success"
-        ? "var(--success-color, #16a34a)"
-        : "var(--primary-color, #0284c7)";
+        ? "var(--ha-success, #15803d)"
+        : "var(--ha-primary, #0369a1)";
     el.innerHTML = `<div style="background:${bg};color:#fff;padding:10px 18px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.18);font-weight:500;font-size:13px;">${this._escape(
       this._toast.message
     )}</div>`;
@@ -814,7 +814,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
     if (this._cameraAlignmentError) {
       return `
-        <div style="padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#b91c1c;font-size:12px;margin-top:6px;">
+        <div style="padding:10px;background:rgba(185, 28, 28, 0.12);border:1px solid var(--ha-danger-text);border-radius:6px;color:var(--ha-danger-text);font-size:12px;margin-top:6px;">
           <strong>Alignment Error:</strong> ${this._escape(this._cameraAlignmentError)}
         </div>
       `;
@@ -845,17 +845,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;text-align:center;font-size:12px;">
           <div style="background:var(--ha-subtle, #f1f5f9);padding:8px 6px;border-radius:6px;border:1px solid var(--ha-divider);">
             <div style="color:var(--ha-muted);font-size:11px;">Vertical Tilt / Pitch</div>
-            <div style="font-weight:700;font-size:14px;color:#0284c7;">${res.tilt_deg > 0 ? "+" : ""}${res.tilt_deg}°</div>
+            <div style="font-weight:700;font-size:14px;color:var(--ha-primary-text);">${res.tilt_deg > 0 ? "+" : ""}${res.tilt_deg}°</div>
             <div style="font-size:10px;color:var(--ha-muted);">${res.tilt_deg < 0 ? "Angled Down" : "Level/Up"}</div>
           </div>
           <div style="background:var(--ha-subtle, #f1f5f9);padding:8px 6px;border-radius:6px;border:1px solid var(--ha-divider);">
             <div style="color:var(--ha-muted);font-size:11px;">Camera Roll</div>
-            <div style="font-weight:700;font-size:14px;color:#0284c7;">${res.roll_deg > 0 ? "+" : ""}${res.roll_deg}°</div>
+            <div style="font-weight:700;font-size:14px;color:var(--ha-primary-text);">${res.roll_deg > 0 ? "+" : ""}${res.roll_deg}°</div>
             <div style="font-size:10px;color:var(--ha-muted);">Horizon Level</div>
           </div>
           <div style="background:var(--ha-subtle, #f1f5f9);padding:8px 6px;border-radius:6px;border:1px solid var(--ha-divider);">
             <div style="color:var(--ha-muted);font-size:11px;">Cone Alignment</div>
-            <div style="font-weight:700;font-size:14px;color:${Math.abs(diffHeading) > 3 ? "#d97706" : "#16a34a"};">
+            <div style="font-weight:700;font-size:14px;color:${Math.abs(diffHeading) > 3 ? "var(--ha-warning-text)" : "var(--ha-success-text)"};">
               ${res.recommended_heading_deg}° <span style="font-size:11px;font-weight:500;">(Δ ${diffSign})</span>
             </div>
             <div style="font-size:10px;color:var(--ha-muted);">2D Cone: ${res.current_heading_deg}°</div>
@@ -875,14 +875,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 (op) => `
               <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-top:1px solid var(--ha-divider);">
                 <div>
-                  <strong style="color:#0284c7;">${this._escape(op.target_room || op.entryway_id || "Passage")}</strong>
+                  <strong style="color:var(--ha-primary-text);">${this._escape(op.target_room || op.entryway_id || "Passage")}</strong>
                   <span style="font-size:10px;color:var(--ha-muted);margin-left:4px;">(Bearing: ${op.bearing_deg ?? "—"}°)</span>
                 </div>
                 <div style="text-align:right;">
                   <span>Azimuth: <strong>${op.azimuth_deg > 0 ? "+" : ""}${op.azimuth_deg}°</strong></span>
                   ${
                     op.discrepancy_deg !== undefined
-                      ? `<span style="margin-left:6px;color:${Math.abs(op.discrepancy_deg) > 3 ? "#d97706" : "#16a34a"};font-weight:600;">(Δ ${op.discrepancy_deg > 0 ? "+" : ""}${op.discrepancy_deg}°)</span>`
+                      ? `<span style="margin-left:6px;color:${Math.abs(op.discrepancy_deg) > 3 ? "var(--ha-warning-text)" : "var(--ha-success-text)"};font-weight:600;">(Δ ${op.discrepancy_deg > 0 ? "+" : ""}${op.discrepancy_deg}°)</span>`
                       : ""
                   }
                 </div>
@@ -1298,19 +1298,47 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       activeMap[o.entity_id] = o;
     });
 
+    const isDarkTheme = Boolean(
+      this._hass?.themes?.darkMode ||
+        (typeof document !== "undefined" &&
+          (document.documentElement.classList.contains("dark") ||
+            document.documentElement.getAttribute("data-theme") === "dark" ||
+            (() => {
+              try {
+                const bg = getComputedStyle(this).getPropertyValue("--primary-background-color").trim();
+                return bg.startsWith("#1") || bg.startsWith("#0") || bg.startsWith("#2");
+              } catch (_e) {
+                return false;
+              }
+            })()))
+    );
+
     this.shadowRoot.innerHTML = `
       <style>
-        :host {
-          --ha-bg: var(--primary-background-color, #f5f6f8);
-          --ha-card: var(--card-background-color, #ffffff);
-          --ha-subtle: var(--secondary-background-color, #f8fafc);
-          --ha-text: var(--primary-text-color, #1e293b);
-          --ha-muted: var(--secondary-text-color, #64748b);
-          --ha-divider: var(--divider-color, #e2e8f0);
-          --ha-primary: var(--primary-color, #0284c7);
-          --ha-success: var(--success-color, #16a34a);
-          --ha-warning: var(--warning-color, #d97706);
-          --ha-danger: var(--error-color, #dc2626);
+        :host, presence-detection-designer-panel {
+          --ha-bg: var(--primary-background-color, ${isDarkTheme ? "#111111" : "#f5f6f8"});
+          --ha-card: var(--card-background-color, ${isDarkTheme ? "#1c1c1c" : "#ffffff"});
+          --ha-subtle: var(--secondary-background-color, ${isDarkTheme ? "#262626" : "#f8fafc"});
+          --ha-text: var(--primary-text-color, ${isDarkTheme ? "#e1e1e1" : "#0f172a"});
+          --ha-muted: ${isDarkTheme ? "#a1a1aa" : "#475569"};
+          --ha-divider: var(--divider-color, ${isDarkTheme ? "#2c2c2c" : "#e2e8f0"});
+          --ha-primary: #0369a1;
+          --ha-primary-text: ${isDarkTheme ? "#38bdf8" : "#0369a1"};
+          --ha-success: #15803d;
+          --ha-success-text: ${isDarkTheme ? "#4ade80" : "#15803d"};
+          --ha-warning: #b45309;
+          --ha-warning-text: ${isDarkTheme ? "#fbbf24" : "#b45309"};
+          --ha-danger: #b91c1c;
+          --ha-danger-text: ${isDarkTheme ? "#f87171" : "#b91c1c"};
+          --ha-accent-purple-bg: ${isDarkTheme ? "rgba(124, 58, 237, 0.16)" : "#f5f3ff"};
+          --ha-accent-purple-border: ${isDarkTheme ? "rgba(167, 139, 250, 0.4)" : "#ddd6fe"};
+          --ha-accent-purple-text: ${isDarkTheme ? "#c4b5fd" : "#5b21b6"};
+          --ha-accent-cyan-bg: ${isDarkTheme ? "rgba(6, 182, 212, 0.15)" : "#ecfeff"};
+          --ha-accent-cyan-border: ${isDarkTheme ? "rgba(34, 211, 238, 0.38)" : "#a5f3fc"};
+          --ha-accent-cyan-text: ${isDarkTheme ? "#67e8f9" : "#155e75"};
+          --ha-accent-amber-bg: ${isDarkTheme ? "rgba(245, 158, 11, 0.15)" : "#fffbeb"};
+          --ha-accent-amber-border: ${isDarkTheme ? "rgba(251, 191, 36, 0.38)" : "#fde68a"};
+          --ha-accent-amber-text: ${isDarkTheme ? "#fcd34d" : "#92400e"};
           display: flex;
           flex-direction: column;
           position: relative;
@@ -1328,6 +1356,19 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           box-sizing: border-box;
         }
         * { box-sizing: border-box; }
+        div { min-width: 0; }
+        input[type="range"] {
+          min-height: 24px;
+          min-width: 24px;
+          margin: 0;
+          box-sizing: border-box;
+        }
+        input[type="checkbox"] {
+          min-width: 24px;
+          min-height: 24px;
+          margin: 0;
+          cursor: pointer;
+        }
 
         /* Clean Home Assistant Top App Bar */
         .app-header {
@@ -1349,8 +1390,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           min-height: 0;
           width: 100%;
           max-width: 100%;
-          overflow-y: auto;
-          overflow-x: hidden;
+          overflow: auto;
+          overscroll-behavior: contain;
         }
         .header-left {
           display: flex;
@@ -1378,9 +1419,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border: none;
           border-bottom: 2px solid transparent;
           padding: 0 16px;
+          min-height: 24px;
+          min-width: 24px;
           font-size: 14px;
           font-weight: 500;
           color: var(--ha-muted);
+          white-space: nowrap;
           cursor: pointer;
           transition: color 0.15s, border-color 0.15s;
         }
@@ -1388,8 +1432,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           color: var(--ha-text);
         }
         .nav-tab.active {
-          color: var(--ha-primary);
-          border-bottom-color: var(--ha-primary);
+          color: var(--ha-primary-text);
+          border-bottom-color: var(--ha-primary-text);
         }
         .header-actions {
           display: flex;
@@ -1403,9 +1447,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           color: var(--ha-text);
           border: 1px solid var(--ha-divider);
           padding: 7px 14px;
+          min-height: 28px;
+          min-width: 28px;
+          flex-shrink: 0;
           border-radius: 8px;
           font-size: 13px;
           font-weight: 500;
+          white-space: nowrap;
           cursor: pointer;
           transition: background 0.12s, border-color 0.12s;
         }
@@ -1426,8 +1474,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border: none;
           color: var(--ha-muted);
           padding: 6px 10px;
+          min-height: 28px;
+          min-width: 28px;
           border-radius: 6px;
           font-size: 13px;
+          white-space: nowrap;
           cursor: pointer;
         }
         .btn-text:hover {
@@ -1437,18 +1488,23 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         .btn-danger-text {
           background: transparent;
           border: none;
-          color: var(--ha-muted);
+          color: var(--ha-danger-text);
           padding: 6px 10px;
+          min-height: 28px;
+          min-width: 28px;
           border-radius: 6px;
           font-size: 13px;
+          white-space: nowrap;
           cursor: pointer;
         }
         .btn-danger-text:hover {
-          color: var(--ha-danger);
-          background: rgba(220, 38, 38, 0.08);
+          color: var(--ha-danger-text);
+          background: rgba(185, 28, 28, 0.1);
         }
         .btn-sm {
           padding: 5px 10px;
+          min-height: 26px;
+          min-width: 26px;
           font-size: 12px;
         }
 
@@ -1457,13 +1513,15 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           color: var(--ha-text);
           border: 1px solid var(--ha-divider);
           border-radius: 8px;
-          padding: 8px 11px;
+          padding: 6px 10px;
+          min-height: 28px;
+          min-width: 28px;
           font-size: 13px;
           width: 100%;
         }
         .input:focus, .select:focus {
           outline: none;
-          border-color: var(--ha-primary);
+          border-color: var(--ha-primary-text);
         }
 
         /* Layout Workspace */
@@ -1502,6 +1560,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border: 1px solid var(--ha-divider);
           border-radius: 8px;
           padding: 2px;
+          gap: 2px;
           margin-top: 8px;
         }
         .seg-btn {
@@ -1509,9 +1568,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border: none;
           background: transparent;
           color: var(--ha-muted);
-          padding: 5px 6px;
+          padding: 5px 8px;
+          min-height: 26px;
+          min-width: 28px;
           font-size: 12px;
           font-weight: 500;
+          white-space: nowrap;
           border-radius: 6px;
           cursor: pointer;
         }
@@ -1522,7 +1584,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         }
         .room-list {
           max-height: calc(100vh - 190px);
-          overflow-y: auto;
+          overflow: auto;
         }
         .room-row {
           display: flex;
@@ -1540,8 +1602,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           background: var(--ha-subtle);
         }
         .room-row.selected {
-          background: rgba(2, 132, 199, 0.08);
-          border-left: 3px solid var(--ha-primary);
+          background: rgba(3, 105, 161, 0.12);
+          border-left: 3px solid var(--ha-primary-text);
           padding-left: 11px;
         }
         .room-row-left {
@@ -1557,10 +1619,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           flex-shrink: 0;
         }
         .status-dot.occupied {
-          background: var(--ha-success);
+          background: var(--ha-success-text);
         }
         .status-dot.clearing {
-          background: var(--ha-warning);
+          background: var(--ha-warning-text);
         }
         .status-dot.clear {
           background: #94a3b8;
@@ -1580,11 +1642,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           flex-shrink: 0;
         }
         .room-row-status.occupied {
-          color: var(--ha-success);
+          color: var(--ha-success-text);
           font-weight: 500;
         }
         .room-row-status.clearing {
-          color: var(--ha-warning);
+          color: var(--ha-warning-text);
           font-weight: 500;
         }
 
@@ -1694,9 +1756,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           font-size: 14px;
           line-height: 1;
           padding: 0;
+          min-width: 24px;
+          min-height: 24px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
         }
         .ha-chip button:hover {
-          color: var(--ha-danger);
+          color: var(--ha-danger-text);
         }
 
         /* Setting Rows */
@@ -1763,7 +1830,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         .sub-tab.active {
           background: var(--ha-primary);
           border-color: var(--ha-primary);
-          color: #fff;
+          color: #ffffff;
         }
 
         .code-area {
@@ -1838,24 +1905,53 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         <div class="header-actions">
           <button
             class="btn btn-sm"
+            id="btn-quick-toggle-guest-mode"
+            title="Guest Mode: Pause Negative-Space raycasting, blind-pocket holds, adjacent-room timer clearing, LLM snapshot checks, and per-room Slack transition alerts when guests or multiple untracked occupants are moving around"
+            style="border-color:${
+              this._overview?.global_settings?.guest_mode_enabled
+                ? "var(--ha-warning-text)"
+                : "var(--ha-divider)"
+            };background:${
+              this._overview?.global_settings?.guest_mode_enabled
+                ? "rgba(217, 119, 6, 0.14)"
+                : "var(--ha-card)"
+            };color:${
+              this._overview?.global_settings?.guest_mode_enabled
+                ? "var(--ha-warning-text)"
+                : "var(--ha-muted)"
+            };font-weight:600;"
+          >
+            👥 Guest Mode: ${
+              this._overview?.global_settings?.guest_mode_enabled ? "ON" : "OFF"
+            }
+          </button>
+          <button
+            class="btn btn-sm"
             id="btn-quick-toggle-neg-space"
             title="Global Master Switch: Toggle Negative-Space Spatial Exclusion in live Bayesian room inference"
             style="border-color:${
-              this._overview?.global_settings?.negative_space_enabled !== false
-                ? "#0284c7"
+              this._overview?.global_settings?.negative_space_enabled !== false &&
+              !this._overview?.global_settings?.guest_mode_enabled
+                ? "var(--ha-primary-text)"
                 : "var(--ha-divider)"
             };background:${
-              this._overview?.global_settings?.negative_space_enabled !== false
-                ? "rgba(2, 132, 199, 0.1)"
+              this._overview?.global_settings?.negative_space_enabled !== false &&
+              !this._overview?.global_settings?.guest_mode_enabled
+                ? "rgba(3, 105, 161, 0.12)"
                 : "var(--ha-card)"
             };color:${
-              this._overview?.global_settings?.negative_space_enabled !== false
-                ? "#0284c7"
+              this._overview?.global_settings?.negative_space_enabled !== false &&
+              !this._overview?.global_settings?.guest_mode_enabled
+                ? "var(--ha-primary-text)"
                 : "var(--ha-muted)"
             };font-weight:600;"
           >
             🎯 Negative-Space: ${
-              this._overview?.global_settings?.negative_space_enabled !== false ? "ON" : "OFF"
+              this._overview?.global_settings?.guest_mode_enabled
+                ? "PAUSED"
+                : this._overview?.global_settings?.negative_space_enabled !== false
+                ? "ON"
+                : "OFF"
             }
           </button>
           <button class="btn btn-sm" id="btn-header-global">⚙️ Settings</button>
@@ -1990,6 +2086,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
               <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                  <span class="setting-label" style="font-weight:600;">👥 Guest Mode (Multi-Occupant / Low-Compute Mode)</span>
+                  <input type="checkbox" id="gl-guest-mode-enabled" ${
+                    this._globalDraft?.guest_mode_enabled ? "checked" : ""
+                  } />
+                </div>
+                <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
+                  Pauses Negative-Space raycasting, blind-pocket trajectory conservation, connected-room handoff clearing, LLM camera snapshot checks, and per-room Slack transition notifications so rooms don't constantly fire or clear each other when guests are visiting.
+                </div>
+              </div>
+
+              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
                   <span class="setting-label" style="font-weight:600;">🎯 Negative-Space Bayesian Inference ("Where It Isn't")</span>
                   <input type="checkbox" id="gl-neg-space-enabled" ${
                     this._globalDraft?.negative_space_enabled !== false ? "checked" : ""
@@ -2039,6 +2147,26 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       }
     `;
 
+    this.shadowRoot
+      .querySelectorAll(".room-row, .advanced-toggle-bar, .tl-transition-row")
+      .forEach((el) => {
+        if (!el.getAttribute("role")) {
+          el.setAttribute("role", "button");
+        }
+      });
+    this.shadowRoot
+      .querySelectorAll("input, select, textarea, button")
+      .forEach((el) => {
+        if (!el.getAttribute("aria-label") && !el.getAttribute("title")) {
+          const fallback =
+            el.getAttribute("placeholder") ||
+            el.getAttribute("data-key") ||
+            el.id ||
+            el.tagName.toLowerCase();
+          el.setAttribute("aria-label", fallback);
+        }
+      });
+
     this.renderToastOnly();
     this._bindEvents();
   }
@@ -2066,6 +2194,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const hasDoorSeal = cfg.mode === "bounded";
     const timeoutSec = Number(cfg.inactivity_timeout ?? 180);
     const timeoutMinText = this._formatDuration(timeoutSec);
+    const spEst = selRoom.spatial_estimate || {};
+    const occLabel = spEst.occupant_label || "";
+    const occType = spEst.occupant_type || "";
+    const isPinned = Boolean(spEst.definitive_tracker_pinned);
 
     return `
       <!-- 1. Compact Status & Action Header Card -->
@@ -2073,22 +2205,53 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         <div style="display:flex;align-items:center;gap:14px;">
           <span class="status-dot ${st.dotClass}" style="width:12px;height:12px;"></span>
           <div>
-            <div style="display:flex;align-items:center;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
               <h2 style="margin:0;font-size:20px;font-weight:500;">${this._escape(
                 cfg.room_name || selRoom.room_name
               )}</h2>
               <span style="font-size:12.5px;font-weight:500;padding:2px 10px;border-radius:999px;background:var(--ha-subtle);border:1px solid var(--ha-divider);color:${
                 st.dotClass === "occupied"
-                  ? "var(--ha-success)"
+                  ? "var(--ha-success-text)"
                   : st.dotClass === "clearing"
-                  ? "var(--ha-warning)"
+                  ? "var(--ha-warning-text)"
                   : "var(--ha-muted)"
               };">
                 ${this._escape(st.label)}
               </span>
               ${
+                occLabel
+                  ? `<span style="font-size:12px;font-weight:600;padding:2px 10px;border-radius:999px;background:${
+                      occType === "pet"
+                        ? "var(--ha-accent-amber-bg)"
+                        : isPinned
+                        ? "var(--ha-accent-cyan-bg)"
+                        : "var(--ha-accent-purple-bg)"
+                    };border:1px solid ${
+                      occType === "pet"
+                        ? "var(--ha-accent-amber-border)"
+                        : isPinned
+                        ? "var(--ha-accent-cyan-border)"
+                        : "var(--ha-accent-purple-border)"
+                    };color:${
+                      occType === "pet"
+                        ? "var(--ha-accent-amber-text)"
+                        : isPinned
+                        ? "var(--ha-accent-cyan-text)"
+                        : "var(--ha-accent-purple-text)"
+                    };" title="${
+                      occType === "pet"
+                        ? "Pet-only motion detected — PIR triggers suppressed"
+                        : isPinned
+                        ? "Definitive tracker pinned in room — protected from adjacent handoff clearing"
+                        : "Inferred occupant attribution"
+                    }">
+                      ${occType === "pet" ? "🐕 " : isPinned ? "📌👤 " : occType === "untracked_human" ? "👧 " : "👤 "}${this._escape(occLabel)}
+                    </span>`
+                  : ""
+              }
+              ${
                 this._dirty
-                  ? `<span style="font-size:12px;color:var(--ha-warning);font-weight:500;">• Unsaved changes</span>`
+                  ? `<span style="font-size:12px;color:var(--ha-warning-text);font-weight:500;">• Unsaved changes</span>`
                   : ""
               }
             </div>
@@ -2415,7 +2578,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             Bayesian weights, AI camera vision check, sensor combination truth table, YAML editor, and revision history
           </div>
         </div>
-        <span style="font-size:12.5px;color:var(--ha-primary);font-weight:500;">
+        <span style="font-size:12.5px;color:var(--ha-primary-text);font-weight:500;">
           ${this._showAdvanced ? "Collapse" : "Expand"}
         </span>
       </div>
@@ -2501,7 +2664,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             </div>
           </div>
 
-          <div style="overflow-x:auto;">
+          <div style="overflow:auto;">
             <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
               <thead>
                 <tr style="border-bottom:1px solid var(--ha-divider);text-align:left;color:var(--ha-muted);">
@@ -2589,7 +2752,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                         (s) => `
                       <div style="display:flex;justify-content:space-between;padding:8px 10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;margin-bottom:6px;font-size:13px;">
                         <span>${this._escape(s.label)}</span>
-                        <strong style="color:var(--ha-success);">${s.posterior_pct}%</strong>
+                        <strong style="color:var(--ha-success-text);">${s.posterior_pct}%</strong>
                       </div>`
                       )
                       .join("")
@@ -2606,7 +2769,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                         (p) => `
                       <div style="display:flex;justify-content:space-between;padding:8px 10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;margin-bottom:6px;font-size:13px;">
                         <span>${this._escape(p.labels)}</span>
-                        <strong style="color:var(--ha-primary);">${p.posterior_pct}%</strong>
+                        <strong style="color:var(--ha-primary-text);">${p.posterior_pct}%</strong>
                       </div>`
                       )
                       .join("")
@@ -3219,10 +3382,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const rad = Number(proxy.radius_px || 230);
         return `
           <g class="fp-ble-group" data-proxy-id="${this._escape(proxy.id)}" style="${isSensorMode ? "opacity:0.95;" : "opacity:0.45;pointer-events:none;"}">
-            <circle
-              cx="${px.toFixed(1)}"
-              cy="${py.toFixed(1)}"
-              r="${rad.toFixed(1)}"
+            <path
+              d="M ${(px - rad).toFixed(1)} ${py.toFixed(1)} a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 ${(rad * 2).toFixed(1)} 0 a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 -${(rad * 2).toFixed(1)} 0"
               fill="rgba(13, 148, 136, 0.04)"
               stroke="#0d9488"
               stroke-width="1"
@@ -3414,7 +3575,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           </div>
         </div>
 
-        <div style="background:#f8fafc;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;overflow:hidden;touch-action:none;">
+        <div style="background:#f8fafc;color:#0f172a;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;overflow:hidden;touch-action:none;">
           <svg id="fp-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:420px;display:block;user-select:none;touch-action:none;">
             ${underlaySvg}
             ${connsSvg}
@@ -3499,7 +3660,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 </div>
 
                 <!-- Camera View & Physical Horizon/Azimuth Alignment -->
-                <div style="margin-top:14px;padding:12px;background:var(--ha-card-background, #ffffff);border:1px solid var(--ha-divider);border-radius:8px;">
+                <div style="margin-top:14px;padding:12px;background:var(--ha-card);border:1px solid var(--ha-divider);border-radius:8px;">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                     <div>
                       <div style="font-weight:600;font-size:12.5px;">📸 Camera View &amp; Opening Alignment</div>
@@ -3539,7 +3700,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
                 <!-- Doorways on this room -->
                 <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--ha-divider);">
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                     <div style="font-size:12.5px;font-weight:600;">Perimeter Doorways (${selBoxEntryways.length})</div>
                     <div style="display:flex;gap:6px;">
                       <select class="select" id="fp-new-door-wall" style="font-size:12px;padding:3px 6px;width:auto;">
@@ -3556,7 +3717,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     selBoxEntryways.length === 0
                       ? `<div style="font-size:12px;color:var(--ha-muted);">No doorways on this room yet. Add one so cameras can see in/out.</div>`
                       : `
-                    <div style="display:flex;flex-direction:column;gap:6px;max-height:140px;overflow-y:auto;">
+                    <div style="display:flex;flex-direction:column;gap:6px;max-height:140px;overflow:auto;">
                       ${selBoxEntryways
                         .map(
                           (ew) => `
@@ -3589,7 +3750,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                             ew.id
                           )}" data-room="${this._escape(
                             selBoxName
-                          )}" style="padding:2px 6px;color:#dc2626;" title="Delete doorway">✕</button>
+                          )}" style="padding:2px 6px;color:var(--ha-danger-text);" title="Delete doorway">✕</button>
                         </div>`
                         )
                         .join("")}
@@ -3597,7 +3758,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   }
                 </div>
 
-                <div style="display:flex;gap:8px;margin-top:12px;">
+                <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
                   <button class="btn btn-sm" id="btn-fp-save">Save Layout</button>
                   <button class="btn btn-sm" id="btn-fp-reset">Reset Default Layout</button>
                 </div>`
@@ -3606,9 +3767,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
             <!-- 3rd Column: PIR Motion, Door Contact & BLE Proxy Placement -->
             <div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                 <div class="setting-label" style="margin-bottom:0;">📡 PIR Motion &amp; Door Sensors (${fSensors.length})</div>
-                <div style="display:flex;gap:6px;">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
                   <button class="btn btn-sm" id="btn-fp-add-pir-sensor" style="padding:3px 8px;font-size:11.5px;">+ PIR Sensor</button>
                   <button class="btn btn-sm" id="btn-fp-add-door-sensor" style="padding:3px 8px;font-size:11.5px;">+ Door Sensor</button>
                 </div>
@@ -3692,18 +3853,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     selSensor.range_px || 180
                   )}" ${selSensor.sensor_type === "door_contact" ? "disabled" : ""} /></div>
                 </div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap;gap:6px;">
                   <span style="font-size:11.5px;color:var(--ha-muted);">Tip: Switch to <strong>📡 PIR &amp; BLE Sensors</strong> mode to drag on canvas.</span>
                   <button class="btn btn-sm" id="btn-fp-delete-sensor" data-sensor-id="${this._escape(
                     selSensor.id
-                  )}" style="padding:2px 8px;color:#dc2626;font-size:11.5px;">Delete Sensor</button>
+                  )}" style="padding:2px 8px;color:var(--ha-danger-text);font-size:11.5px;">Delete Sensor</button>
                 </div>`
               }
 
               <!-- BLE Proxies on this floor -->
               <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--ha-divider);">
                 <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;">📶 BLE Proxy Anchors on Floor (${fProxies.length})</div>
-                <div style="display:flex;flex-direction:column;gap:4px;max-height:110px;overflow-y:auto;">
+                <div style="display:flex;flex-direction:column;gap:4px;max-height:110px;overflow:auto;">
                   ${fProxies
                     .map(
                       (bp) => `
@@ -3731,7 +3892,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             Areas where a camera sees into a neighboring room or where a room has no direct camera coverage
           </div>
         </div>
-        <span style="font-size:12.5px;color:var(--ha-primary);font-weight:500;">
+        <span style="font-size:12.5px;color:var(--ha-primary-text);font-weight:500;">
           ${this._showFloorplanNotes ? "Collapse" : "Expand"}
         </span>
       </div>
@@ -3751,7 +3912,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 <div style="font-size:13px;color:var(--ha-muted);margin-top:2px;">${this._escape(
                   amb.description
                 )}</div>
-                <div style="font-size:12.5px;color:var(--ha-primary);margin-top:4px;">${this._escape(
+                <div style="font-size:12.5px;color:var(--ha-primary-text);margin-top:4px;">${this._escape(
                   amb.resolution || amb.recommendation || ""
                 )}</div>
               </div>`
@@ -3940,7 +4101,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             <button
               class="btn btn-sm"
               id="btn-timeline-toggle-neg-space"
-              style="background:${this._timelineNegativeSpace ? "#f5f3ff" : "#f1f5f9"};color:${this._timelineNegativeSpace ? "#6d28d9" : "#475569"};border-color:${this._timelineNegativeSpace ? "#c4b5fd" : "#cbd5e1"};font-weight:600;"
+              style="background:${this._timelineNegativeSpace ? "var(--ha-accent-purple-bg)" : "var(--ha-subtle)"};color:${this._timelineNegativeSpace ? "var(--ha-accent-purple-text)" : "var(--ha-text)"};border-color:${this._timelineNegativeSpace ? "var(--ha-accent-purple-border)" : "var(--ha-divider)"};font-weight:600;"
               title="A/B compare timeline reconstruction WITH vs WITHOUT Negative-Space Exclusion"
             >
               🎯 A/B Negative-Space: ${this._timelineNegativeSpace ? "ON (Active)" : "OFF (Standard Bayesian)"}
@@ -3983,17 +4144,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             <div style="font-size:11px;color:var(--ha-muted);">Timeline Frames (${summary.window_hours || this._timelineHours}h)</div>
             <div style="font-size:16px;font-weight:700;">${Number(tl.frame_count || frames.length)} frames · ${Number(transitions.length)} moves</div>
           </div>
-          <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:#6d28d9;">Negative-Space Subregion Localizations</div>
-            <div style="font-size:16px;font-weight:700;color:#5b21b6;">${totalSubregionFrames} localizations</div>
+          <div style="background:var(--ha-accent-purple-bg);border:1px solid var(--ha-accent-purple-border);border-radius:8px;padding:8px 12px;">
+            <div style="font-size:11px;color:var(--ha-accent-purple-text);">Negative-Space Subregion Localizations</div>
+            <div style="font-size:16px;font-weight:700;color:var(--ha-accent-purple-text);">${totalSubregionFrames} localizations</div>
           </div>
-          <div style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:#0e7490;">Blind-Pocket Holds (Bathrooms / Guest)</div>
-            <div style="font-size:16px;font-weight:700;color:#155e75;">${totalBlindPocketFrames} frames (${totalDeltaFrames} A/B diffs)</div>
+          <div style="background:var(--ha-accent-cyan-bg);border:1px solid var(--ha-accent-cyan-border);border-radius:8px;padding:8px 12px;">
+            <div style="font-size:11px;color:var(--ha-accent-cyan-text);">Blind-Pocket Holds (Bathrooms / Guest)</div>
+            <div style="font-size:16px;font-weight:700;color:var(--ha-accent-cyan-text);">${totalBlindPocketFrames} frames (${totalDeltaFrames} A/B diffs)</div>
           </div>
-          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:#b45309;">Moving Shades / Sun Excluded</div>
-            <div style="font-size:16px;font-weight:700;color:#92400e;">☀️ ${totalShadeExclusionFrames} frames filtered</div>
+          <div style="background:var(--ha-accent-amber-bg);border:1px solid var(--ha-accent-amber-border);border-radius:8px;padding:8px 12px;">
+            <div style="font-size:11px;color:var(--ha-accent-amber-text);">Moving Shades / Sun Excluded</div>
+            <div style="font-size:16px;font-weight:700;color:var(--ha-accent-amber-text);">☀️ ${totalShadeExclusionFrames} frames filtered</div>
           </div>
         </div>
 
@@ -4033,7 +4194,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
         <!-- Split 2D Floorplan Playback + Movement Transitions Log -->
         <div style="display:grid;grid-template-columns:1.65fr 1fr;gap:14px;align-items:start;">
-          <div style="background:#f8fafc;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;">
+          <div style="background:#f8fafc;color:#0f172a;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;">
             <svg viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:360px;display:block;">
               ${
                 typeof PDD_FLOOR_UNDERLAYS !== "undefined" && PDD_FLOOR_UNDERLAYS[activeFloor.id] && this._showBlueprintUnderlay
@@ -4045,13 +4206,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               ${trailSvg}
               ${pbOccupantsSvg}
             </svg>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;font-size:11.5px;color:var(--ha-muted);flex-wrap:wrap;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;font-size:11.5px;color:#475569;flex-wrap:wrap;gap:8px;">
               <span>🟢 Direct Positive Detection &nbsp;|&nbsp; 🟣 Negative-Space Localization &nbsp;|&nbsp; 🩵 Dashed Cyan = Clear Camera Exclusion Cone</span>
               <span>Active Rooms: <strong>${occupiedRoomsList.join(", ") || "None"}</strong></span>
             </div>
           </div>
 
-          <div style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;max-height:430px;overflow-y:auto;">
+          <div style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;max-height:430px;overflow:auto;">
             <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Chronological Movement &amp; Inference Log (${transitions.length})</div>
             ${
               transitions.length === 0
@@ -4072,15 +4233,15 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                         <div
                           class="tl-transition-row"
                           data-frame-idx="${fIdx >= 0 ? fIdx : 0}"
-                          style="padding:8px 10px;margin-bottom:6px;background:#ffffff;border:1px solid ${
-                            isNeg ? "#c4b5fd" : "var(--ha-divider)"
+                          style="padding:8px 10px;margin-bottom:6px;background:var(--ha-card);border:1px solid ${
+                            isNeg ? "var(--ha-accent-purple-border)" : "var(--ha-divider)"
                           };border-radius:8px;cursor:pointer;font-size:12px;"
                         >
                           <div style="display:flex;justify-content:space-between;align-items:center;">
                             <strong>${this._escape(tr.from_room ? `${tr.from_room} → ${tr.to_room}` : `${tr.to_room || tr.room}`)}</strong>
                             <span style="font-family:var(--ha-mono);font-size:11px;color:var(--ha-muted);">${this._escape(tStr)}</span>
                           </div>
-                          <div style="color:${isNeg ? "#6d28d9" : "#15803d"};font-weight:500;margin-top:2px;">
+                          <div style="color:${isNeg ? "var(--ha-accent-purple-text)" : "var(--ha-success-text)"};font-weight:500;margin-top:2px;">
                             🎯 ${this._escape(trLoc)}
                           </div>
                           ${
@@ -4250,8 +4411,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               cand.inactivity_timeout ?? 180
             )}" />
           </div>
-          <div style="padding:8px 10px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:600;color:#5b21b6;">
+          <div style="padding:8px 10px;background:var(--ha-accent-purple-bg);border:1px solid var(--ha-accent-purple-border);border-radius:8px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ha-accent-purple-text);">
               <input type="checkbox" id="rep-neg-space-toggle" ${
                 this._replayNegativeSpace ? "checked" : ""
               } />
@@ -5405,6 +5566,19 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._showGlobalModal = true;
       this.render();
     });
+    root.querySelector("#btn-quick-toggle-guest-mode")?.addEventListener("click", async () => {
+      const curVal =
+        this._globalDraft?.guest_mode_enabled !== undefined
+          ? Boolean(this._globalDraft.guest_mode_enabled)
+          : Boolean(this._overview?.global_settings?.guest_mode_enabled);
+      const nextVal = !curVal;
+      this._globalDraft = {
+        ...this._globalDraft,
+        guest_mode_enabled: nextVal,
+      };
+      await this.saveGlobalSettings();
+      await this.loadOverview(true);
+    });
     root.querySelector("#btn-quick-toggle-neg-space")?.addEventListener("click", async () => {
       const curVal =
         this._globalDraft?.negative_space_enabled !== undefined
@@ -5449,6 +5623,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         slack_notify_service: root.querySelector("#gl-slack-service")?.value || "notify.scdbots",
         slack_channel: root.querySelector("#gl-slack-channel")?.value || "#presence-alerts",
         negative_space_enabled: Boolean(root.querySelector("#gl-neg-space-enabled")?.checked),
+        guest_mode_enabled: Boolean(root.querySelector("#gl-guest-mode-enabled")?.checked),
       };
       this.saveGlobalSettings();
     });

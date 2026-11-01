@@ -329,9 +329,6 @@ class NotificationDispatcher:
         service_data: dict[str, Any] = {
             "message": message_text,
             "target": [channel],
-            "data": {
-                "channel": channel,
-            },
         }
 
         # 5. Emit Home Assistant event
