@@ -1,0 +1,231 @@
+blueprint:
+  name: "PDD — Presence-Driven Room Lighting (Manual/Voice Guard & Warning Dim)"
+  description: >
+    Integrates directly with Presence Detection Designer (`binary_sensor.<room>_presence`)
+    to provide intelligent, flicker-free room lighting. Automatically respects manual
+    wall switch and Google Assistant voice overrides (`manual_off_suppressed` /
+    `manual_intent`), ignores pet-only activations (`human_present: true`,
+    `occupant_type != 'pet'`), supports ambient illuminance gating, applies time-of-day
+    brightness levels, honors Sleep/DND/Guest blocker entities, and gently dims lights
+    as a pre-vacant warning when `box_state` transitions to `timer_active` before
+    turning off on room vacation.
+  domain: automation
+  author: Steven T. Pelech
+  input:
+    presence_sensor:
+      name: PDD Room Presence Binary Sensor
+      description: The `binary_sensor.<room>_presence` entity exposed by Presence Detection Designer.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: occupancy
+    light_targets:
+      name: Light / Switch / Scene Targets
+      description: Lights, switches, or scenes to control when the room is occupied or vacated.
+      selector:
+        target:
+          entity:
+            domain:
+              - light
+              - switch
+              - scene
+    day_brightness_pct:
+      name: Daytime Brightness (%)
+      description: Target brightness percentage for dimmable lights during daytime hours.
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+    night_brightness_pct:
+      name: Nighttime Brightness (%)
+      description: Target brightness percentage for dimmable lights during nighttime hours.
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+    night_start_time:
+      name: Night Start Time
+      description: Time of day when nighttime low-brightness mode begins.
+      default: "22:00:00"
+      selector:
+        time: {}
+    night_end_time:
+      name: Night End Time
+      description: Time of day when daytime full-brightness mode resumes.
+      default: "06:30:00"
+      selector:
+        time: {}
+    illuminance_sensor:
+      name: Ambient Illuminance Sensor (Optional)
+      description: Optional light level sensor to prevent turning lights on when natural daylight is sufficient.
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: illuminance
+    illuminance_threshold:
+      name: Illuminance Threshold (lx)
+      description: Lights will only turn on automatically if ambient illuminance is below this value.
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 1000
+          unit_of_measurement: "lx"
+    blocker_entity:
+      name: Automation Blocker Entity (Optional)
+      description: Optional switch, input_boolean, or binary_sensor (e.g., Sleep Mode, DND, or Guest Override) that blocks automatic light activation when "on".
+      default: ""
+      selector:
+        entity:
+          domain:
+            - input_boolean
+            - switch
+            - binary_sensor
+    respect_manual_off:
+      name: Respect Manual & Voice Turn-Off Suppression
+      description: When enabled, skips automatic turn-on if PDD detects a manual wall switch or voice turn-off (`manual_off_suppressed == true`).
+      default: true
+      selector:
+        boolean: {}
+    ignore_pets:
+      name: Ignore Pet-Only Presence
+      description: When enabled, skips automatic turn-on when `occupant_type == 'pet'` or `human_present == false` (e.g., Riley walking through the room).
+      default: true
+      selector:
+        boolean: {}
+    enable_warning_dim:
+      name: Enable Pre-Vacant Warning Dim
+      description: Gently dims lights when PDD `box_state` enters `timer_active` to warn occupants before the room is marked vacant.
+      default: true
+      selector:
+        boolean: {}
+    warning_dim_pct:
+      name: Warning Dim Brightness (%)
+      description: Brightness percentage during the `timer_active` pre-vacant countdown window.
+      default: 35
+      selector:
+        number:
+          min: 5
+          max: 80
+          unit_of_measurement: "%"
+    turn_off_on_vacant:
+      name: Turn Off Lights When Vacated
+      description: Automatically turn off controlled lights/switches when the PDD presence sensor turns off.
+      default: true
+      selector:
+        boolean: {}
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  presence_sensor: !input presence_sensor
+  light_targets: !input light_targets
+  day_brightness_pct: !input day_brightness_pct
+  night_brightness_pct: !input night_brightness_pct
+  night_start_time: !input night_start_time
+  night_end_time: !input night_end_time
+  illuminance_sensor: !input illuminance_sensor
+  illuminance_threshold: !input illuminance_threshold
+  blocker_entity: !input blocker_entity
+  respect_manual_off: !input respect_manual_off
+  ignore_pets: !input ignore_pets
+  enable_warning_dim: !input enable_warning_dim
+  warning_dim_pct: !input warning_dim_pct
+  turn_off_on_vacant: !input turn_off_on_vacant
+  is_night: >-
+    {% set now_t = now().strftime('%H:%M:%S') %}
+    {% if night_start_time > night_end_time %}
+      {{ now_t >= night_start_time or now_t < night_end_time }}
+    {% else %}
+      {{ night_start_time <= now_t < night_end_time }}
+    {% endif %}
+  target_brightness_pct: >-
+    {{ night_brightness_pct if is_night else day_brightness_pct }}
+
+trigger:
+  - platform: state
+    entity_id: !input presence_sensor
+    to: "on"
+    id: occupied
+  - platform: state
+    entity_id: !input presence_sensor
+    attribute: box_state
+    to: "timer_active"
+    id: warning_timer
+  - platform: state
+    entity_id: !input presence_sensor
+    attribute: box_state
+    from: "timer_active"
+    to:
+      - "occupied"
+      - "occupied_sealed"
+      - "occupied_unsealed"
+    id: re_occupied_from_timer
+  - platform: state
+    entity_id: !input presence_sensor
+    to: "off"
+    id: vacated
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - occupied
+              - re_occupied_from_timer
+          - condition: template
+            value_template: >-
+              {{ blocker_entity == '' or not is_state(blocker_entity, 'on') }}
+          - condition: template
+            value_template: >-
+              {{ not respect_manual_off or not (state_attr(presence_sensor, 'manual_off_suppressed') | default(false, true)) }}
+          - condition: template
+            value_template: >-
+              {{ not ignore_pets or (state_attr(presence_sensor, 'occupant_type') != 'pet' and (state_attr(presence_sensor, 'human_present') | default(true, true)) != false) }}
+          - condition: template
+            value_template: >-
+              {{ illuminance_sensor == '' or states(illuminance_sensor) in ['unknown', 'unavailable'] or (states(illuminance_sensor) | float(0) <= (illuminance_threshold | float(60))) or trigger.id == 're_occupied_from_timer' }}
+        sequence:
+          - service: homeassistant.turn_on
+            target: !input light_targets
+            data:
+              brightness_pct: "{{ target_brightness_pct }}"
+
+      - conditions:
+          - condition: trigger
+            id: warning_timer
+          - condition: template
+            value_template: "{{ enable_warning_dim }}"
+          - condition: state
+            entity_id: !input presence_sensor
+            state: "on"
+          - condition: template
+            value_template: >-
+              {{ blocker_entity == '' or not is_state(blocker_entity, 'on') }}
+          - condition: template
+            value_template: >-
+              {{ not respect_manual_off or not (state_attr(presence_sensor, 'manual_off_suppressed') | default(false, true)) }}
+        sequence:
+          - service: light.turn_on
+            target: !input light_targets
+            data:
+              brightness_pct: "{{ warning_dim_pct }}"
+              transition: 2
+
+      - conditions:
+          - condition: trigger
+            id: vacated
+          - condition: template
+            value_template: "{{ turn_off_on_vacant }}"
+          - condition: template
+            value_template: >-
+              {{ blocker_entity == '' or not is_state(blocker_entity, 'on') }}
+        sequence:
+          - service: homeassistant.turn_off
+            target: !input light_targets

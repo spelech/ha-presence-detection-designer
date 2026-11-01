@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -23,8 +22,12 @@ from .bayesian_engine import (
     BayesianEvaluation,
     build_effective_observations,
     config_to_yaml_representations,
-    evaluate_bayesian,
     explain_config_in_natural_language,
+)
+from .causal_context import (
+    RoomActuationTracker,
+    process_coordinator_actuator_event,
+    resolve_room_actuator_entities,
 )
 from .condition_evaluator import evaluate_all
 from .const import (
@@ -62,28 +65,25 @@ from .const import (
     DEFAULT_INACTIVITY_TIMEOUT,
     DEFAULT_LLM_PROMPT,
     DOMAIN,
-    EVENT_PRESENCE_TRANSITION,
     BoxState,
-    LLMProviderType,
     Mode,
+)
+from .coordinator_dispatch import (
+    _safe_state_getter,
+    async_send_coordinator_test_notification,
+    dispatch_presence_transition,
+    evaluate_coordinator_bayesian,
+    notify_connected_rooms_if_active,
+    record_coordinator_timeline_snapshot,
+    resolve_global_llm_defaults,
 )
 from .llm_verifier import LLMVerifier
 from .notifications import NotificationDispatcher
 from .state_machine import RoomStateMachine
 
+__all__ = ["RoomPresenceCoordinator", "_safe_state_getter"]
+
 _LOGGER = logging.getLogger(__name__)
-
-
-def _safe_state_getter(hass: Any, entity_id: str) -> Any:
-    """Return HA state object only if its `.state` attribute is a concrete string."""
-    if not hass or not hasattr(hass, "states"):
-        return None
-    state_obj = hass.states.get(entity_id)
-    if state_obj is None:
-        return None
-    if not isinstance(getattr(state_obj, "state", None), str):
-        return None
-    return state_obj
 
 
 class RoomPresenceCoordinator:
@@ -105,6 +105,8 @@ class RoomPresenceCoordinator:
         self._occupied_start_time: float | None = None
         self._last_adjacent_arrival: str | None = None
         self._notification_dispatcher = NotificationDispatcher()
+        self.actuation_tracker = RoomActuationTracker()
+        self.monitored_actuator_entities: list[str] = []
         self.last_bayesian_eval: BayesianEvaluation | None = None
         self.last_spatial_estimate: dict[str, Any] | None = None
         self._last_spatial_frame: dict[str, Any] | None = None
@@ -114,25 +116,7 @@ class RoomPresenceCoordinator:
 
     def _resolve_global_llm_defaults(self, config: dict[str, Any]) -> dict[str, Any]:
         """Merge global_settings from PDDStore for any unset LLM fields."""
-        from .const import DATA_STORE, DOMAIN
-
-        gs: dict[str, Any] = {}
-        if self.hass and isinstance(getattr(self.hass, "data", None), dict):
-            store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-            if store is not None and hasattr(store, "global_settings"):
-                gs = store.global_settings or {}
-
-        return {
-            CONF_LLM_PROVIDER_TYPE: (
-                config.get(CONF_LLM_PROVIDER_TYPE)
-                or gs.get("llm_provider_type")
-                or LLMProviderType.VISION_API
-            ),
-            CONF_LLM_AGENT_ID: config.get(CONF_LLM_AGENT_ID) or gs.get("llm_agent_id"),
-            CONF_LLM_API_URL: config.get(CONF_LLM_API_URL) or gs.get("llm_api_url"),
-            CONF_LLM_API_KEY: config.get(CONF_LLM_API_KEY) or gs.get("llm_api_key"),
-            CONF_LLM_MODEL: config.get(CONF_LLM_MODEL) or gs.get("llm_model"),
-        }
+        return resolve_global_llm_defaults(self.hass, config)
 
     def _apply_config_fields(self, config: dict[str, Any], preserve_state: bool = False) -> None:
         """Populate coordinator attributes and state machine from config dict."""
@@ -141,6 +125,7 @@ class RoomPresenceCoordinator:
         self.area_id: str | None = config.get(CONF_AREA_ID)
         self.boundary_entities: list[str] = list(config.get(CONF_BOUNDARY_ENTITIES, []) or [])
         self.trigger_entities: list[str] = list(config.get(CONF_TRIGGER_ENTITIES, []) or [])
+        self.monitored_actuator_entities = resolve_room_actuator_entities(self.room_name, config)
         self.connected_rooms: list[str] = [
             str(r) for r in (config.get(CONF_CONNECTED_ROOMS, []) or []) if r
         ]
@@ -148,7 +133,6 @@ class RoomPresenceCoordinator:
             config.get(CONF_SUSTAINING_CONDITIONS, []) or []
         )
 
-        # Bayesian configuration
         self.bayesian_enabled: bool = bool(config.get(CONF_BAYESIAN_ENABLED, True))
         self.bayesian_prior: float = float(config.get(CONF_BAYESIAN_PRIOR, DEFAULT_BAYESIAN_PRIOR))
         self.bayesian_threshold: float = float(
@@ -166,7 +150,6 @@ class RoomPresenceCoordinator:
             except ValueError:
                 self.mode = Mode.BOUNDED if len(self.boundary_entities) > 0 else Mode.OPEN
 
-        # Slack & Notification configuration (default enabled unless explicitly False)
         raw_notify_slack = config.get(CONF_NOTIFY_SLACK)
         self.notify_slack: bool = True if raw_notify_slack is None else bool(raw_notify_slack)
         raw_notify_occ = config.get(CONF_NOTIFY_ON_OCCUPIED)
@@ -240,120 +223,14 @@ class RoomPresenceCoordinator:
 
     @callback
     def async_update_listeners(self) -> None:
-        """Notify all registered entity listeners."""
+        """Notify all registered entity listeners and dispatch transition events."""
         for update_callback in self._listeners:
             try:
                 update_callback()
             except Exception as err:  # noqa: BLE001
                 _LOGGER.error("Error updating presence listener: %s", err)
 
-        # Check for presence transition event
-        curr_presence = self.state_machine.is_present
-        if curr_presence != self._previous_presence:
-            from_state = "occupied" if self._previous_presence else "clear"
-            to_state = "occupied" if curr_presence else "clear"
-            self._previous_presence = curr_presence
-
-            now_ts = time.time()
-            duration_sec: float | None = None
-            if to_state == "occupied":
-                self._occupied_start_time = now_ts
-            elif self._occupied_start_time is not None:
-                duration_sec = now_ts - self._occupied_start_time
-                self._occupied_start_time = None
-
-            if self.hass and hasattr(self.hass, "bus"):
-                try:
-                    self.hass.bus.async_fire(
-                        EVENT_PRESENCE_TRANSITION,
-                        {
-                            "entry_id": self.entry_id,
-                            "room_name": self.room_name,
-                            "presence": curr_presence,
-                            "from_state": from_state,
-                            "to_state": to_state,
-                            "box_state": self.state_machine.box_state,
-                            "bayesian_probability": self.state_machine.bayesian_probability,
-                            "bayesian_probability_pct": self.state_machine.bayesian_probability_pct,
-                            "natural_language_explanation": (
-                                self.state_machine.build_natural_language_explanation()
-                            ),
-                            "last_trigger": self.state_machine.last_trigger_entity,
-                            "active_conditions": self.state_machine.active_conditions,
-                            "duration_seconds": duration_sec,
-                        },
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
-
-            # Dispatch Slack notification if enabled
-            if self.hass and self.notify_slack:
-                global_settings: dict[str, Any] = {}
-                if hasattr(self.hass, "data") and isinstance(self.hass.data, dict):
-                    store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-                    if store is not None and isinstance(
-                        getattr(store, "global_settings", None), dict
-                    ):
-                        global_settings = store.global_settings or {}
-
-                if global_settings.get("notifications_enabled", False):
-                    curr_eval: dict[str, Any] = {
-                        "probability": self.state_machine.bayesian_probability,
-                        "is_occupied": self.state_machine.is_present,
-                        "active_entities": [self.state_machine.last_trigger_entity]
-                        if self.state_machine.last_trigger_entity
-                        else [],
-                        "active_sustaining_conditions": self.state_machine.active_conditions,
-                        "driver_entity": self.state_machine.last_trigger_entity,
-                    }
-                    if self.last_bayesian_eval:
-                        curr_eval["probability"] = self.last_bayesian_eval.probability
-                        active_obs = self.last_bayesian_eval.active_observations
-                        if isinstance(active_obs, dict):
-                            curr_eval["active_entities"] = list(active_obs.keys())
-                        elif isinstance(active_obs, list):
-                            curr_eval["active_entities"] = [
-                                str(item.get("entity_id"))
-                                for item in active_obs
-                                if isinstance(item, dict)
-                                and item.get("entity_id")
-                                and item.get("entity_id") != "__spatial_negative_space__"
-                            ]
-                    if self.last_spatial_estimate:
-                        curr_eval["inferred_location"] = self.last_spatial_estimate.get(
-                            "inferred_subregion"
-                        )
-                        curr_eval["negative_space_evidence"] = list(
-                            self.last_spatial_estimate.get("negative_exclusions") or []
-                        )
-
-                    attribution = self._notification_dispatcher.resolve_transition_driver(
-                        room_id=self.entry_id,
-                        room_name=self.room_name,
-                        from_state=from_state,
-                        to_state=to_state,
-                        room_config=self.config,
-                        prev_eval=None,
-                        curr_eval=curr_eval,
-                        adjacent_context=self._last_adjacent_arrival,
-                        duration_seconds=duration_sec,
-                    )
-                    self._last_adjacent_arrival = None
-
-                    if hasattr(self.hass, "async_create_task"):
-                        coro = self._notification_dispatcher.async_dispatch_notification(
-                            self.hass,
-                            attribution,
-                            global_settings,
-                            self.config,
-                        )
-                        self.hass.async_create_task(coro)
-                        if (
-                            type(self.hass.async_create_task).__name__ == "MagicMock"
-                            and getattr(self.hass.async_create_task, "side_effect", None) is None
-                            and hasattr(coro, "close")
-                        ):
-                            coro.close()
+        dispatch_presence_transition(self)
 
     async def async_setup(self) -> None:
         """Start listening to entity state changes and timer ticks."""
@@ -367,7 +244,6 @@ class RoomPresenceCoordinator:
             async_track_time_interval,
         )
 
-        # Track triggers
         if self.trigger_entities:
             unsub = async_track_state_change_event(
                 self.hass,
@@ -376,7 +252,6 @@ class RoomPresenceCoordinator:
             )
             self._unsub_trackers.append(unsub)
 
-        # Track boundary doors
         if self.boundary_entities:
             unsub = async_track_state_change_event(
                 self.hass,
@@ -385,7 +260,6 @@ class RoomPresenceCoordinator:
             )
             self._unsub_trackers.append(unsub)
 
-        # Track sustaining condition entities
         cond_entities = [c["entity_id"] for c in self.conditions if c.get("entity_id")]
         if cond_entities:
             unsub = async_track_state_change_event(
@@ -395,7 +269,6 @@ class RoomPresenceCoordinator:
             )
             self._unsub_trackers.append(unsub)
 
-        # Track additional Bayesian observation entities
         already_tracked = set(self.trigger_entities) | set(cond_entities)
         bayesian_only_entities = [
             obs["entity_id"]
@@ -410,15 +283,20 @@ class RoomPresenceCoordinator:
             )
             self._unsub_trackers.append(unsub)
 
-        # Track 1-second timer tick
+        if self.monitored_actuator_entities:
+            unsub = async_track_state_change_event(
+                self.hass,
+                self.monitored_actuator_entities,
+                self._handle_actuator_change,
+            )
+            self._unsub_trackers.append(unsub)
+
         unsub_tick = async_track_time_interval(
             self.hass,
             self._async_handle_tick,
             datetime.timedelta(seconds=1),
         )
         self._unsub_trackers.append(unsub_tick)
-
-        # Initial evaluation of live states on startup
         self.async_refresh_all_states()
 
     def _unsubscribe_trackers(self) -> None:
@@ -440,14 +318,12 @@ class RoomPresenceCoordinator:
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
-        # 1. Boundaries
         for b_eid in self.boundary_entities:
             st_obj = _safe_state_getter(self.hass, b_eid)
             if st_obj is not None:
                 is_open = st_obj.state in ("on", "open")
                 self.state_machine.handle_boundary(b_eid, is_open)
 
-        # 2. Instant triggers
         for t_eid in self.trigger_entities:
             st_obj = _safe_state_getter(self.hass, t_eid)
             if st_obj is not None:
@@ -455,113 +331,32 @@ class RoomPresenceCoordinator:
                 if is_active:
                     self.state_machine.handle_trigger(t_eid, True)
 
-        # 3. Sustaining conditions & Bayesian evaluation
         self._eval_conditions_and_update()
 
     def _eval_bayesian_and_update(self) -> BayesianEvaluation | None:
         """Evaluate Bayesian sensor fusion across all configured observations and negative-space geometry."""
-        if not self.hass or not hasattr(self.hass, "states") or not self.bayesian_enabled:
-            return None
+        return evaluate_coordinator_bayesian(self)
 
-        from .spatial_inference import evaluate_spatial_frame
+    def _is_guest_mode_active(self) -> bool:
+        """Return True if global Guest Mode is currently enabled."""
+        if not self.hass or not isinstance(getattr(self.hass, "data", None), dict):
+            return False
+        store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if store is not None and isinstance(getattr(store, "global_settings", None), dict):
+            return bool(store.global_settings.get("guest_mode_enabled", False))
+        return False
 
-        neg_space_enabled = True
-        fp: dict[str, Any] | None = None
-        if isinstance(getattr(self.hass, "data", None), dict):
-            store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-            if store is not None:
-                if isinstance(getattr(store, "global_settings", None), dict):
-                    neg_space_enabled = bool(
-                        store.global_settings.get("negative_space_enabled", True)
-                    )
-                if hasattr(store, "get_floorplan"):
-                    cand_fp = store.get_floorplan()
-                    if isinstance(cand_fp, dict) and cand_fp.get("rooms"):
-                        fp = cand_fp
-
-        def _raw_state_str(eid: str) -> str | None:
-            st = _safe_state_getter(self.hass, eid)
-            if st is None:
-                return None
-            if eid.startswith("cover.") and getattr(st, "attributes", {}).get("is_moving"):
-                return "moving"
-            return str(st.state)
-
-        try:
-            frame = evaluate_spatial_frame(
-                floorplan=fp,
-                state_getter=_raw_state_str,
-                prev_frame=self._last_spatial_frame,
-                now_ts=time.time(),
-                negative_space_enabled=neg_space_enabled,
-            )
-            self._last_spatial_frame = frame
-            self.last_spatial_estimate = frame.get("room_estimates", {}).get(self.room_name)
-        except Exception:  # noqa: BLE001
-            self.last_spatial_estimate = None
-
-        shade_excluded_eids: set[str] = set()
-        if neg_space_enabled and isinstance(self.last_spatial_estimate, dict):
-            shade_excluded_eids = set(
-                self.last_spatial_estimate.get("shade_sunlight_excluded_entities", []) or []
-            )
-
-        obs_to_eval = list(self.bayesian_observations)
-        virtual_neg_space_eid = "__spatial_negative_space__"
-        has_neg_space_boost = bool(
-            neg_space_enabled
-            and isinstance(self.last_spatial_estimate, dict)
-            and float(self.last_spatial_estimate.get("probability_boost", 0.0)) > 0.0
+    def _is_definitive_tracker_pinned(self) -> bool:
+        """Return True if Steve's definitive BLE tracker or workstation load pins him to this room."""
+        return bool(
+            isinstance(self.last_spatial_estimate, dict)
+            and self.last_spatial_estimate.get("definitive_tracker_pinned")
         )
-        if has_neg_space_boost and self.last_spatial_estimate:
-            obs_to_eval.append(
-                {
-                    "entity_id": virtual_neg_space_eid,
-                    "prob_given_true": 0.85,
-                    "prob_given_false": 0.12,
-                    "target_state": "on",
-                    "label": self.last_spatial_estimate.get("inferred_subregion")
-                    or "Negative-Space Spatial Exclusion",
-                }
-            )
-
-        class _VirtualState:
-            state = "on"
-
-        class _SuppressedState:
-            state = "off"
-            attributes: dict[str, Any] = {}
-
-        def _bayesian_state_getter(eid: str) -> Any:
-            if eid == virtual_neg_space_eid and has_neg_space_boost:
-                return _VirtualState()
-            if eid in shade_excluded_eids:
-                return _SuppressedState()
-            return _safe_state_getter(self.hass, eid)
-
-        evaluation = evaluate_bayesian(
-            obs_to_eval,
-            _bayesian_state_getter,
-            prior=self.bayesian_prior,
-            threshold=self.bayesian_threshold,
-        )
-        self.last_bayesian_eval = evaluation
-        self.state_machine.handle_bayesian(
-            probability=evaluation.probability,
-            probability_pct=evaluation.probability_pct,
-            is_occupied=evaluation.is_occupied,
-            summary=evaluation.natural_language_summary,
-            active_observations=evaluation.active_observations,
-            inactive_observations=evaluation.inactive_observations,
-            trigger_state_machine=self.has_explicit_bayesian,
-        )
-        self._record_timeline_snapshot()
-        if evaluation.is_occupied and self.has_explicit_bayesian:
-            self._notify_connected_rooms_if_active()
-        return evaluation
 
     def notify_adjacent_occupancy(self, from_room_name: str) -> bool:
         """Clear vacating timer immediately if an adjacent connected room just detected an occupant."""
+        if self._is_guest_mode_active() or self._is_definitive_tracker_pinned():
+            return False
         if self.state_machine.handle_adjacent_room_occupied(from_room_name):
             self._last_adjacent_arrival = f"Entered from {from_room_name}"
             self._record_timeline_snapshot()
@@ -571,79 +366,11 @@ class RoomPresenceCoordinator:
 
     def _notify_connected_rooms_if_active(self) -> None:
         """Notify connected adjacent rooms when this room actively detects an occupant."""
-        from .const import DOMAIN
-
-        if not self.hass or not isinstance(getattr(self.hass, "data", None), dict):
-            return
-        if not self.state_machine.is_present or self.state_machine.box_state not in (
-            BoxState.OCCUPIED,
-            BoxState.OCCUPIED_SEALED,
-            BoxState.OCCUPIED_UNSEALED,
-        ):
-            return
-
-        domain_data = self.hass.data.get(DOMAIN, {})
-        if not isinstance(domain_data, dict):
-            return
-
-        my_tokens = {
-            self.room_name.strip().lower(),
-            self.entry_id.strip().lower(),
-            self.room_name.strip().lower().replace("'", "").replace(" ", "_"),
-        }
-        if self.area_id:
-            my_tokens.add(str(self.area_id).strip().lower())
-
-        my_connected = {r.strip().lower() for r in self.connected_rooms if r}
-
-        for other in list(domain_data.values()):
-            if other is self or not isinstance(other, RoomPresenceCoordinator):
-                continue
-            other_tokens = {
-                other.room_name.strip().lower(),
-                other.entry_id.strip().lower(),
-                other.room_name.strip().lower().replace("'", "").replace(" ", "_"),
-            }
-            if other.area_id:
-                other_tokens.add(str(other.area_id).strip().lower())
-            other_connected = {r.strip().lower() for r in other.connected_rooms if r}
-
-            if (my_connected & other_tokens) or (other_connected & my_tokens):
-                other.notify_adjacent_occupancy(self.room_name)
+        notify_connected_rooms_if_active(self)
 
     def _record_timeline_snapshot(self) -> None:
         """Record a compact sensor & state snapshot into PDDStore's rolling timeline buffer."""
-        from .const import DATA_STORE, DOMAIN
-
-        if not self.hass or not isinstance(getattr(self.hass, "data", None), dict):
-            return
-        store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is None or not hasattr(store, "record_timeline_event"):
-            return
-
-        entity_states: dict[str, str] = {}
-        tracked_eids: set[str] = set(self.boundary_entities) | set(self.trigger_entities)
-        for cond in self.conditions:
-            if isinstance(cond, dict) and cond.get("entity_id"):
-                tracked_eids.add(str(cond["entity_id"]))
-        for obs in self.bayesian_observations:
-            if isinstance(obs, dict) and obs.get("entity_id"):
-                tracked_eids.add(str(obs["entity_id"]))
-
-        for eid in sorted(tracked_eids):
-            st_obj = _safe_state_getter(self.hass, eid)
-            if st_obj is not None:
-                entity_states[eid] = str(st_obj.state)
-
-        store.record_timeline_event(
-            self.entry_id,
-            {
-                "is_present": self.state_machine.is_present,
-                "box_state": str(self.state_machine.box_state),
-                "probability_pct": self.state_machine.bayesian_probability_pct,
-                "entity_states": entity_states,
-            },
-        )
+        record_coordinator_timeline_snapshot(self)
 
     def _eval_conditions_and_update(self) -> None:
         """Evaluate sustaining conditions and Bayesian observations."""
@@ -652,10 +379,17 @@ class RoomPresenceCoordinator:
 
         any_active, descs = evaluate_all(
             self.conditions,
-            lambda eid: _safe_state_getter(self.hass, eid),
+            lambda eid: None
+            if self.actuation_tracker.is_entity_auto_latched(eid)
+            else _safe_state_getter(self.hass, eid),
         )
         self.state_machine.handle_conditions(any_active, descs)
         self._eval_bayesian_and_update()
+
+    @callback
+    def _handle_actuator_change(self, event: Any) -> None:
+        """Handle manual wall switch, Google Assistant voice, or UI actuation event."""
+        process_coordinator_actuator_event(self, event)
 
     @callback
     def _handle_trigger_change(self, event: Any) -> None:
@@ -669,7 +403,11 @@ class RoomPresenceCoordinator:
         shade_excluded = set(
             (self.last_spatial_estimate or {}).get("shade_sunlight_excluded_entities", []) or []
         )
-        is_active = to_state.state in ("on", "playing", "home") and entity_id not in shade_excluded
+        pet_excluded = set(
+            (self.last_spatial_estimate or {}).get("pet_excluded_entities", []) or []
+        )
+        suppressed = shade_excluded | pet_excluded
+        is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
         self.state_machine.handle_trigger(entity_id, is_active)
         if is_active:
             self._notify_connected_rooms_if_active()
@@ -703,6 +441,10 @@ class RoomPresenceCoordinator:
         """Execute 1 second tick."""
         action = self.state_machine.handle_tick(1)
         if action == "REQUEST_LLM_VERIFY":
+            if self._is_guest_mode_active():
+                self.state_machine.handle_llm_result(False, "Skipped LLM verification in Guest Mode")
+                self.async_update_listeners()
+                return
             self.async_update_listeners()
             await self.async_run_llm_verification()
         elif action == "VACATED":
@@ -753,36 +495,4 @@ class RoomPresenceCoordinator:
         channel: str | None = None,
     ) -> bool:
         """Send a test diagnostic notification to verify Slack connectivity."""
-        from .notifications import TransitionAttribution
-
-        global_settings: dict[str, Any] = {}
-        if self.hass and hasattr(self.hass, "data") and isinstance(self.hass.data, dict):
-            store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-            if store is not None and hasattr(store, "global_settings"):
-                global_settings = dict(store.global_settings or {})
-
-        if service:
-            global_settings["slack_notify_service"] = service
-        if channel:
-            global_settings["slack_channel"] = channel
-
-        attribution = TransitionAttribution(
-            room_id=self.entry_id,
-            room_name=self.room_name,
-            from_state="clear",
-            to_state="occupied",
-            primary_driver="Test Trigger (Manual Studio Verification)",
-            driver_type="sensor",
-            confidence_pct=95.0,
-            threshold_pct=75.0,
-            active_sensors=["test_sensor.manual_ping"],
-            sustaining_conditions=[],
-            arrival_context="Manual Studio Test",
-            duration_occupied_str=None,
-        )
-        return await self._notification_dispatcher.async_dispatch_notification(
-            self.hass,
-            attribution,
-            global_settings,
-            {"notify_slack": True, "notify_on_occupied": True},
-        )
+        return await async_send_coordinator_test_notification(self, service=service, channel=channel)

@@ -1,4 +1,4 @@
-"""Native Home Assistant .storage manager for Presence Detection Designer."""
+"""Native Home Assistant .storage persistence repository for Presence Detection Designer."""
 
 from __future__ import annotations
 
@@ -31,18 +31,10 @@ except Exception:  # noqa: BLE001
 
 
 from .const import (
-    CONF_LLM_AGENT_ID,
-    CONF_LLM_API_KEY,
-    CONF_LLM_API_URL,
-    CONF_LLM_MODEL,
-    CONF_LLM_PROVIDER_TYPE,
-    CONF_NOTIFY_ON_CLEARED,
-    CONF_NOTIFY_ON_OCCUPIED,
-    CONF_NOTIFY_SLACK,
     DATA_STORE,
     DEFAULT_BLE_TRACKERS,
+    DEFAULT_GUEST_MODE_ENABLED,
     DEFAULT_NEGATIVE_SPACE_ENABLED,
-    DEFAULT_NOTIFY_SLACK,
     DEFAULT_SLACK_CHANNEL,
     DEFAULT_SLACK_NOTIFY_SERVICE,
     DOMAIN,
@@ -53,6 +45,7 @@ from .const import (
     LLMProviderType,
 )
 from .spatial_topology import get_default_floorplan
+from .store_migrations import migrate_and_backfill_store_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,6 +60,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "slack_notify_service": DEFAULT_SLACK_NOTIFY_SERVICE,
     "slack_channel": DEFAULT_SLACK_CHANNEL,
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
+    "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
 }
 
 
@@ -82,7 +76,7 @@ def _default_store_data() -> dict[str, Any]:
 
 
 class PDDStore:
-    """Manage persistent .storage state for Presence Detection Designer."""
+    """Persist and retrieve .storage state for Presence Detection Designer."""
 
     def __init__(self, hass: Any) -> None:
         self.hass = hass
@@ -98,335 +92,12 @@ class PDDStore:
             _LOGGER.warning("Could not load .storage/%s: %s", STORAGE_KEY, err)
             stored = None
 
-        dirty = False
-        if not isinstance(stored, dict):
-            stored = _default_store_data()
-            dirty = True
-
-        for key, default_val in _default_store_data().items():
-            if key not in stored or not isinstance(stored[key], type(default_val)):
-                stored[key] = copy.deepcopy(default_val)
-                dirty = True
-
-        if not stored.get("floorplan", {}).get("rooms"):
-            stored["floorplan"] = get_default_floorplan()
-            dirty = True
-        else:
-            default_fp = get_default_floorplan()
-            fp_dict = stored["floorplan"]
-            has_blueprint = any(
-                isinstance(fl, dict) and fl.get("underlay_svg")
-                for fl in fp_dict.get("floors", []) or []
-            )
-            if not has_blueprint or int(fp_dict.get("version", 0) or 0) < int(
-                default_fp.get("version", 4)
-            ):
-                stored["floorplan"] = copy.deepcopy(default_fp)
-                fp_dict = stored["floorplan"]
-                dirty = True
-            for layer_key in ("sensors", "ble_proxies"):
-                if not fp_dict.get(layer_key) and default_fp.get(layer_key):
-                    fp_dict[layer_key] = copy.deepcopy(default_fp[layer_key])
-                    dirty = True
-            # Backfill camera sub_zones if missing on stored cameras and sync storage_room_workout
-            default_cams = {c["id"]: c for c in default_fp.get("cameras", []) if c.get("id")}
-            for cam in fp_dict.get("cameras", []):
-                cid = cam.get("id")
-                if (
-                    cid in default_cams
-                    and not cam.get("sub_zones")
-                    and default_cams[cid].get("sub_zones")
-                ):
-                    cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
-                    dirty = True
-                elif cid == "camera.storage_room" and cam.get("sub_zones"):
-                    for sz in cam["sub_zones"]:
-                        if (
-                            sz.get("id") == "storage_room_workout"
-                            and sz.get("label") != "Storage Room Floor"
-                        ):
-                            sz["label"] = "Storage Room Floor"
-                            sz["x"] = 705
-                            sz["y"] = 80
-                            sz["width"] = 195
-                            sz["height"] = 265
-                            dirty = True
-            for conn in fp_dict.get("connections", []):
-                if (
-                    isinstance(conn, dict)
-                    and conn.get("entity_id") == "binary_sensor.utility_room_door"
-                ):
-                    conn["entity_id"] = "binary_sensor.laundry_room_door"
-                    dirty = True
-            # Remove decommissioned or renamed old sensor IDs
-            removed_sensor_ids = {
-                "binary_sensor.motion_detector_basement1",
-                "binary_sensor.ratgdov25i_47a250_motion",
-                "binary_sensor.motion_utility_room",
-                "binary_sensor.wyzesense_77a63dd9",
-                "binary_sensor.wyzesense_77a64d3c",
-                "binary_sensor.wyzesense_77a65433",
-                "binary_sensor.wyzesense_77a64d08",
-                "binary_sensor.ring_motion_sensor_55812",
-                "binary_sensor.family_room_motion_4",
-                "binary_sensor.family_room_motion",
-                "binary_sensor.motion_sensor_gen2_motion_detection",
-                "binary_sensor.basement_motion",
-                "binary_sensor.utility_room_door",
-            }
-            orig_sensors = list(fp_dict.get("sensors", []) or [])
-            filtered_sensors = [s for s in orig_sensors if s.get("id") not in removed_sensor_ids]
-            if len(filtered_sensors) != len(orig_sensors):
-                fp_dict["sensors"] = filtered_sensors
-                dirty = True
-            default_sens = {s["id"]: s for s in default_fp.get("sensors", []) if s.get("id")}
-            existing_sensor_ids = {s.get("id") for s in fp_dict.get("sensors", [])}
-            for new_sid in (
-                "binary_sensor.family_room_ecobee_motion",
-                "binary_sensor.family_room_ring_motion",
-                "binary_sensor.guest_room_motion_occupancy",
-                "binary_sensor.laundry_room_motion",
-                "binary_sensor.upstairs_hallway_motion",
-                "binary_sensor.upstairs_stairs_motion",
-                "binary_sensor.master_bathroom_motion",
-                "binary_sensor.kitchen_motion",
-                "binary_sensor.garage_ring_motion",
-                "binary_sensor.basement_stairs_ring_motion",
-                "binary_sensor.basement_ecobee_motion",
-                "binary_sensor.laundry_room_door",
-            ):
-                if new_sid in default_sens and new_sid not in existing_sensor_ids:
-                    fp_dict.setdefault("sensors", []).insert(
-                        1, copy.deepcopy(default_sens[new_sid])
-                    )
-                    dirty = True
-            for sen in fp_dict.get("sensors", []):
-                sid = sen.get("id")
-                if sid in default_sens:
-                    ds = default_sens[sid]
-                    if not sen.get("model_preset") and ds.get("model_preset"):
-                        sen["model_preset"] = ds["model_preset"]
-                        dirty = True
-                    if (
-                        ds.get("model_preset") in ("ecobee_smart_sensor", "ecobee_thermostat_pir")
-                        and sen.get("range_px") == 260
-                    ):
-                        for k in ("model_preset", "fov_deg", "range_px"):
-                            sen[k] = ds[k]
-                        dirty = True
-                    elif sid in (
-                        "binary_sensor.keypad_motion",
-                        "binary_sensor.upper_level_keypad_motion",
-                    ) and (sen.get("x") in (380, 415, 485) or sen.get("y") == 235):
-                        for k in ("name", "host_room", "x", "y", "heading_deg"):
-                            sen[k] = ds[k]
-                        dirty = True
-                    elif sid == "binary_sensor.upstairs_hallway_motion" and sen.get("y") == 260:
-                        for k in ("name", "x", "y", "heading_deg"):
-                            sen[k] = ds[k]
-                        dirty = True
-                    elif sid == "binary_sensor.guest_room_motion" and sen.get("x") == 858:
-                        for k in ("name", "x", "y", "heading_deg"):
-                            sen[k] = ds[k]
-                        dirty = True
-
-        for k, v in DEFAULT_GLOBAL_SETTINGS.items():
-            if k not in stored["global_settings"]:
-                stored["global_settings"][k] = copy.deepcopy(v)
-                dirty = True
-        if "sensor.tab_s10_lite_ble_area" in (stored["global_settings"].get("ble_trackers") or []):
-            stored["global_settings"]["ble_trackers"] = [
-                t
-                for t in stored["global_settings"]["ble_trackers"]
-                if t != "sensor.tab_s10_lite_ble_area"
-            ]
-            dirty = True
-
-        for _rid, rcfg in stored.get("rooms", {}).items():
-            if isinstance(rcfg, dict):
-                if rcfg.get(CONF_NOTIFY_SLACK) is None:
-                    rcfg[CONF_NOTIFY_SLACK] = DEFAULT_NOTIFY_SLACK
-                    dirty = True
-                if rcfg.get(CONF_NOTIFY_ON_OCCUPIED) is None:
-                    rcfg[CONF_NOTIFY_ON_OCCUPIED] = True
-                    dirty = True
-                if rcfg.get(CONF_NOTIFY_ON_CLEARED) is None:
-                    rcfg[CONF_NOTIFY_ON_CLEARED] = True
-                    dirty = True
-                if rcfg.get("room_name") == "Guest Room":
-                    obs = list(rcfg.get("bayesian_observations") or [])
-                    if not any(
-                        isinstance(o, dict)
-                        and o.get("entity_id") == "binary_sensor.guest_room_motion_occupancy"
-                        for o in obs
-                    ):
-                        obs.insert(
-                            0,
-                            {
-                                "entity_id": "binary_sensor.guest_room_motion_occupancy",
-                                "label": "Guest Room VALLHORN PIR Motion",
-                                "operator": "equals",
-                                "preset": "strong",
-                                "state": "on",
-                                "prob_given_true": 0.90,
-                                "prob_given_false": 0.05,
-                            },
-                        )
-                        rcfg["bayesian_observations"] = obs
-                        dirty = True
-                elif rcfg.get("room_name") == "Master Bathroom":
-                    orig_obs = list(rcfg.get("bayesian_observations") or [])
-                    obs = [
-                        o
-                        for o in orig_obs
-                        if not (
-                            isinstance(o, dict)
-                            and o.get("entity_id") == "binary_sensor.wyzesense_77a65433"
-                        )
-                    ]
-                    if len(obs) != len(orig_obs):
-                        rcfg["bayesian_observations"] = obs
-                        dirty = True
-                    if not any(
-                        isinstance(o, dict)
-                        and o.get("entity_id") == "binary_sensor.master_bathroom_motion"
-                        for o in obs
-                    ):
-                        obs.insert(
-                            0,
-                            {
-                                "entity_id": "binary_sensor.master_bathroom_motion",
-                                "label": "Master Bathroom Wyze PIR Motion",
-                                "operator": "equals",
-                                "preset": "strong",
-                                "state": "on",
-                                "prob_given_true": 0.90,
-                                "prob_given_false": 0.05,
-                            },
-                        )
-                        rcfg["bayesian_observations"] = obs
-                        dirty = True
-                elif rcfg.get("room_name") == "Kitchen":
-                    orig_obs = list(rcfg.get("bayesian_observations") or [])
-                    obs = [
-                        o
-                        for o in orig_obs
-                        if not (
-                            isinstance(o, dict)
-                            and o.get("entity_id") == "binary_sensor.wyzesense_77a64d08"
-                        )
-                    ]
-                    if len(obs) != len(orig_obs):
-                        rcfg["bayesian_observations"] = obs
-                        dirty = True
-                    if not any(
-                        isinstance(o, dict) and o.get("entity_id") == "binary_sensor.kitchen_motion"
-                        for o in obs
-                    ):
-                        obs.insert(
-                            0,
-                            {
-                                "entity_id": "binary_sensor.kitchen_motion",
-                                "label": "Kitchen Wyze PIR Motion",
-                                "operator": "equals",
-                                "preset": "strong",
-                                "state": "on",
-                                "prob_given_true": 0.90,
-                                "prob_given_false": 0.05,
-                            },
-                        )
-                        rcfg["bayesian_observations"] = obs
-                        dirty = True
-                elif rcfg.get("room_name") == "Garage":
-                    orig_obs = list(rcfg.get("bayesian_observations") or [])
-                    obs = [
-                        o
-                        for o in orig_obs
-                        if not (
-                            isinstance(o, dict)
-                            and o.get("entity_id") == "binary_sensor.ring_motion_sensor_55812"
-                        )
-                    ]
-                    if len(obs) != len(orig_obs):
-                        rcfg["bayesian_observations"] = obs
-                        dirty = True
-                    if not any(
-                        isinstance(o, dict)
-                        and o.get("entity_id") == "binary_sensor.garage_ring_motion"
-                        for o in obs
-                    ):
-                        obs.insert(
-                            0,
-                            {
-                                "entity_id": "binary_sensor.garage_ring_motion",
-                                "label": "Garage Ring PIR Motion",
-                                "operator": "equals",
-                                "preset": "strong",
-                                "state": "on",
-                                "prob_given_true": 0.90,
-                                "prob_given_false": 0.05,
-                            },
-                        )
-                        rcfg["bayesian_observations"] = obs
-                        dirty = True
-
-        # Synchronize existing ConfigEntries into .storage rooms and global_settings
-        if (
-            self.hass
-            and hasattr(self.hass, "config_entries")
-            and hasattr(self.hass.config_entries, "async_entries")
-        ):
-            try:
-                entries = self.hass.config_entries.async_entries(DOMAIN)
-                for entry in entries:
-                    eid = getattr(entry, "entry_id", None)
-                    if not eid:
-                        continue
-                    merged_cfg = {
-                        **(getattr(entry, "data", {}) or {}),
-                        **(getattr(entry, "options", {}) or {}),
-                    }
-                    if eid not in stored["rooms"] and merged_cfg:
-                        stored["rooms"][eid] = copy.deepcopy(merged_cfg)
-                        dirty = True
-                    elif (
-                        eid in stored["rooms"]
-                        and isinstance(stored["rooms"][eid], dict)
-                        and hasattr(self.hass.config_entries, "async_update_entry")
-                    ):
-                        room_cfg = stored["rooms"][eid]
-                        room_obs = room_cfg.get("bayesian_observations")
-                        opt_obs = (getattr(entry, "options", {}) or {}).get("bayesian_observations")
-                        if room_obs is not None and room_obs != opt_obs:
-                            new_opts = dict(getattr(entry, "options", {}) or {})
-                            new_opts["bayesian_observations"] = copy.deepcopy(room_obs)
-                            self.hass.config_entries.async_update_entry(
-                                entry,
-                                data=copy.deepcopy(room_cfg),
-                                options=new_opts,
-                            )
-
-                    # Auto-populate global_settings from first room that has LLM settings
-                    gs = stored["global_settings"]
-                    if not gs.get("llm_api_url") and merged_cfg.get(CONF_LLM_API_URL):
-                        gs["llm_api_url"] = str(merged_cfg[CONF_LLM_API_URL])
-                        dirty = True
-                    if not gs.get("llm_api_key") and merged_cfg.get(CONF_LLM_API_KEY):
-                        gs["llm_api_key"] = str(merged_cfg[CONF_LLM_API_KEY])
-                        dirty = True
-                    if merged_cfg.get(CONF_LLM_MODEL) and gs.get("llm_model") in (
-                        "",
-                        "gpt-4o-mini",
-                    ):
-                        gs["llm_model"] = str(merged_cfg[CONF_LLM_MODEL])
-                        dirty = True
-                    if not gs.get("llm_agent_id") and merged_cfg.get(CONF_LLM_AGENT_ID):
-                        gs["llm_agent_id"] = str(merged_cfg[CONF_LLM_AGENT_ID])
-                        dirty = True
-                    if merged_cfg.get(CONF_LLM_PROVIDER_TYPE):
-                        gs["llm_provider_type"] = str(merged_cfg[CONF_LLM_PROVIDER_TYPE])
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Skipping ConfigEntry sync during store load: %s", err)
+        stored, dirty = migrate_and_backfill_store_payload(
+            self.hass,
+            stored,
+            _default_store_data,
+            DEFAULT_GLOBAL_SETTINGS,
+        )
 
         self._data = stored
         self._loaded = True
@@ -552,7 +223,6 @@ class PDDStore:
             "probability_pct": float(event.get("probability_pct", 0.0)),
             "entity_states": dict(event.get("entity_states") or {}),
         }
-        # Deduplicate if state and sensor map are identical to last event within 60s
         if events:
             last = events[-1]
             if (
@@ -584,7 +254,7 @@ class PDDStore:
             if key in updates and updates[key] is not None:
                 gs[key] = str(updates[key]).strip()
 
-        for bkey in ("notifications_enabled", "negative_space_enabled"):
+        for bkey in ("notifications_enabled", "negative_space_enabled", "guest_mode_enabled"):
             if bkey in updates and updates[bkey] is not None:
                 gs[bkey] = bool(updates[bkey])
 

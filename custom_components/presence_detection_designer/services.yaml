@@ -115,3 +115,32 @@ configure_room:
       required: true
       selector:
         object:
+
+set_guest_mode:
+  name: Set Guest Mode
+  description: Enable or disable global Guest Mode (suspends multi-room handoff clearing, negative-space ray-casting, and LLM camera verification while guests are visiting).
+  fields:
+    enabled:
+      name: Guest Mode Enabled
+      description: True to enable Guest Mode, False to restore normal single-household tracking.
+      required: true
+      default: true
+      selector:
+        boolean:
+
+clear_manual_intent:
+  name: Clear manual / voice override intent
+  description: Reset a room's manual wall switch or Google Assistant override state ('manual_off_suppressed' / 'manual_on') back to 'auto'.
+  fields:
+    entry_id:
+      name: Room Entry ID
+      description: Optional config entry ID for a specific room.
+      required: false
+      selector:
+        text:
+    room_name:
+      name: Room Name
+      description: Optional room name filter (e.g. Office, Family Room). If omitted, resets all rooms.
+      required: false
+      selector:
+        text:

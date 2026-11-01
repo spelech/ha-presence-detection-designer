@@ -41,11 +41,13 @@ CONF_NOTIFY_SLACK = "notify_slack"
 CONF_NOTIFY_ON_OCCUPIED = "notify_on_occupied"
 CONF_NOTIFY_ON_CLEARED = "notify_on_cleared"
 CONF_NEGATIVE_SPACE_ENABLED = "negative_space_enabled"
+CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
 
 DEFAULT_SLACK_NOTIFY_SERVICE = "notify.scdbots"
 DEFAULT_SLACK_CHANNEL = "#presence-alerts"
 DEFAULT_NOTIFY_SLACK = True
 DEFAULT_NEGATIVE_SPACE_ENABLED = True
+DEFAULT_GUEST_MODE_ENABLED = False
 
 # Defaults
 DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
