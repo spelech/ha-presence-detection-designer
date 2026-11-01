@@ -2791,23 +2791,112 @@ def apply_compiled_topology_to_config(
         ]
         updated[CONF_TRIGGER_ENTITIES] = triggers
 
-    obs_list = list(updated.get(CONF_BAYESIAN_OBSERVATIONS, []) or [])
-    if room_name == "Guest Room" and not any(
-        isinstance(o, dict) and o.get("entity_id") == "binary_sensor.guest_room_motion_occupancy"
-        for o in obs_list
+    # Remove decommissioned or misassigned sensors from trigger_entities and bayesian_observations
+    stale_eids = {
+        "binary_sensor.motion_detector_basement1",
+        "binary_sensor.ratgdov25i_47a250_motion",
+        "binary_sensor.motion_utility_room",
+        "binary_sensor.wyzesense_77a63dd9",
+        "binary_sensor.wyzesense_77a64d3c",
+        "binary_sensor.wyzesense_77a65433",
+        "binary_sensor.wyzesense_77a64d08",
+        "binary_sensor.ring_motion_sensor_55812",
+    }
+    if updated.get(CONF_TRIGGER_ENTITIES):
+        updated[CONF_TRIGGER_ENTITIES] = [
+            t
+            for t in (updated.get(CONF_TRIGGER_ENTITIES, []) or [])
+            if str(t.get("entity_id") if isinstance(t, dict) else t) not in stale_eids
+        ]
+
+    obs_list = [
+        o
+        for o in (updated.get(CONF_BAYESIAN_OBSERVATIONS, []) or [])
+        if not (isinstance(o, dict) and str(o.get("entity_id", "")) in stale_eids)
+    ]
+
+    room_required_pirs: dict[str, list[tuple[str, str, str, float, float]]] = {
+        "Guest Room": [
+            (
+                "binary_sensor.guest_room_motion_occupancy",
+                "Guest Room VALLHORN PIR Motion",
+                str(BayesianWeightPreset.STRONG),
+                0.90,
+                0.05,
+            )
+        ],
+        "Master Bathroom": [
+            (
+                "binary_sensor.master_bathroom_motion",
+                "Master Bathroom Wyze PIR Motion",
+                str(BayesianWeightPreset.STRONG),
+                0.90,
+                0.05,
+            )
+        ],
+        "Kitchen": [
+            (
+                "binary_sensor.kitchen_motion",
+                "Kitchen Wyze PIR Motion",
+                str(BayesianWeightPreset.STRONG),
+                0.90,
+                0.05,
+            )
+        ],
+        "Garage": [
+            (
+                "binary_sensor.garage_ring_motion",
+                "Garage Ring PIR Motion",
+                str(BayesianWeightPreset.STRONG),
+                0.90,
+                0.05,
+            )
+        ],
+        "Front Entry": [
+            (
+                "binary_sensor.upstairs_hallway_motion",
+                "Upstairs Hallway Wyze PIR Motion",
+                str(BayesianWeightPreset.STRONG),
+                0.90,
+                0.05,
+            ),
+            (
+                "binary_sensor.upstairs_stairs_motion",
+                "Upstairs Stairs Wyze PIR Motion",
+                str(BayesianWeightPreset.STRONG),
+                0.90,
+                0.05,
+            ),
+            (
+                "binary_sensor.laundry_room_motion",
+                "Laundry Room Wyze PIR Motion",
+                str(BayesianWeightPreset.STRONG),
+                0.90,
+                0.05,
+            ),
+        ],
+    }
+    for req_eid, req_label, req_preset, req_pt, req_pf in reversed(
+        room_required_pirs.get(room_name, [])
     ):
-        obs_list.insert(
-            0,
-            {
-                "entity_id": "binary_sensor.guest_room_motion_occupancy",
-                "label": "Guest Room VALLHORN PIR Motion",
-                "operator": "equals",
-                "preset": str(BayesianWeightPreset.STRONG),
-                "state": "on",
-                "prob_given_true": 0.90,
-                "prob_given_false": 0.05,
-            },
-        )
+        if not any(isinstance(o, dict) and o.get("entity_id") == req_eid for o in obs_list):
+            obs_list.insert(
+                0,
+                {
+                    "entity_id": req_eid,
+                    "label": req_label,
+                    "operator": "equals",
+                    "preset": req_preset,
+                    "state": "on",
+                    "prob_given_true": req_pt,
+                    "prob_given_false": req_pf,
+                },
+            )
+        trig_list = list(updated.get(CONF_TRIGGER_ENTITIES, []) or [])
+        if req_eid not in trig_list:
+            trig_list.insert(0, req_eid)
+            updated[CONF_TRIGGER_ENTITIES] = trig_list
+
     new_obs: list[dict[str, Any]] = []
     for obs in obs_list:
         if not isinstance(obs, dict):

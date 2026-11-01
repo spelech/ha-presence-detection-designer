@@ -384,7 +384,11 @@ class LLMVerifier:
     ) -> dict[str, Any]:
         """Translate back and forth between natural language descriptions and YAML/Designer configs."""
         effective_dir = direction
-        if effective_dir == "auto":
+        if effective_dir in ("yaml_to_nl", "to_natural_language"):
+            effective_dir = "to_natural_language"
+        elif effective_dir in ("nl_to_yaml", "to_yaml"):
+            effective_dir = "to_yaml"
+        elif effective_dir == "auto":
             effective_dir = "to_natural_language" if yaml_config else "to_yaml"
 
         if effective_dir == "to_natural_language" and yaml_config is not None:
