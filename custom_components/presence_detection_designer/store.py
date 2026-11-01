@@ -143,6 +143,12 @@ class PDDStore:
             removed_sensor_ids = {
                 "binary_sensor.motion_detector_basement1",
                 "binary_sensor.ratgdov25i_47a250_motion",
+                "binary_sensor.motion_utility_room",
+                "binary_sensor.wyzesense_77a63dd9",
+                "binary_sensor.wyzesense_77a64d3c",
+                "binary_sensor.wyzesense_77a65433",
+                "binary_sensor.wyzesense_77a64d08",
+                "binary_sensor.ring_motion_sensor_55812",
             }
             orig_sensors = list(fp_dict.get("sensors", []) or [])
             filtered_sensors = [s for s in orig_sensors if s.get("id") not in removed_sensor_ids]
@@ -154,12 +160,12 @@ class PDDStore:
             for new_sid in (
                 "binary_sensor.family_room_motion",
                 "binary_sensor.guest_room_motion_occupancy",
-                "binary_sensor.motion_utility_room",
-                "binary_sensor.wyzesense_77a63dd9",
-                "binary_sensor.wyzesense_77a64d3c",
-                "binary_sensor.wyzesense_77a65433",
-                "binary_sensor.wyzesense_77a64d08",
-                "binary_sensor.ring_motion_sensor_55812",
+                "binary_sensor.laundry_room_motion",
+                "binary_sensor.upstairs_hallway_motion",
+                "binary_sensor.upstairs_stairs_motion",
+                "binary_sensor.master_bathroom_motion",
+                "binary_sensor.kitchen_motion",
+                "binary_sensor.garage_ring_motion",
             ):
                 if new_sid in default_sens and new_sid not in existing_sensor_ids:
                     fp_dict.setdefault("sensors", []).insert(
@@ -208,7 +214,7 @@ class PDDStore:
                         for k in ("name", "host_room", "x", "y", "heading_deg"):
                             sen[k] = ds[k]
                         dirty = True
-                    elif sid == "binary_sensor.wyzesense_77a63dd9" and sen.get("y") == 260:
+                    elif sid == "binary_sensor.upstairs_hallway_motion" and sen.get("y") == 260:
                         for k in ("name", "x", "y", "heading_deg"):
                             sen[k] = ds[k]
                         dirty = True
@@ -251,16 +257,27 @@ class PDDStore:
                         rcfg["bayesian_observations"] = obs
                         dirty = True
                 elif rcfg.get("room_name") == "Master Bathroom":
-                    obs = list(rcfg.get("bayesian_observations") or [])
+                    orig_obs = list(rcfg.get("bayesian_observations") or [])
+                    obs = [
+                        o
+                        for o in orig_obs
+                        if not (
+                            isinstance(o, dict)
+                            and o.get("entity_id") == "binary_sensor.wyzesense_77a65433"
+                        )
+                    ]
+                    if len(obs) != len(orig_obs):
+                        rcfg["bayesian_observations"] = obs
+                        dirty = True
                     if not any(
                         isinstance(o, dict)
-                        and o.get("entity_id") == "binary_sensor.wyzesense_77a65433"
+                        and o.get("entity_id") == "binary_sensor.master_bathroom_motion"
                         for o in obs
                     ):
                         obs.insert(
                             0,
                             {
-                                "entity_id": "binary_sensor.wyzesense_77a65433",
+                                "entity_id": "binary_sensor.master_bathroom_motion",
                                 "label": "Master Bathroom Wyze PIR Motion",
                                 "operator": "equals",
                                 "preset": "strong",
@@ -272,16 +289,26 @@ class PDDStore:
                         rcfg["bayesian_observations"] = obs
                         dirty = True
                 elif rcfg.get("room_name") == "Kitchen":
-                    obs = list(rcfg.get("bayesian_observations") or [])
+                    orig_obs = list(rcfg.get("bayesian_observations") or [])
+                    obs = [
+                        o
+                        for o in orig_obs
+                        if not (
+                            isinstance(o, dict)
+                            and o.get("entity_id") == "binary_sensor.wyzesense_77a64d08"
+                        )
+                    ]
+                    if len(obs) != len(orig_obs):
+                        rcfg["bayesian_observations"] = obs
+                        dirty = True
                     if not any(
-                        isinstance(o, dict)
-                        and o.get("entity_id") == "binary_sensor.wyzesense_77a64d08"
+                        isinstance(o, dict) and o.get("entity_id") == "binary_sensor.kitchen_motion"
                         for o in obs
                     ):
                         obs.insert(
                             0,
                             {
-                                "entity_id": "binary_sensor.wyzesense_77a64d08",
+                                "entity_id": "binary_sensor.kitchen_motion",
                                 "label": "Kitchen Wyze PIR Motion",
                                 "operator": "equals",
                                 "preset": "strong",
@@ -293,16 +320,27 @@ class PDDStore:
                         rcfg["bayesian_observations"] = obs
                         dirty = True
                 elif rcfg.get("room_name") == "Garage":
-                    obs = list(rcfg.get("bayesian_observations") or [])
+                    orig_obs = list(rcfg.get("bayesian_observations") or [])
+                    obs = [
+                        o
+                        for o in orig_obs
+                        if not (
+                            isinstance(o, dict)
+                            and o.get("entity_id") == "binary_sensor.ring_motion_sensor_55812"
+                        )
+                    ]
+                    if len(obs) != len(orig_obs):
+                        rcfg["bayesian_observations"] = obs
+                        dirty = True
                     if not any(
                         isinstance(o, dict)
-                        and o.get("entity_id") == "binary_sensor.ring_motion_sensor_55812"
+                        and o.get("entity_id") == "binary_sensor.garage_ring_motion"
                         for o in obs
                     ):
                         obs.insert(
                             0,
                             {
-                                "entity_id": "binary_sensor.ring_motion_sensor_55812",
+                                "entity_id": "binary_sensor.garage_ring_motion",
                                 "label": "Garage Ring PIR Motion",
                                 "operator": "equals",
                                 "preset": "strong",
@@ -333,6 +371,17 @@ class PDDStore:
                     if eid not in stored["rooms"] and merged_cfg:
                         stored["rooms"][eid] = copy.deepcopy(merged_cfg)
                         dirty = True
+                    elif (
+                        eid in stored["rooms"]
+                        and isinstance(stored["rooms"][eid], dict)
+                        and hasattr(self.hass.config_entries, "async_update_entry")
+                    ):
+                        room_obs = stored["rooms"][eid].get("bayesian_observations")
+                        opt_obs = (getattr(entry, "options", {}) or {}).get("bayesian_observations")
+                        if room_obs and room_obs != opt_obs:
+                            new_opts = dict(getattr(entry, "options", {}) or {})
+                            new_opts["bayesian_observations"] = copy.deepcopy(room_obs)
+                            self.hass.config_entries.async_update_entry(entry, options=new_opts)
 
                     # Auto-populate global_settings from first room that has LLM settings
                     gs = stored["global_settings"]
