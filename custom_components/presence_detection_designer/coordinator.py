@@ -158,10 +158,13 @@ class RoomPresenceCoordinator:
         self.bayesian_observations: list[dict[str, Any]] = build_effective_observations(config)
 
         mode_val = config.get(CONF_MODE)
-        if not mode_val:
+        if not mode_val or str(mode_val).lower() == "auto":
             self.mode = Mode.BOUNDED if len(self.boundary_entities) > 0 else Mode.OPEN
         else:
-            self.mode = Mode(mode_val)
+            try:
+                self.mode = Mode(mode_val)
+            except ValueError:
+                self.mode = Mode.BOUNDED if len(self.boundary_entities) > 0 else Mode.OPEN
 
         # Slack & Notification configuration (default enabled unless explicitly False)
         raw_notify_slack = config.get(CONF_NOTIFY_SLACK)

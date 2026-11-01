@@ -346,7 +346,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     config_data = {**entry.data, **entry.options}
     stored_room = store.get_room(entry.entry_id)
     if stored_room:
-        config_data = {**entry.data, **stored_room, **entry.options}
+        config_data = {**entry.data, **entry.options, **stored_room}
 
     await store.async_save_room(
         entry.entry_id,

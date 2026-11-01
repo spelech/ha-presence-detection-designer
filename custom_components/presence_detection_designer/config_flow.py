@@ -30,10 +30,16 @@ try:
     from homeassistant.core import callback
     from homeassistant.helpers import selector
 
-    if type(config_entries.ConfigFlow).__name__ == "MagicMock":
+    if (
+        type(config_entries.ConfigFlow).__name__ == "MagicMock"
+        or type(getattr(selector, "TextSelector", None)).__name__ == "MagicMock"
+    ):
         raise ImportError
     BaseConfigFlow = config_entries.ConfigFlow
-    if hasattr(config_entries, "OptionsFlowWithConfigEntry"):
+    if (
+        hasattr(config_entries, "OptionsFlowWithConfigEntry")
+        and type(config_entries.OptionsFlowWithConfigEntry).__name__ != "MagicMock"
+    ):
         BaseOptionsFlow = config_entries.OptionsFlowWithConfigEntry
     else:  # pragma: no cover
         BaseOptionsFlow = config_entries.OptionsFlow
@@ -155,7 +161,7 @@ def _build_common_fields(curr: dict[str, Any], include_room_name: bool = False) 
 
     fields[vol.Optional(CONF_MODE, default=curr.get(CONF_MODE, "open"))] = selector.SelectSelector(
         selector.SelectSelectorConfig(
-            options=["bounded", "open"],
+            options=["auto", "bounded", "open"],
             mode=selector.SelectSelectorMode.DROPDOWN,
         )
     )
@@ -347,15 +353,16 @@ class PresenceDetectionDesignerOptionsFlow(BaseOptionsFlow):
     """Handle options flow for tuning presence rules."""
 
     def __init__(self, config_entry: Any = None) -> None:
+        self._init_config_entry = config_entry
         try:
             super().__init__(config_entry)
         except TypeError:
             super().__init__()
-        if getattr(self, "config_entry", None) is None:
-            try:
+        try:
+            if getattr(self, "config_entry", None) is None and config_entry is not None:
                 self.config_entry = config_entry
-            except AttributeError:
-                self._config_entry = config_entry
+        except Exception:  # noqa: BLE001
+            self._config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> dict[str, Any]:
         """Manage the room presence options."""
@@ -369,7 +376,15 @@ class PresenceDetectionDesignerOptionsFlow(BaseOptionsFlow):
                 "data": user_input,
             }
 
-        entry = getattr(self, "config_entry", None) or getattr(self, "_config_entry", None)
+        try:
+            entry = getattr(self, "config_entry", None)
+        except Exception:  # noqa: BLE001
+            entry = None
+        entry = (
+            entry
+            or getattr(self, "_config_entry", None)
+            or getattr(self, "_init_config_entry", None)
+        )
         curr = {**(getattr(entry, "data", {}) or {}), **(getattr(entry, "options", {}) or {})}
         schema = vol.Schema(_build_common_fields(curr, include_room_name=False))
 

@@ -217,7 +217,12 @@ class LLMVerifier:
         """Call Home Assistant AI Task component if available, falling back to Vision API."""
         if self.hass is not None:
             try:
-                from homeassistant.components import ai_task
+                import importlib
+                import sys
+
+                ai_task = sys.modules.get(
+                    "homeassistant.components.ai_task"
+                ) or importlib.import_module("homeassistant.components.ai_task")
 
                 result = await ai_task.async_generate_data(
                     self.hass,
@@ -240,7 +245,12 @@ class LLMVerifier:
             return False, "Home Assistant instance not available"
 
         try:
-            from homeassistant.components import conversation
+            import importlib
+            import sys
+
+            conversation = sys.modules.get(
+                "homeassistant.components.conversation"
+            ) or importlib.import_module("homeassistant.components.conversation")
 
             try:
                 from homeassistant.core import Context
@@ -298,7 +308,12 @@ class LLMVerifier:
         if self.hass is not None:
             if self.provider_type == LLMProviderType.AI_TASK:
                 try:
-                    from homeassistant.components import ai_task
+                    import importlib
+                    import sys
+
+                    ai_task = sys.modules.get(
+                        "homeassistant.components.ai_task"
+                    ) or importlib.import_module("homeassistant.components.ai_task")
 
                     res = await ai_task.async_generate_data(
                         self.hass,
@@ -311,7 +326,12 @@ class LLMVerifier:
                     _LOGGER.debug("AI Task text generation skipped: %s", err)
 
             try:
-                from homeassistant.components import conversation
+                import importlib
+                import sys
+
+                conversation = sys.modules.get(
+                    "homeassistant.components.conversation"
+                ) or importlib.import_module("homeassistant.components.conversation")
 
                 combined = f"{system_prompt}\n\n{user_prompt}"
                 try:

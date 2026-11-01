@@ -155,5 +155,4 @@ MAX_ROOM_REVISIONS = 15
 MAX_TIMELINE_EVENTS = 400
 DEFAULT_BLE_TRACKERS = [
     "sensor.steve_s_s25_ble_area",
-    "sensor.tab_s10_lite_ble_area",
 ]

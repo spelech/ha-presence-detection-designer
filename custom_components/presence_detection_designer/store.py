@@ -128,7 +128,7 @@ class PDDStore:
                 if not fp_dict.get(layer_key) and default_fp.get(layer_key):
                     fp_dict[layer_key] = copy.deepcopy(default_fp[layer_key])
                     dirty = True
-            # Backfill camera sub_zones if missing on stored cameras
+            # Backfill camera sub_zones if missing on stored cameras and sync storage_room_workout
             default_cams = {c["id"]: c for c in default_fp.get("cameras", []) if c.get("id")}
             for cam in fp_dict.get("cameras", []):
                 cid = cam.get("id")
@@ -139,7 +139,26 @@ class PDDStore:
                 ):
                     cam["sub_zones"] = copy.deepcopy(default_cams[cid]["sub_zones"])
                     dirty = True
-            # Remove decommissioned basement Wyze PIR sensor (77A64367) and unused ratgdo PIR
+                elif cid == "camera.storage_room" and cam.get("sub_zones"):
+                    for sz in cam["sub_zones"]:
+                        if (
+                            sz.get("id") == "storage_room_workout"
+                            and sz.get("label") != "Storage Room Floor"
+                        ):
+                            sz["label"] = "Storage Room Floor"
+                            sz["x"] = 705
+                            sz["y"] = 80
+                            sz["width"] = 195
+                            sz["height"] = 265
+                            dirty = True
+            for conn in fp_dict.get("connections", []):
+                if (
+                    isinstance(conn, dict)
+                    and conn.get("entity_id") == "binary_sensor.utility_room_door"
+                ):
+                    conn["entity_id"] = "binary_sensor.laundry_room_door"
+                    dirty = True
+            # Remove decommissioned or renamed old sensor IDs
             removed_sensor_ids = {
                 "binary_sensor.motion_detector_basement1",
                 "binary_sensor.ratgdov25i_47a250_motion",
@@ -149,6 +168,11 @@ class PDDStore:
                 "binary_sensor.wyzesense_77a65433",
                 "binary_sensor.wyzesense_77a64d08",
                 "binary_sensor.ring_motion_sensor_55812",
+                "binary_sensor.family_room_motion_4",
+                "binary_sensor.family_room_motion",
+                "binary_sensor.motion_sensor_gen2_motion_detection",
+                "binary_sensor.basement_motion",
+                "binary_sensor.utility_room_door",
             }
             orig_sensors = list(fp_dict.get("sensors", []) or [])
             filtered_sensors = [s for s in orig_sensors if s.get("id") not in removed_sensor_ids]
@@ -158,7 +182,8 @@ class PDDStore:
             default_sens = {s["id"]: s for s in default_fp.get("sensors", []) if s.get("id")}
             existing_sensor_ids = {s.get("id") for s in fp_dict.get("sensors", [])}
             for new_sid in (
-                "binary_sensor.family_room_motion",
+                "binary_sensor.family_room_ecobee_motion",
+                "binary_sensor.family_room_ring_motion",
                 "binary_sensor.guest_room_motion_occupancy",
                 "binary_sensor.laundry_room_motion",
                 "binary_sensor.upstairs_hallway_motion",
@@ -166,6 +191,9 @@ class PDDStore:
                 "binary_sensor.master_bathroom_motion",
                 "binary_sensor.kitchen_motion",
                 "binary_sensor.garage_ring_motion",
+                "binary_sensor.basement_stairs_ring_motion",
+                "binary_sensor.basement_ecobee_motion",
+                "binary_sensor.laundry_room_door",
             ):
                 if new_sid in default_sens and new_sid not in existing_sensor_ids:
                     fp_dict.setdefault("sensors", []).insert(
@@ -179,28 +207,7 @@ class PDDStore:
                     if not sen.get("model_preset") and ds.get("model_preset"):
                         sen["model_preset"] = ds["model_preset"]
                         dirty = True
-                    if sid == "binary_sensor.motion_sensor_gen2_motion_detection" and (
-                        sen.get("range_px") == 260 or sen.get("x") == 525
-                    ):
-                        for k in ("name", "x", "y", "heading_deg", "fov_deg", "range_px"):
-                            sen[k] = ds[k]
-                        dirty = True
-                    elif (
-                        sid == "binary_sensor.family_room_motion"
-                        and sen.get("model_preset") != "ring_stick_up_cam_gen3"
-                    ):
-                        for k in (
-                            "name",
-                            "model_preset",
-                            "x",
-                            "y",
-                            "heading_deg",
-                            "fov_deg",
-                            "range_px",
-                        ):
-                            sen[k] = ds[k]
-                        dirty = True
-                    elif (
+                    if (
                         ds.get("model_preset") in ("ecobee_smart_sensor", "ecobee_thermostat_pir")
                         and sen.get("range_px") == 260
                     ):
@@ -210,7 +217,7 @@ class PDDStore:
                     elif sid in (
                         "binary_sensor.keypad_motion",
                         "binary_sensor.upper_level_keypad_motion",
-                    ) and sen.get("x") in (380, 415, 485):
+                    ) and (sen.get("x") in (380, 415, 485) or sen.get("y") == 235):
                         for k in ("name", "host_room", "x", "y", "heading_deg"):
                             sen[k] = ds[k]
                         dirty = True
@@ -227,6 +234,13 @@ class PDDStore:
             if k not in stored["global_settings"]:
                 stored["global_settings"][k] = copy.deepcopy(v)
                 dirty = True
+        if "sensor.tab_s10_lite_ble_area" in (stored["global_settings"].get("ble_trackers") or []):
+            stored["global_settings"]["ble_trackers"] = [
+                t
+                for t in stored["global_settings"]["ble_trackers"]
+                if t != "sensor.tab_s10_lite_ble_area"
+            ]
+            dirty = True
 
         for _rid, rcfg in stored.get("rooms", {}).items():
             if isinstance(rcfg, dict):
@@ -380,12 +394,17 @@ class PDDStore:
                         and isinstance(stored["rooms"][eid], dict)
                         and hasattr(self.hass.config_entries, "async_update_entry")
                     ):
-                        room_obs = stored["rooms"][eid].get("bayesian_observations")
+                        room_cfg = stored["rooms"][eid]
+                        room_obs = room_cfg.get("bayesian_observations")
                         opt_obs = (getattr(entry, "options", {}) or {}).get("bayesian_observations")
-                        if room_obs and room_obs != opt_obs:
+                        if room_obs is not None and room_obs != opt_obs:
                             new_opts = dict(getattr(entry, "options", {}) or {})
                             new_opts["bayesian_observations"] = copy.deepcopy(room_obs)
-                            self.hass.config_entries.async_update_entry(entry, options=new_opts)
+                            self.hass.config_entries.async_update_entry(
+                                entry,
+                                data=copy.deepcopy(room_cfg),
+                                options=new_opts,
+                            )
 
                     # Auto-populate global_settings from first room that has LLM settings
                     gs = stored["global_settings"]

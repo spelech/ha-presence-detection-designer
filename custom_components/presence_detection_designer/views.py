@@ -335,10 +335,15 @@ async def async_apply_and_persist_room_config(
     if hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_get_entry"):
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry is not None and hasattr(hass.config_entries, "async_update_entry"):
+            update_kwargs: dict[str, Any] = {
+                "title": str(merged.get(CONF_ROOM_NAME, getattr(entry, "title", "Room"))),
+                "data": merged,
+            }
+            if getattr(entry, "options", None):
+                update_kwargs["options"] = {**entry.options, **merged}
             hass.config_entries.async_update_entry(
                 entry,
-                title=str(merged.get(CONF_ROOM_NAME, getattr(entry, "title", "Room"))),
-                data=merged,
+                **update_kwargs,
             )
 
     # 3. Hot-update running coordinator in-place
