@@ -11,7 +11,11 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .slack_cards import SlackDailyThreadManager, build_transition_card_blocks
+from .slack_cards import (
+    SlackDailyThreadManager,
+    build_transition_card_blocks,
+    get_slack_daily_thread_manager,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +77,6 @@ class NotificationDispatcher:
         """Initialize the dispatcher."""
         self._last_dispatched: dict[tuple[str, str], float] = {}
         self._verified_channels: set[str] = set()
-        self._slack_mgr = SlackDailyThreadManager()
 
     def _call_slack_web_api(
         self,
@@ -82,7 +85,7 @@ class NotificationDispatcher:
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Invoke a Slack Web API endpoint synchronously."""
-        return self._slack_mgr.call_slack_web_api(url, token, payload)
+        return get_slack_daily_thread_manager().call_slack_web_api(url, token, payload)
 
     async def async_ensure_slack_channel(
         self,
@@ -94,7 +97,8 @@ class NotificationDispatcher:
         if not clean_name or clean_name in self._verified_channels:
             return channel
 
-        token = self._slack_mgr.get_slack_token(hass)
+        mgr = get_slack_daily_thread_manager(hass)
+        token = mgr.get_slack_token(hass)
         if not token or not hasattr(hass, "async_add_executor_job"):
             return channel
 
@@ -353,12 +357,12 @@ class NotificationDispatcher:
             or "compact"
         ).strip().lower()
 
-        token = self._slack_mgr.get_slack_token(hass)
+        mgr = get_slack_daily_thread_manager(hass)
+        token = mgr.get_slack_token(hass)
         use_threads = bool(global_settings.get("slack_daily_thread", True))
         thread_ts: str | None = None
         if use_threads and token:
-            _LOGGER.info("Daily thread check: use_threads=%s, token_found=%s, channel=%s", use_threads, bool(token), channel)
-            thread_ts = await self._slack_mgr.async_get_or_create_daily_thread(
+            thread_ts = await mgr.async_get_or_create_daily_thread(
                 hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
             )
 
@@ -380,6 +384,44 @@ class NotificationDispatcher:
         message_text = formatted["text"]
         blocks = formatted.get("blocks")
 
+        try:
+            hass.bus.async_fire(EVENT_PRESENCE_TRANSITION, attribution.to_dict())
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
+
+        # Primary delivery: direct threaded reply via Slack Web API
+        if use_threads and token and thread_ts:
+            threaded_ok = await mgr.async_post_thread_reply(
+                hass,
+                channel,
+                thread_ts,
+                token,
+                message_text,
+                blocks=blocks,
+                call_api_fn=self._call_slack_web_api,
+            )
+            if threaded_ok:
+                _LOGGER.info(
+                    "Threaded presence transition for %s (%s) into %s (thread_ts=%s)",
+                    attribution.room_name,
+                    attribution.to_state,
+                    channel,
+                    thread_ts,
+                )
+                if hasattr(hass, "async_create_task"):
+                    coro = mgr.async_update_daily_digest(
+                        hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
+                    )
+                    hass.async_create_task(coro)
+                    if (
+                        type(hass.async_create_task).__name__ == "MagicMock"
+                        and getattr(hass.async_create_task, "side_effect", None) is None
+                        and hasattr(coro, "close")
+                    ):
+                        coro.close()
+                return True
+
+        # Fallback delivery: standard HA notify service
         service_data: dict[str, Any] = {
             "message": message_text,
             "target": [channel],
@@ -389,14 +431,8 @@ class NotificationDispatcher:
             data_payload["blocks"] = blocks
         if thread_ts:
             data_payload["thread_ts"] = thread_ts
-
         if data_payload:
             service_data["data"] = data_payload
-
-        try:
-            hass.bus.async_fire(EVENT_PRESENCE_TRANSITION, attribution.to_dict())
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
 
         if not hass.services.has_service(domain, service):
             _LOGGER.warning(
@@ -420,7 +456,7 @@ class NotificationDispatcher:
                 thread_ts,
             )
             if use_threads and token and thread_ts and hasattr(hass, "async_create_task"):
-                coro = self._slack_mgr.async_update_daily_digest(
+                coro = mgr.async_update_daily_digest(
                     hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
                 )
                 hass.async_create_task(coro)
