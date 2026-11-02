@@ -161,6 +161,9 @@ def dispatch_presence_transition(coord: Any) -> None:
             coord.last_spatial_estimate.get("negative_exclusions") or []
         )
 
+    adj_ctx = coord._last_adjacent_arrival
+    if not adj_ctx and coord.state_machine.last_handoff_room:
+        adj_ctx = f"Exited to {coord.state_machine.last_handoff_room}"
     attribution = coord._notification_dispatcher.resolve_transition_driver(
         room_id=coord.entry_id,
         room_name=coord.room_name,
@@ -169,10 +172,11 @@ def dispatch_presence_transition(coord: Any) -> None:
         room_config=coord.config,
         prev_eval=None,
         curr_eval=curr_eval,
-        adjacent_context=coord._last_adjacent_arrival,
+        adjacent_context=adj_ctx,
         duration_seconds=duration_sec,
     )
     coord._last_adjacent_arrival = None
+    coord.state_machine.last_handoff_room = None
 
     if hasattr(coord.hass, "async_create_task"):
         coro = coord._notification_dispatcher.async_dispatch_notification(

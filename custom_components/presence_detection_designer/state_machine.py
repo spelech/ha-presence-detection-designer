@@ -47,6 +47,8 @@ class RoomStateMachine:
         self.vacating_countdown = 0
         self.last_cleared_time: float = 0.0
         self.retrigger_cooldown: float = 20.0
+        self.pending_handoff_room: str | None = None
+        self.pending_handoff_ts: float = 0.0
         self.active_conditions: list[str] = []
         self.last_trigger_entity: str | None = None
         self.last_handoff_room: str | None = None
@@ -129,6 +131,17 @@ class RoomStateMachine:
                 # Sealed box: doors closed and was sealed, keep presence sealed without motion!
                 return
             if self.is_present:
+                now = time.time()
+                if self.pending_handoff_room and (now - self.pending_handoff_ts) <= 45.0:
+                    self.vacating_countdown = 0
+                    self.is_present = False
+                    self.box_state = BoxState.IDLE_CLEAR
+                    self.bayesian_probability = 0.0
+                    self.bayesian_probability_pct = 0.0
+                    self.last_handoff_room = self.pending_handoff_room
+                    self.last_cleared_time = now
+                    self.pending_handoff_room = None
+                    return
                 self.box_state = BoxState.TIMER_ACTIVE
                 timeout = (
                     self.grace_timeout
@@ -146,6 +159,7 @@ class RoomStateMachine:
         if is_active:
             self._active_triggers.add(entity_id)
             self.last_trigger_entity = entity_id
+            self.pending_handoff_room = None
             self._activate_occupied_state()
         else:
             self._active_triggers.discard(entity_id)
@@ -240,13 +254,21 @@ class RoomStateMachine:
             self.bayesian_probability_pct = 0.0
             self.last_handoff_room = adjacent_room_name
             self.last_cleared_time = time.time()
+            self.pending_handoff_room = None
             return True
+        if self.is_present and not self.active_conditions:
+            self.pending_handoff_room = adjacent_room_name
+            self.pending_handoff_ts = time.time()
+            return False
         return False
 
     def handle_tick(self, seconds: int = 1) -> str | None:
         """Tick down the vacating countdown timer if active."""
         if self.override:
             return None
+
+        if self.pending_handoff_room and (time.time() - self.pending_handoff_ts) > 45.0:
+            self.pending_handoff_room = None
 
         if self.box_state != BoxState.TIMER_ACTIVE:
             return None
