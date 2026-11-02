@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import datetime
+import time
 from typing import Any
 
 from .const import ConditionOperator
@@ -115,3 +117,40 @@ def evaluate_all(
             active_descriptions.append(format_condition_description(cond))
 
     return (len(active_descriptions) > 0, active_descriptions)
+
+
+def is_state_stale(state_obj: Any, max_age_seconds: float = 60.0) -> bool:
+    """Return True if state object carries a stale event timestamp or restored flag."""
+    if state_obj is None:
+        return True
+    attrs = getattr(state_obj, "attributes", None)
+    if not isinstance(attrs, dict):
+        return False
+    if attrs.get("restored"):
+        return True
+
+    raw_ts = (
+        attrs.get("timestamp")
+        or attrs.get("last_seen")
+        or attrs.get("event_timestamp")
+        or attrs.get("time")
+    )
+    if raw_ts is not None:
+        try:
+            now = time.time()
+            if isinstance(raw_ts, (int, float)):
+                if raw_ts > 946684800:
+                    if (now - float(raw_ts)) > max_age_seconds:
+                        return True
+            elif isinstance(raw_ts, str):
+                dt = datetime.datetime.fromisoformat(raw_ts)
+                dt_ts = (
+                    dt.timestamp()
+                    if dt.tzinfo is not None
+                    else dt.replace(tzinfo=datetime.timezone.utc).timestamp()
+                )
+                if (now - dt_ts) > max_age_seconds:
+                    return True
+        except Exception:
+            pass
+    return False
