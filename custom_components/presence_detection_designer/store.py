@@ -61,6 +61,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "slack_notify_service": DEFAULT_SLACK_NOTIFY_SERVICE,
     "slack_channel": DEFAULT_SLACK_CHANNEL,
     "slack_verbosity": DEFAULT_SLACK_VERBOSITY,
+    "slack_daily_thread": True,
+    "include_camera_snapshot": False,
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
 }
@@ -74,6 +76,7 @@ def _default_store_data() -> dict[str, Any]:
         "revisions": {},
         "timeline": {},
         "floorplan": get_default_floorplan(),
+        "daily_threads": {},
     }
 
 
@@ -257,7 +260,13 @@ class PDDStore:
             if key in updates and updates[key] is not None:
                 gs[key] = str(updates[key]).strip()
 
-        for bkey in ("notifications_enabled", "negative_space_enabled", "guest_mode_enabled"):
+        for bkey in (
+            "notifications_enabled",
+            "negative_space_enabled",
+            "guest_mode_enabled",
+            "slack_daily_thread",
+            "include_camera_snapshot",
+        ):
             if bkey in updates and updates[bkey] is not None:
                 gs[bkey] = bool(updates[bkey])
 
@@ -270,6 +279,15 @@ class PDDStore:
 
         await self.async_save()
         return copy.deepcopy(gs)
+
+    def get_daily_threads(self) -> dict[str, Any]:
+        """Return cached daily thread metadata map."""
+        return self._data.setdefault("daily_threads", {})
+
+    async def async_save_daily_thread(self, channel: str, data: dict[str, Any]) -> None:
+        """Persist daily thread timestamp for a channel."""
+        self._data.setdefault("daily_threads", {})[channel] = copy.deepcopy(data)
+        await self.async_save()
 
     def get_floorplan(self) -> dict[str, Any]:
         """Return a deep copy of the stored 2D spatial floorplan and camera view cones."""
