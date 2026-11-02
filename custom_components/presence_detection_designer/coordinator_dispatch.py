@@ -27,9 +27,7 @@ def _safe_state_getter(hass: Any, entity_id: str) -> Any:
     if not hass or not hasattr(hass, "states"):
         return None
     state_obj = hass.states.get(entity_id)
-    if state_obj is None:
-        return None
-    if not isinstance(getattr(state_obj, "state", None), str):
+    if state_obj is None or not isinstance(getattr(state_obj, "state", None), str):
         return None
     return state_obj
 
@@ -158,9 +156,7 @@ def dispatch_presence_transition(coord: Any) -> None:
             ]
     if coord.last_spatial_estimate:
         curr_eval["inferred_location"] = coord.last_spatial_estimate.get("inferred_subregion")
-        curr_eval["negative_space_evidence"] = list(
-            coord.last_spatial_estimate.get("negative_exclusions") or []
-        )
+        curr_eval["negative_space_evidence"] = list(coord.last_spatial_estimate.get("negative_exclusions") or [])
 
     adj_ctx = coord._last_adjacent_arrival
     if not adj_ctx and coord.state_machine.last_handoff_room:
@@ -225,11 +221,7 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
     for other in list(domain_data.values()):
         if other is coord or not hasattr(other, "notify_adjacent_occupancy"):
             continue
-        other_tokens = {
-            other.room_name.strip().lower(),
-            other.entry_id.strip().lower(),
-            other.room_name.strip().lower().replace("'", "").replace(" ", "_"),
-        }
+        other_tokens = {other.room_name.lower(), other.entry_id.lower(), other.room_name.lower().replace("'", "").replace(" ", "_")}
         if other.area_id:
             other_tokens.add(str(other.area_id).strip().lower())
         other_connected = {r.strip().lower() for r in other.connected_rooms if r}
@@ -246,8 +238,12 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
     if store is None or not hasattr(store, "record_timeline_event"):
         return
 
+    from .spatial_catalog import BLE_TRACKER_ENTITIES
+
     entity_states: dict[str, str] = {}
-    tracked_eids: set[str] = set(coord.boundary_entities) | set(coord.trigger_entities)
+    tracked_eids: set[str] = (
+        set(coord.boundary_entities) | set(coord.trigger_entities) | set(BLE_TRACKER_ENTITIES)
+    )
     for cond in coord.conditions:
         if isinstance(cond, dict) and cond.get("entity_id"):
             tracked_eids.add(str(cond["entity_id"]))
@@ -323,17 +319,19 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     neg_space_enabled = True
     fp: dict[str, Any] | None = None
     guest_mode_enabled = False
+    ble_decider_enabled = False
+    store: Any = None
     if isinstance(getattr(coord.hass, "data", None), dict):
         store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
         if store is not None:
             if isinstance(getattr(store, "global_settings", None), dict):
-                guest_mode_enabled = bool(
-                    store.global_settings.get("guest_mode_enabled", False)
-                )
+                gs = store.global_settings
+                guest_mode_enabled = bool(gs.get("guest_mode_enabled", False))
                 neg_space_enabled = (
-                    bool(store.global_settings.get("negative_space_enabled", True))
+                    bool(gs.get("negative_space_enabled", True))
                     and not guest_mode_enabled
                 )
+                ble_decider_enabled = bool(gs.get("ble_decider_enabled", False))
             if hasattr(store, "get_floorplan"):
                 cand_fp = store.get_floorplan()
                 if isinstance(cand_fp, dict) and cand_fp.get("rooms"):
@@ -347,15 +345,23 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
             return "moving"
         return str(st.state)
 
+    now_ts = time.time()
+    last_frame = getattr(store, "_last_spatial_frame", None) if store is not None else coord._last_spatial_frame
     try:
-        frame = evaluate_spatial_frame(
-            floorplan=fp,
-            state_getter=_raw_state_str,
-            prev_frame=coord._last_spatial_frame,
-            now_ts=time.time(),
-            negative_space_enabled=neg_space_enabled,
-            guest_mode_enabled=guest_mode_enabled,
-        )
+        if last_frame and (now_ts - float(last_frame.get("ts", 0.0))) < 0.2:
+            frame = last_frame
+        else:
+            frame = evaluate_spatial_frame(
+                floorplan=fp,
+                state_getter=_raw_state_str,
+                prev_frame=last_frame,
+                now_ts=now_ts,
+                negative_space_enabled=neg_space_enabled,
+                guest_mode_enabled=guest_mode_enabled,
+                ble_decider_enabled=ble_decider_enabled,
+            )
+            if store is not None:
+                store._last_spatial_frame = frame
         coord._last_spatial_frame = frame
         coord.last_spatial_estimate = frame.get("room_estimates", {}).get(coord.room_name)
     except Exception:  # noqa: BLE001
@@ -365,9 +371,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     shade_excluded_eids = set(sp.get("shade_sunlight_excluded_entities") or []) if neg_space_enabled else set()
     pet_excluded_eids = set(sp.get("pet_excluded_entities") or [])
     tracker = getattr(coord, "actuation_tracker", None)
-    auto_latched_eids: set[str] = (
-        set(tracker.automated_entities_on) if tracker is not None else set()
-    )
+    auto_latched_eids = set(tracker.automated_entities_on) if tracker is not None else set()
     suppressed_eids = shade_excluded_eids | pet_excluded_eids | auto_latched_eids
 
     obs_to_eval = list(coord.bayesian_observations)

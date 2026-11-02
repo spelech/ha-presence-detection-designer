@@ -58,6 +58,7 @@ def test_co_presence_steve_and_riley_and_untracked_margot():
     frame = evaluate_spatial_frame(
         state_getter=lambda eid: states.get(eid, "off"),
         now_ts=1000.0,
+        ble_decider_enabled=True,
     )
     fam = frame["room_estimates"]["Family Room"]
     assert fam["occupied"] is True

@@ -2086,6 +2086,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
               <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                  <span class="setting-label" style="font-weight:600;">📱 Use BLE Position as Presence Decider</span>
+                  <input type="checkbox" id="gl-ble-decider-enabled" ${
+                    this._globalDraft?.ble_decider_enabled ? "checked" : ""
+                  } />
+                </div>
+                <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
+                  When enabled, Bermuda/proxy phone BLE areas act as active room occupancy triggers, negative-space localizers, and occupant pinning. When disabled (recommended until Google Home speakers and multi-proxy coverage are calibrated), BLE area positions are continuously collected, logged, and graphed for tuning without causing vertical bounce or false floor transitions.
+                </div>
+              </div>
+
+              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
                   <span class="setting-label" style="font-weight:600;">👥 Guest Mode (Multi-Occupant / Low-Compute Mode)</span>
                   <input type="checkbox" id="gl-guest-mode-enabled" ${
                     this._globalDraft?.guest_mode_enabled ? "checked" : ""
@@ -5661,6 +5673,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         include_camera_snapshot: Boolean(root.querySelector("#gl-include-camera-snapshot")?.checked),
         negative_space_enabled: Boolean(root.querySelector("#gl-neg-space-enabled")?.checked),
         guest_mode_enabled: Boolean(root.querySelector("#gl-guest-mode-enabled")?.checked),
+        ble_decider_enabled: Boolean(root.querySelector("#gl-ble-decider-enabled")?.checked),
       };
       this.saveGlobalSettings();
     });

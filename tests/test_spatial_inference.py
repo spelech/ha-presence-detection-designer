@@ -55,6 +55,7 @@ def test_negative_space_uncovered_subregion_in_kitchen() -> None:
         state_getter=lambda eid: states_t1.get(eid, "off"),
         now_ts=1000.0,
         negative_space_enabled=True,
+        ble_decider_enabled=True,
     )
 
     # Step 2: Person moves to the north prep counter (outside camera.kitchen Island cone);
@@ -74,6 +75,7 @@ def test_negative_space_uncovered_subregion_in_kitchen() -> None:
         prev_frame=frame_t1,
         now_ts=1030.0,
         negative_space_enabled=True,
+        ble_decider_enabled=True,
     )
     frame_off = evaluate_spatial_frame(
         floorplan=fp,
@@ -82,6 +84,7 @@ def test_negative_space_uncovered_subregion_in_kitchen() -> None:
         prev_frame=frame_t1,
         now_ts=1030.0,
         negative_space_enabled=False,
+        ble_decider_enabled=True,
     )
 
     k_on = frame_on["room_estimates"]["Kitchen"]
@@ -304,3 +307,46 @@ def test_replay_comparison_eliminates_moving_shade_false_positives():
     assert comp["baseline"]["summary"]["occupied_minutes"] > 0.0
     assert comp["candidate"]["summary"]["occupied_minutes"] == 0.0
     assert comp["deltas"]["false_positive_eliminated_minutes"] > 0.0
+
+
+def test_ble_decider_disabled_excludes_floor_bleed_while_logging_telemetry() -> None:
+    """Verify phone BLE bouncing to Basement does NOT trigger occupancy or pin Steve when ble_decider_enabled=False."""
+    states_bleed = {
+        "sensor.steve_s_s25_ble_area": "Basement",
+        "binary_sensor.basement_camera_person_occupancy": "off",
+        "binary_sensor.basement_stairs_ring_motion": "off",
+        "binary_sensor.basement_ecobee_motion": "off",
+    }
+
+    # 1. Default mode: ble_decider_enabled=False
+    frame_passive = evaluate_spatial_frame(
+        state_getter=lambda eid: states_bleed.get(eid, "off"),
+        now_ts=3000.0,
+        ble_decider_enabled=False,
+    )
+    b_passive = frame_passive["room_estimates"]["Basement Play Area"]
+
+    # Basement is NOT occupied and has no negative space probability boost
+    assert b_passive["occupied"] is False
+    assert b_passive["probability_boost"] == 0.0
+    assert "Basement Play Area" not in frame_passive["steve_pinned_rooms"]
+    assert "sensor.steve_s_s25_ble_area" not in frame_passive["active_positive_sensors"]
+
+    # BUT BLE telemetry is continuously gathered, logged, and surfaced in estimate
+    assert frame_passive["telemetry_ble_by_room"].get("Basement Play Area") == ["sensor.steve_s_s25_ble_area"]
+    assert frame_passive["raw_ble_positions"].get("sensor.steve_s_s25_ble_area") == "Basement"
+    assert frame_passive["prev_ble_states"].get("sensor.steve_s_s25_ble_area") == "Basement"
+    assert "sensor.steve_s_s25_ble_area" in b_passive["ble_telemetry"]
+
+    # 2. When ble_decider_enabled=True: BLE acts as decider, pinning Steve to Basement
+    frame_decider = evaluate_spatial_frame(
+        state_getter=lambda eid: states_bleed.get(eid, "off"),
+        now_ts=3010.0,
+        ble_decider_enabled=True,
+    )
+    b_decider = frame_decider["room_estimates"]["Basement Play Area"]
+
+    assert b_decider["occupied"] is True
+    assert b_decider["probability_boost"] > 0.0
+    assert "Basement Play Area" in frame_decider["steve_pinned_rooms"]
+    assert "sensor.steve_s_s25_ble_area" in frame_decider["active_positive_sensors"]
