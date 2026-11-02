@@ -238,17 +238,18 @@ class PDDNotificationTestView(HomeAssistantView):
 
         service = body.get("slack_notify_service")
         channel = body.get("slack_channel")
+        verbosity = body.get("slack_verbosity")
 
         domain_data = getattr(hass, "data", {}).get(DOMAIN, {})
         coordinators = [c for c in domain_data.values() if isinstance(c, RoomPresenceCoordinator)]
         if coordinators:
             success = await coordinators[0].async_send_test_notification(
-                service=service, channel=channel
+                service=service, channel=channel, verbosity=verbosity
             )
             return self.json(
                 {
                     "success": success,
-                    "message": f"Test alert sent via {service or 'notify.scdbots'} to {channel or '#presence-alerts'}",
+                    "message": f"Test alert sent via {service or 'notify.scdbots'} to {channel or '#presence-alerts'} ({verbosity or 'compact'})",
                 }
             )
 
@@ -258,6 +259,8 @@ class PDDNotificationTestView(HomeAssistantView):
             global_settings["slack_notify_service"] = service
         if channel:
             global_settings["slack_channel"] = channel
+        if verbosity:
+            global_settings["slack_verbosity"] = verbosity
 
         dispatcher = NotificationDispatcher()
         attribution = TransitionAttribution(

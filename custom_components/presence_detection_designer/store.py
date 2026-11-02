@@ -37,6 +37,7 @@ from .const import (
     DEFAULT_NEGATIVE_SPACE_ENABLED,
     DEFAULT_SLACK_CHANNEL,
     DEFAULT_SLACK_NOTIFY_SERVICE,
+    DEFAULT_SLACK_VERBOSITY,
     DOMAIN,
     MAX_ROOM_REVISIONS,
     MAX_TIMELINE_EVENTS,
@@ -59,6 +60,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "notifications_enabled": True,
     "slack_notify_service": DEFAULT_SLACK_NOTIFY_SERVICE,
     "slack_channel": DEFAULT_SLACK_CHANNEL,
+    "slack_verbosity": DEFAULT_SLACK_VERBOSITY,
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
 }
@@ -250,6 +252,7 @@ class PDDStore:
             "llm_agent_id",
             "slack_notify_service",
             "slack_channel",
+            "slack_verbosity",
         ):
             if key in updates and updates[key] is not None:
                 gs[key] = str(updates[key]).strip()

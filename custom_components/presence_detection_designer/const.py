@@ -37,6 +37,7 @@ CONF_LLM_PROMPT = "llm_prompt"
 CONF_NOTIFICATIONS_ENABLED = "notifications_enabled"
 CONF_SLACK_NOTIFY_SERVICE = "slack_notify_service"
 CONF_SLACK_CHANNEL = "slack_channel"
+CONF_SLACK_VERBOSITY = "slack_verbosity"
 CONF_NOTIFY_SLACK = "notify_slack"
 CONF_NOTIFY_ON_OCCUPIED = "notify_on_occupied"
 CONF_NOTIFY_ON_CLEARED = "notify_on_cleared"
@@ -45,6 +46,7 @@ CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
 
 DEFAULT_SLACK_NOTIFY_SERVICE = "notify.scdbots"
 DEFAULT_SLACK_CHANNEL = "#presence-alerts"
+DEFAULT_SLACK_VERBOSITY = "compact"  # "minimal", "compact", "full"
 DEFAULT_NOTIFY_SLACK = True
 DEFAULT_NEGATIVE_SPACE_ENABLED = True
 DEFAULT_GUEST_MODE_ENABLED = False

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -234,36 +235,69 @@ class NotificationDispatcher:
             timestamp=datetime.now(UTC),
         )
 
-    def format_slack_message(self, attribution: TransitionAttribution) -> dict[str, Any]:
-        """Format a rich diagnostic card suitable for Slack delivery."""
+    def format_slack_message(
+        self,
+        attribution: TransitionAttribution,
+        verbosity: str = "compact",
+    ) -> dict[str, Any]:
+        """Format a diagnostic card suitable for Slack delivery according to verbosity setting."""
+        v = str(verbosity).lower().strip()
         lines: list[str] = []
 
-        if attribution.to_state == "occupied":
-            lines.append(f"🟢 *{attribution.room_name} → Occupied*")
-            lines.append(f"• *Primary Driver:* `{attribution.primary_driver}`")
-            lines.append(
-                f"• *Bayesian Probability:* {attribution.confidence_pct:.0f}% *(Threshold: {attribution.threshold_pct:.0f}%)*"
-            )
-            if attribution.inferred_location:
-                lines.append(f"• *Spatial Localization:* {attribution.inferred_location}")
-            if attribution.negative_space_evidence:
-                neg_str = "; ".join(attribution.negative_space_evidence[:3])
-                lines.append(f"• *Negative-Space Exclusion:* {neg_str}")
-            if attribution.active_sensors:
-                active_str = ", ".join(f"`{s}`" for s in attribution.active_sensors[:4])
-                lines.append(f"• *Active Sensors:* {active_str}")
-            if attribution.sustaining_conditions:
-                sust_str = ", ".join(f"`{s}`" for s in attribution.sustaining_conditions[:2])
-                lines.append(f"• *Sustaining Conditions:* {sust_str}")
-            if attribution.arrival_context:
-                lines.append(f"• *Arrival Context:* {attribution.arrival_context}")
+        if v == "minimal":
+            if attribution.to_state == "occupied":
+                context_str = f", from {attribution.arrival_context}" if attribution.arrival_context else ""
+                lines.append(
+                    f"🟢 *{attribution.room_name}* occupied ({attribution.confidence_pct:.0f}% via `{attribution.primary_driver}`{context_str})"
+                )
+            else:
+                dur_str = f" (occupied {attribution.duration_occupied_str})" if attribution.duration_occupied_str else ""
+                lines.append(f"⚪ *{attribution.room_name}* cleared{dur_str}")
 
-        else:
-            lines.append(f"⚪ *{attribution.room_name} → Cleared*")
-            lines.append(f"• *Clearance Driver:* {attribution.primary_driver}")
-            if attribution.duration_occupied_str:
-                lines.append(f"• *Duration of Occupancy:* {attribution.duration_occupied_str}")
-            lines.append(f"• *Final Probability:* {attribution.confidence_pct:.0f}%")
+        elif v == "compact":
+            if attribution.to_state == "occupied":
+                lines.append(
+                    f"🟢 *{attribution.room_name} → Occupied* ({attribution.confidence_pct:.0f}%)"
+                )
+                details: list[str] = [f"Driver: `{attribution.primary_driver}`"]
+                if attribution.inferred_location:
+                    details.append(f"Location: {attribution.inferred_location}")
+                if attribution.arrival_context:
+                    details.append(f"From: {attribution.arrival_context}")
+                lines.append(" • ".join(details))
+            else:
+                lines.append(f"⚪ *{attribution.room_name} → Cleared*")
+                details: list[str] = [f"Driver: {attribution.primary_driver}"]
+                if attribution.duration_occupied_str:
+                    details.append(f"Duration: {attribution.duration_occupied_str}")
+                lines.append(" • ".join(details))
+
+        else:  # "full" / diagnostic
+            if attribution.to_state == "occupied":
+                lines.append(f"🟢 *{attribution.room_name} → Occupied*")
+                lines.append(f"• *Primary Driver:* `{attribution.primary_driver}`")
+                lines.append(
+                    f"• *Bayesian Probability:* {attribution.confidence_pct:.0f}% *(Threshold: {attribution.threshold_pct:.0f}%)*"
+                )
+                if attribution.inferred_location:
+                    lines.append(f"• *Spatial Localization:* {attribution.inferred_location}")
+                if attribution.negative_space_evidence:
+                    neg_str = "; ".join(attribution.negative_space_evidence[:3])
+                    lines.append(f"• *Negative-Space Exclusion:* {neg_str}")
+                if attribution.active_sensors:
+                    active_str = ", ".join(f"`{s}`" for s in attribution.active_sensors[:4])
+                    lines.append(f"• *Active Sensors:* {active_str}")
+                if attribution.sustaining_conditions:
+                    sust_str = ", ".join(f"`{s}`" for s in attribution.sustaining_conditions[:2])
+                    lines.append(f"• *Sustaining Conditions:* {sust_str}")
+                if attribution.arrival_context:
+                    lines.append(f"• *Arrival Context:* {attribution.arrival_context}")
+            else:
+                lines.append(f"⚪ *{attribution.room_name} → Cleared*")
+                lines.append(f"• *Clearance Driver:* {attribution.primary_driver}")
+                if attribution.duration_occupied_str:
+                    lines.append(f"• *Duration of Occupancy:* {attribution.duration_occupied_str}")
+                lines.append(f"• *Final Probability:* {attribution.confidence_pct:.0f}%")
 
         full_text = "\n".join(lines)
         return {
@@ -323,7 +357,13 @@ class NotificationDispatcher:
             domain = "notify"
             service = notify_service_full
 
-        formatted = self.format_slack_message(attribution)
+        verbosity = str(
+            room_config.get("slack_verbosity")
+            or global_settings.get("slack_verbosity")
+            or "compact"
+        ).strip().lower()
+
+        formatted = self.format_slack_message(attribution, verbosity=verbosity)
         message_text = formatted["text"]
 
         service_data: dict[str, Any] = {
@@ -338,8 +378,19 @@ class NotificationDispatcher:
             _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
 
         # 6. Call notify service
+        if not hass.services.has_service(domain, service):
+            _LOGGER.warning(
+                "Notification service %s.%s is not registered; skipping dispatch",
+                domain,
+                service,
+            )
+            return False
+
         try:
-            await hass.services.async_call(domain, service, service_data, blocking=False)
+            await asyncio.wait_for(
+                hass.services.async_call(domain, service, service_data, blocking=True),
+                timeout=10.0,
+            )
             _LOGGER.info(
                 "Dispatched presence transition notification for %s (%s) to %s via %s",
                 attribution.room_name,

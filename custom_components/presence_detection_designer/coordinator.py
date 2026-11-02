@@ -74,6 +74,7 @@ from .coordinator_dispatch import (
     dispatch_presence_transition,
     evaluate_coordinator_bayesian,
     notify_connected_rooms_if_active,
+    process_coordinator_trigger_event,
     record_coordinator_timeline_snapshot,
     resolve_global_llm_defaults,
 )
@@ -393,25 +394,8 @@ class RoomPresenceCoordinator:
 
     @callback
     def _handle_trigger_change(self, event: Any) -> None:
-        """Handle trigger sensor event."""
-        to_state = event.data.get("new_state")
-        entity_id = event.data.get("entity_id")
-        if not to_state or not entity_id:
-            return
-
-        self._eval_bayesian_and_update()
-        shade_excluded = set(
-            (self.last_spatial_estimate or {}).get("shade_sunlight_excluded_entities", []) or []
-        )
-        pet_excluded = set(
-            (self.last_spatial_estimate or {}).get("pet_excluded_entities", []) or []
-        )
-        suppressed = shade_excluded | pet_excluded
-        is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
-        self.state_machine.handle_trigger(entity_id, is_active)
-        if is_active:
-            self._notify_connected_rooms_if_active()
-        self.async_update_listeners()
+        """Handle trigger sensor event with transient shielding and rate-limiting cooldown."""
+        process_coordinator_trigger_event(self, event)
 
     @callback
     def _handle_boundary_change(self, event: Any) -> None:
@@ -490,9 +474,9 @@ class RoomPresenceCoordinator:
         return result
 
     async def async_send_test_notification(
-        self,
-        service: str | None = None,
-        channel: str | None = None,
+        self, service: str | None = None, channel: str | None = None, verbosity: str | None = None
     ) -> bool:
         """Send a test diagnostic notification to verify Slack connectivity."""
-        return await async_send_coordinator_test_notification(self, service=service, channel=channel)
+        return await async_send_coordinator_test_notification(
+            self, service=service, channel=channel, verbosity=verbosity
+        )
