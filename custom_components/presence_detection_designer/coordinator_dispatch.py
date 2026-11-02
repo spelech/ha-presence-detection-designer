@@ -18,6 +18,7 @@ from .const import (
     BoxState,
     LLMProviderType,
 )
+from .condition_evaluator import is_state_stale
 from .notifications import TransitionAttribution
 
 
@@ -360,16 +361,9 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     except Exception:  # noqa: BLE001
         coord.last_spatial_estimate = None
 
-    shade_excluded_eids: set[str] = set()
-    pet_excluded_eids: set[str] = set()
-    if isinstance(coord.last_spatial_estimate, dict):
-        if neg_space_enabled:
-            shade_excluded_eids = set(
-                coord.last_spatial_estimate.get("shade_sunlight_excluded_entities", []) or []
-            )
-        pet_excluded_eids = set(
-            coord.last_spatial_estimate.get("pet_excluded_entities", []) or []
-        )
+    sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
+    shade_excluded_eids = set(sp.get("shade_sunlight_excluded_entities") or []) if neg_space_enabled else set()
+    pet_excluded_eids = set(sp.get("pet_excluded_entities") or [])
     tracker = getattr(coord, "actuation_tracker", None)
     auto_latched_eids: set[str] = (
         set(tracker.automated_entities_on) if tracker is not None else set()
@@ -431,7 +425,10 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
             return _VirtualState()
         if eid in suppressed_eids:
             return _SuppressedState()
-        return _safe_state_getter(coord.hass, eid)
+        st = _safe_state_getter(coord.hass, eid)
+        if st is not None and is_state_stale(st, max_age_seconds=60.0):
+            return _SuppressedState()
+        return st
 
     evaluation = evaluate_bayesian(
         obs_to_eval,
@@ -463,17 +460,14 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     """Handle trigger sensor event with transient shielding and rate-limiting cooldown."""
     to_state = event.data.get("new_state")
     entity_id = event.data.get("entity_id")
-    if not to_state or not entity_id:
+    if not to_state or not entity_id or is_state_stale(to_state, max_age_seconds=60.0):
         return
 
     coord._eval_bayesian_and_update()
-    shade_excluded = set(
-        (coord.last_spatial_estimate or {}).get("shade_sunlight_excluded_entities", []) or []
+    sp_est = coord.last_spatial_estimate or {}
+    suppressed = set(sp_est.get("shade_sunlight_excluded_entities") or []) | set(
+        sp_est.get("pet_excluded_entities") or []
     )
-    pet_excluded = set(
-        (coord.last_spatial_estimate or {}).get("pet_excluded_entities", []) or []
-    )
-    suppressed = shade_excluded | pet_excluded
     is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
 
     if is_active and not coord.state_machine.is_present:
