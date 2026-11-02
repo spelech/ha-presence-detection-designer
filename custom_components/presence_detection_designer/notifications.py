@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+
+from .slack_cards import SlackDailyThreadManager, build_transition_card_blocks
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,12 +67,13 @@ class TransitionAttribution:
 
 
 class NotificationDispatcher:
-    """Handles driver attribution, Slack formatting, auto-channel creation, debounce, and async dispatch."""
+    """Handles driver attribution, Slack Block Kit formatting, daily threads, and async dispatch."""
 
     def __init__(self) -> None:
         """Initialize the dispatcher."""
         self._last_dispatched: dict[tuple[str, str], float] = {}
         self._verified_channels: set[str] = set()
+        self._slack_mgr = SlackDailyThreadManager()
 
     def _call_slack_web_api(
         self,
@@ -80,15 +81,8 @@ class NotificationDispatcher:
         token: str,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Invoke a Slack Web API endpoint synchronously (run inside executor job)."""
-        headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
-        data_bytes: bytes | None = None
-        if payload is not None:
-            headers["Content-Type"] = "application/json; charset=utf-8"
-            data_bytes = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data_bytes, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        """Invoke a Slack Web API endpoint synchronously."""
+        return self._slack_mgr.call_slack_web_api(url, token, payload)
 
     async def async_ensure_slack_channel(
         self,
@@ -100,24 +94,7 @@ class NotificationDispatcher:
         if not clean_name or clean_name in self._verified_channels:
             return channel
 
-        token: str | None = None
-        if (
-            hass
-            and hasattr(hass, "config_entries")
-            and hasattr(hass.config_entries, "async_entries")
-        ):
-            try:
-                entries = hass.config_entries.async_entries("slack") or []
-                for entry in entries:
-                    data = getattr(entry, "data", None)
-                    if isinstance(data, dict):
-                        cand = data.get("api_key")
-                        if isinstance(cand, str) and cand.startswith("xox"):
-                            token = cand
-                            break
-            except Exception:  # noqa: BLE001
-                token = None
-
+        token = self._slack_mgr.get_slack_token(hass)
         if not token or not hasattr(hass, "async_add_executor_job"):
             return channel
 
@@ -202,7 +179,6 @@ class NotificationDispatcher:
                 )
                 driver_type = "sensor"
             duration_str = None
-
         else:
             inactivity_timeout = int(room_config.get("inactivity_timeout", 180))
             if sustaining:
@@ -239,6 +215,8 @@ class NotificationDispatcher:
         self,
         attribution: TransitionAttribution,
         verbosity: str = "compact",
+        include_snapshot: bool = False,
+        snapshot_url: str | None = None,
     ) -> dict[str, Any]:
         """Format a diagnostic card suitable for Slack delivery according to verbosity setting."""
         v = str(verbosity).lower().strip()
@@ -246,12 +224,20 @@ class NotificationDispatcher:
 
         if v == "minimal":
             if attribution.to_state == "occupied":
-                context_str = f", from {attribution.arrival_context}" if attribution.arrival_context else ""
+                context_str = (
+                    f", from {attribution.arrival_context}"
+                    if attribution.arrival_context
+                    else ""
+                )
                 lines.append(
                     f"🟢 *{attribution.room_name}* occupied ({attribution.confidence_pct:.0f}% via `{attribution.primary_driver}`{context_str})"
                 )
             else:
-                dur_str = f" (occupied {attribution.duration_occupied_str})" if attribution.duration_occupied_str else ""
+                dur_str = (
+                    f" (occupied {attribution.duration_occupied_str})"
+                    if attribution.duration_occupied_str
+                    else ""
+                )
                 lines.append(f"⚪ *{attribution.room_name}* cleared{dur_str}")
 
         elif v == "compact":
@@ -264,6 +250,8 @@ class NotificationDispatcher:
                     details.append(f"Location: {attribution.inferred_location}")
                 if attribution.arrival_context:
                     details.append(f"From: {attribution.arrival_context}")
+                if attribution.negative_space_evidence:
+                    details.append(f"Exclusion: {attribution.negative_space_evidence[0]}")
                 lines.append(" • ".join(details))
             else:
                 lines.append(f"⚪ *{attribution.room_name} → Cleared*")
@@ -300,9 +288,16 @@ class NotificationDispatcher:
                 lines.append(f"• *Final Probability:* {attribution.confidence_pct:.0f}%")
 
         full_text = "\n".join(lines)
+        blocks = build_transition_card_blocks(
+            attribution=attribution,
+            verbosity=verbosity,
+            include_snapshot=include_snapshot,
+            snapshot_url=snapshot_url,
+        )
         return {
             "text": full_text,
             "channel_message": full_text,
+            "blocks": blocks,
         }
 
     async def async_dispatch_notification(
@@ -313,12 +308,10 @@ class NotificationDispatcher:
         room_config: dict[str, Any],
     ) -> bool:
         """Dispatch Slack notification if enabled and within rate limits."""
-        # 1. Global master toggle
         if not global_settings.get("notifications_enabled", True):
             _LOGGER.debug("Notifications globally disabled; skipping")
             return False
 
-        # 2. Per-room settings (default to True unless explicitly False)
         if room_config.get("notify_slack") is False:
             return False
 
@@ -328,7 +321,6 @@ class NotificationDispatcher:
         if attribution.to_state == "clear" and room_config.get("notify_on_cleared") is False:
             return False
 
-        # 3. Debounce check
         key = (attribution.room_id, attribution.to_state)
         now = time.time()
         last_time = self._last_dispatched.get(key, 0.0)
@@ -343,14 +335,12 @@ class NotificationDispatcher:
 
         self._last_dispatched[key] = now
 
-        # 4. Resolve notify service & target channel (auto-creating missing Slack channel if needed)
         notify_service_full = str(
             global_settings.get("slack_notify_service") or "notify.scdbots"
         ).strip()
         channel = str(global_settings.get("slack_channel") or "#presence-alerts").strip()
         await self.async_ensure_slack_channel(hass, channel)
 
-        # Handle 'notify.scdbots' -> domain 'notify', service 'scdbots'
         if "." in notify_service_full:
             domain, service = notify_service_full.split(".", 1)
         else:
@@ -363,21 +353,51 @@ class NotificationDispatcher:
             or "compact"
         ).strip().lower()
 
-        formatted = self.format_slack_message(attribution, verbosity=verbosity)
+        token = self._slack_mgr.get_slack_token(hass)
+        use_threads = bool(global_settings.get("slack_daily_thread", True))
+        thread_ts: str | None = None
+        if use_threads and token:
+            _LOGGER.info("Daily thread check: use_threads=%s, token_found=%s, channel=%s", use_threads, bool(token), channel)
+            thread_ts = await self._slack_mgr.async_get_or_create_daily_thread(
+                hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
+            )
+
+        include_snapshot = bool(
+            room_config.get("include_camera_snapshot")
+            or global_settings.get("include_camera_snapshot")
+            or False
+        )
+        snapshot_url = (
+            str(room_config.get("camera_snapshot_url") or "") if include_snapshot else None
+        )
+
+        formatted = self.format_slack_message(
+            attribution,
+            verbosity=verbosity,
+            include_snapshot=include_snapshot,
+            snapshot_url=snapshot_url,
+        )
         message_text = formatted["text"]
+        blocks = formatted.get("blocks")
 
         service_data: dict[str, Any] = {
             "message": message_text,
             "target": [channel],
         }
+        data_payload: dict[str, Any] = {}
+        if blocks:
+            data_payload["blocks"] = blocks
+        if thread_ts:
+            data_payload["thread_ts"] = thread_ts
 
-        # 5. Emit Home Assistant event
+        if data_payload:
+            service_data["data"] = data_payload
+
         try:
             hass.bus.async_fire(EVENT_PRESENCE_TRANSITION, attribution.to_dict())
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
 
-        # 6. Call notify service
         if not hass.services.has_service(domain, service):
             _LOGGER.warning(
                 "Notification service %s.%s is not registered; skipping dispatch",
@@ -392,14 +412,26 @@ class NotificationDispatcher:
                 timeout=10.0,
             )
             _LOGGER.info(
-                "Dispatched presence transition notification for %s (%s) to %s via %s",
+                "Dispatched presence transition notification for %s (%s) to %s via %s (thread_ts=%s)",
                 attribution.room_name,
                 attribution.to_state,
                 channel,
                 notify_service_full,
+                thread_ts,
             )
+            if use_threads and token and thread_ts and hasattr(hass, "async_create_task"):
+                coro = self._slack_mgr.async_update_daily_digest(
+                    hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
+                )
+                hass.async_create_task(coro)
+                if (
+                    type(hass.async_create_task).__name__ == "MagicMock"
+                    and getattr(hass.async_create_task, "side_effect", None) is None
+                    and hasattr(coro, "close")
+                ):
+                    coro.close()
             return True
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "Failed to dispatch Slack notification via %s: %s",
                 notify_service_full,

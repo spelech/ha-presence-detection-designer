@@ -2137,6 +2137,22 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     <option value="full" ${this._globalDraft?.slack_verbosity === "full" ? "selected" : ""}>Full Diagnostic (Detailed 8-point card)</option>
                   </select>
                 </div>
+                <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+                  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" id="gl-slack-daily-thread" ${this._globalDraft?.slack_daily_thread !== false ? "checked" : ""} style="margin-top:2px;" />
+                    <div>
+                      <strong>Daily Presence Thread</strong>
+                      <div style="font-size:11px;color:var(--secondary-text-color,#777);margin-top:2px;">Maintain one live status dashboard per day in Slack, threading all room transitions underneath it.</div>
+                    </div>
+                  </label>
+                  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" id="gl-include-camera-snapshot" ${this._globalDraft?.include_camera_snapshot ? "checked" : ""} style="margin-top:2px;" />
+                    <div>
+                      <strong>Detection Capture Review (Camera Snapshots)</strong>
+                      <div style="font-size:11px;color:var(--secondary-text-color,#777);margin-top:2px;">Support attaching Frigate detection captures to cards for review of light vs person/pet (defaults to OFF).</div>
+                    </div>
+                  </label>
+                </div>
                 <div style="margin-top:10px;display:flex;justify-content:flex-end;">
                   <button class="btn btn-secondary" id="btn-test-slack-alert" style="font-size:12px;">
                     🔔 Send Test Alert to Slack
@@ -2571,6 +2587,16 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 <input type="checkbox" id="cfg-notify-on-cleared" ${cfg.notify_on_cleared !== false ? "checked" : ""} />
                 Alert on Cleared
               </label>
+            </div>
+          </div>
+
+          <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
+            <div>
+              <div class="setting-label">Attach Camera Snapshot for Detection Review</div>
+              <div class="setting-help">Attach Frigate detection capture to alert card to audit light vs human/pet (defaults to OFF).</div>
+            </div>
+            <div>
+              <input type="checkbox" id="cfg-include-camera-snapshot" ${cfg.include_camera_snapshot ? "checked" : ""} style="width:16px;height:16px;" />
             </div>
           </div>
         </div>
@@ -5631,6 +5657,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         slack_notify_service: root.querySelector("#gl-slack-service")?.value || "notify.scdbots",
         slack_channel: root.querySelector("#gl-slack-channel")?.value || "#presence-alerts",
         slack_verbosity: root.querySelector("#gl-slack-verbosity")?.value || "compact",
+        slack_daily_thread: Boolean(root.querySelector("#gl-slack-daily-thread")?.checked !== false),
+        include_camera_snapshot: Boolean(root.querySelector("#gl-include-camera-snapshot")?.checked),
         negative_space_enabled: Boolean(root.querySelector("#gl-neg-space-enabled")?.checked),
         guest_mode_enabled: Boolean(root.querySelector("#gl-guest-mode-enabled")?.checked),
       };
@@ -5723,6 +5751,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     });
     root.querySelector("#cfg-notify-on-cleared")?.addEventListener("change", (e) => {
       this._draftConfig.notify_on_cleared = e.target.checked;
+      this._dirty = true;
+    });
+    root.querySelector("#cfg-include-camera-snapshot")?.addEventListener("change", (e) => {
+      this._draftConfig.include_camera_snapshot = e.target.checked;
       this._dirty = true;
     });
 
