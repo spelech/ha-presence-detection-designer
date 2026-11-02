@@ -2129,6 +2129,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     )}" placeholder="#presence-alerts" />
                   </div>
                 </div>
+                <div style="margin-top:10px;">
+                  <div class="setting-label" style="margin-bottom:4px;">Alert Verbosity</div>
+                  <select class="input" id="gl-slack-verbosity" style="width:100%;height:36px;background:var(--card-background-color,#fff);color:var(--primary-text-color,#111);border:1px solid var(--ha-divider,#ccc);border-radius:4px;padding:0 8px;">
+                    <option value="minimal" ${this._globalDraft?.slack_verbosity === "minimal" ? "selected" : ""}>Minimal (1-line badge: 🟢 Room occupied 95% via motion)</option>
+                    <option value="compact" ${(!this._globalDraft?.slack_verbosity || this._globalDraft?.slack_verbosity === "compact") ? "selected" : ""}>Compact (2-line summary: State + Driver / Localization)</option>
+                    <option value="full" ${this._globalDraft?.slack_verbosity === "full" ? "selected" : ""}>Full Diagnostic (Detailed 8-point card)</option>
+                  </select>
+                </div>
                 <div style="margin-top:10px;display:flex;justify-content:flex-end;">
                   <button class="btn btn-secondary" id="btn-test-slack-alert" style="font-size:12px;">
                     🔔 Send Test Alert to Slack
@@ -5622,6 +5630,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         notifications_enabled: Boolean(root.querySelector("#gl-notify-enabled")?.checked),
         slack_notify_service: root.querySelector("#gl-slack-service")?.value || "notify.scdbots",
         slack_channel: root.querySelector("#gl-slack-channel")?.value || "#presence-alerts",
+        slack_verbosity: root.querySelector("#gl-slack-verbosity")?.value || "compact",
         negative_space_enabled: Boolean(root.querySelector("#gl-neg-space-enabled")?.checked),
         guest_mode_enabled: Boolean(root.querySelector("#gl-guest-mode-enabled")?.checked),
       };
@@ -5634,9 +5643,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       try {
         const service = root.querySelector("#gl-slack-service")?.value || "notify.scdbots";
         const channel = root.querySelector("#gl-slack-channel")?.value || "#presence-alerts";
+        const verbosity = root.querySelector("#gl-slack-verbosity")?.value || "compact";
         const res = await this._apiCall("POST", "/api/presence_detection_designer/notifications/test", {
           slack_notify_service: service,
           slack_channel: channel,
+          slack_verbosity: verbosity,
         });
         this.showToast(res?.message || "Test alert dispatched to Slack!", "success");
       } catch (err) {

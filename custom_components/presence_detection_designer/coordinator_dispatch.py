@@ -270,6 +270,7 @@ async def async_send_coordinator_test_notification(
     coord: Any,
     service: str | None = None,
     channel: str | None = None,
+    verbosity: str | None = None,
 ) -> bool:
     """Send a test diagnostic notification to verify Slack connectivity."""
     global_settings: dict[str, Any] = {}
@@ -282,6 +283,8 @@ async def async_send_coordinator_test_notification(
         global_settings["slack_notify_service"] = service
     if channel:
         global_settings["slack_channel"] = channel
+    if verbosity:
+        global_settings["slack_verbosity"] = verbosity
 
     attribution = TransitionAttribution(
         room_id=coord.entry_id,
@@ -450,3 +453,42 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     ):
         notify_connected_rooms_if_active(coord)
     return evaluation
+
+
+def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
+    """Handle trigger sensor event with transient shielding and rate-limiting cooldown."""
+    to_state = event.data.get("new_state")
+    entity_id = event.data.get("entity_id")
+    if not to_state or not entity_id:
+        return
+
+    coord._eval_bayesian_and_update()
+    shade_excluded = set(
+        (coord.last_spatial_estimate or {}).get("shade_sunlight_excluded_entities", []) or []
+    )
+    pet_excluded = set(
+        (coord.last_spatial_estimate or {}).get("pet_excluded_entities", []) or []
+    )
+    suppressed = shade_excluded | pet_excluded
+    is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
+
+    if is_active and not coord.state_machine.is_present:
+        now = time.time()
+        last_cleared = getattr(coord.state_machine, "last_cleared_time", 0.0)
+        cooldown = float(getattr(coord.state_machine, "retrigger_cooldown", 20.0))
+        b_occupied = bool(coord.last_bayesian_eval and coord.last_bayesian_eval.is_occupied)
+
+        if last_cleared > 0.0 and (now - last_cleared) < cooldown and not b_occupied:
+            return
+
+        if not coord._is_guest_mode_active():
+            spatial_frame = getattr(coord, "_last_spatial_frame", None) or {}
+            pinned_rooms = spatial_frame.get("steve_pinned_rooms") or []
+            if pinned_rooms and coord.room_name not in pinned_rooms:
+                if not b_occupied and not coord.state_machine.active_conditions:
+                    return
+
+    coord.state_machine.handle_trigger(entity_id, is_active)
+    if is_active:
+        coord._notify_connected_rooms_if_active()
+    coord.async_update_listeners()

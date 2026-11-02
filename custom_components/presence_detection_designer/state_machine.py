@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import time
 from typing import Any
 
 from .const import (
@@ -44,6 +45,8 @@ class RoomStateMachine:
         self.is_present = False
         self.box_state = BoxState.IDLE_CLEAR
         self.vacating_countdown = 0
+        self.last_cleared_time: float = 0.0
+        self.retrigger_cooldown: float = 20.0
         self.active_conditions: list[str] = []
         self.last_trigger_entity: str | None = None
         self.last_handoff_room: str | None = None
@@ -236,6 +239,7 @@ class RoomStateMachine:
             self.bayesian_probability = 0.0
             self.bayesian_probability_pct = 0.0
             self.last_handoff_room = adjacent_room_name
+            self.last_cleared_time = time.time()
             return True
         return False
 
@@ -257,6 +261,7 @@ class RoomStateMachine:
                 self.box_state = BoxState.IDLE_CLEAR
                 self.bayesian_probability = 0.0
                 self.bayesian_probability_pct = 0.0
+                self.last_cleared_time = time.time()
                 return "VACATED"
 
         self._sync_timer_decay_probability()
@@ -281,6 +286,7 @@ class RoomStateMachine:
             self.vacating_countdown = 0
             self.bayesian_probability = 0.0
             self.bayesian_probability_pct = 0.0
+            self.last_cleared_time = time.time()
 
     def build_natural_language_explanation(self) -> str:
         """Return a complete plain-English explanation of the room's current presence state."""
