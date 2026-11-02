@@ -135,3 +135,7 @@ async def test_store_global_settings_and_remove_room(mock_hass):
     assert gs3["slack_notify_service"] == "notify.custom_slack"
     assert gs3["slack_channel"] == "#custom-presence"
     assert gs3["negative_space_enabled"] is False
+    assert gs["ble_decider_enabled"] is False
+
+    gs4 = await store.async_update_global_settings({"ble_decider_enabled": True})
+    assert gs4["ble_decider_enabled"] is True

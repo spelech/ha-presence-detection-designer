@@ -32,6 +32,7 @@ except Exception:  # noqa: BLE001
 
 from .const import (
     DATA_STORE,
+    DEFAULT_BLE_DECIDER_ENABLED,
     DEFAULT_BLE_TRACKERS,
     DEFAULT_GUEST_MODE_ENABLED,
     DEFAULT_NEGATIVE_SPACE_ENABLED,
@@ -65,6 +66,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "include_camera_snapshot": False,
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
+    "ble_decider_enabled": DEFAULT_BLE_DECIDER_ENABLED,
 }
 
 
@@ -264,6 +266,7 @@ class PDDStore:
             "notifications_enabled",
             "negative_space_enabled",
             "guest_mode_enabled",
+            "ble_decider_enabled",
             "slack_daily_thread",
             "include_camera_snapshot",
         ):

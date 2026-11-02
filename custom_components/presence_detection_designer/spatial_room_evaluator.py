@@ -99,6 +99,7 @@ def evaluate_room_spatial_estimates(
     recent_entity_on_ts: dict[str, float],
     active_negative_exclusions: list[str],
     guest_mode_enabled: bool = False,
+    telemetry_ble_by_room: dict[str, list[str]] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Compute per-room spatial localization and ranked occupant estimates."""
     room_estimates: dict[str, dict[str, Any]] = {}
@@ -369,6 +370,7 @@ def evaluate_room_spatial_estimates(
             "shade_sunlight_excluded_entities": room_shade_excl,
             "pet_excluded_entities": pet_excl,
             "shade_moving_entities": room_shade_mov,
+            "ble_telemetry": list((telemetry_ble_by_room or {}).get(r_name, [])),
             "explanation": explanation,
         }
 

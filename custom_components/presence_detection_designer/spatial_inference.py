@@ -9,7 +9,10 @@ we localize occupants into uncovered room subregions and unmonitored blind pocke
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 from .spatial_catalog import (
     ALL_SHADE_ENTITIES,
@@ -74,6 +77,7 @@ def evaluate_spatial_frame(
     now_ts: float = 0.0,
     negative_space_enabled: bool = True,
     guest_mode_enabled: bool = False,
+    ble_decider_enabled: bool = False,
 ) -> dict[str, Any]:
     """Evaluate positive sensor detections + negative-space exclusions at a single timestamp."""
     effective_neg_space = bool(negative_space_enabled and not guest_mode_enabled)
@@ -154,16 +158,36 @@ def evaluate_spatial_frame(
         shades_moving_flag_by_room[s_room] = room_moving
 
     active_ble_by_room: dict[str, list[str]] = {}
+    telemetry_ble_by_room: dict[str, list[str]] = {}
+    raw_ble_positions: dict[str, str] = {}
+    prev_ble_states = dict(prev_frame.get("prev_ble_states", {})) if prev_frame else {}
     steve_pinned_rooms: set[str] = set()
+
     for ble_eid in BLE_TRACKER_ENTITIES:
         raw_area = get_state(ble_eid)
+        if raw_area is not None:
+            raw_ble_positions[ble_eid] = str(raw_area)
         mapped_room = _normalize_ble_area_to_room(raw_area)
         if mapped_room:
-            active_ble_by_room.setdefault(mapped_room, []).append(ble_eid)
-            if ble_eid in STEVE_DEFINITIVE_BLE_ENTITIES:
-                steve_pinned_rooms.add(mapped_room)
-            if ble_eid not in active_positive_sensors:
-                active_positive_sensors.append(ble_eid)
+            telemetry_ble_by_room.setdefault(mapped_room, []).append(ble_eid)
+            if ble_decider_enabled:
+                active_ble_by_room.setdefault(mapped_room, []).append(ble_eid)
+                if ble_eid in STEVE_DEFINITIVE_BLE_ENTITIES:
+                    steve_pinned_rooms.add(mapped_room)
+                if ble_eid not in active_positive_sensors:
+                    active_positive_sensors.append(ble_eid)
+
+        prev_st = prev_ble_states.get(ble_eid)
+        if raw_area != prev_st:
+            _LOGGER.info(
+                "PDD BLE Telemetry: %s changed from '%s' to '%s' (room: '%s', decider: %s)",
+                ble_eid,
+                prev_st,
+                raw_area,
+                mapped_room or "unknown",
+                ble_decider_enabled,
+            )
+            prev_ble_states[ble_eid] = raw_area
 
     try:
         ups_watts = float(get_state("sensor.office_ups_used_watts_filtered") or 0.0)
@@ -375,6 +399,7 @@ def evaluate_spatial_frame(
         recent_entity_on_ts=recent_entity_on_ts,
         active_negative_exclusions=active_negative_exclusions,
         guest_mode_enabled=guest_mode_enabled,
+        telemetry_ble_by_room=telemetry_ble_by_room,
     )
 
     pet_estimates = [
@@ -400,6 +425,7 @@ def evaluate_spatial_frame(
         "ts": now_ts,
         "negative_space_enabled": effective_neg_space,
         "guest_mode_enabled": guest_mode_enabled,
+        "ble_decider_enabled": ble_decider_enabled,
         "steve_pinned_rooms": sorted(steve_pinned_rooms),
         "room_estimates": room_estimates,
         "occupant_estimates": occupant_estimates,
@@ -408,9 +434,12 @@ def evaluate_spatial_frame(
         "active_negative_exclusions": active_negative_exclusions,
         "active_shade_exclusions": active_shade_exclusions,
         "active_pet_exclusions": active_pet_exclusions,
+        "telemetry_ble_by_room": telemetry_ble_by_room,
+        "raw_ble_positions": raw_ble_positions,
         "recent_activity_ts": recent_activity_ts,
         "recent_positive_ts": recent_positive_ts,
         "recent_entity_on_ts": recent_entity_on_ts,
         "recent_shade_move_ts": recent_shade_move_ts,
         "prev_shade_states": prev_shade_states,
+        "prev_ble_states": prev_ble_states,
     }

@@ -101,6 +101,7 @@ class PDDOverviewView(HomeAssistantView):
             bool(store.global_settings.get("negative_space_enabled", True))
             and not guest_mode_enabled
         )
+        ble_decider_enabled = bool(store.global_settings.get("ble_decider_enabled", False))
 
         def _live_state_str(eid: str) -> str:
             st = _safe_state_getter(hass, eid)
@@ -113,6 +114,7 @@ class PDDOverviewView(HomeAssistantView):
             now_ts=time.time(),
             negative_space_enabled=neg_space_enabled,
             guest_mode_enabled=guest_mode_enabled,
+            ble_decider_enabled=ble_decider_enabled,
         )
 
         return self.json(
