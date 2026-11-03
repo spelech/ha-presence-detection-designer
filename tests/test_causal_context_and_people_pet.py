@@ -24,7 +24,9 @@ from custom_components.presence_detection_designer.spatial_catalog import (
 from custom_components.presence_detection_designer.spatial_inference import evaluate_spatial_frame
 
 
-def _make_state(state_val: str, user_id: str | None = None, parent_id: str | None = None, ctx_id: str = "ctx_1"):
+def _make_state(
+    state_val: str, user_id: str | None = None, parent_id: str | None = None, ctx_id: str = "ctx_1"
+):
     st = MagicMock()
     st.state = state_val
     st.attributes = {}

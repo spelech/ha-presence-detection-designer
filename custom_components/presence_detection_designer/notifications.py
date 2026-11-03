@@ -12,7 +12,6 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .slack_cards import (
-    SlackDailyThreadManager,
     build_transition_card_blocks,
     get_slack_daily_thread_manager,
 )
@@ -229,9 +228,7 @@ class NotificationDispatcher:
         if v == "minimal":
             if attribution.to_state == "occupied":
                 context_str = (
-                    f", from {attribution.arrival_context}"
-                    if attribution.arrival_context
-                    else ""
+                    f", from {attribution.arrival_context}" if attribution.arrival_context else ""
                 )
                 lines.append(
                     f"🟢 *{attribution.room_name}* occupied ({attribution.confidence_pct:.0f}% via `{attribution.primary_driver}`{context_str})"
@@ -351,11 +348,15 @@ class NotificationDispatcher:
             domain = "notify"
             service = notify_service_full
 
-        verbosity = str(
-            room_config.get("slack_verbosity")
-            or global_settings.get("slack_verbosity")
-            or "compact"
-        ).strip().lower()
+        verbosity = (
+            str(
+                room_config.get("slack_verbosity")
+                or global_settings.get("slack_verbosity")
+                or "compact"
+            )
+            .strip()
+            .lower()
+        )
 
         mgr = get_slack_daily_thread_manager(hass)
         token = mgr.get_slack_token(hass)

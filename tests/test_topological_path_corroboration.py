@@ -40,7 +40,8 @@ def _make_mock_coord(
         CONF_ROOM_NAME: room_name,
         CONF_MODE: str(mode),
         CONF_CONNECTED_ROOMS: connected_rooms or [],
-        CONF_TRIGGER_ENTITIES: trigger_entities or [f"binary_sensor.{room_name.lower().replace(' ', '_')}_motion"],
+        CONF_TRIGGER_ENTITIES: trigger_entities
+        or [f"binary_sensor.{room_name.lower().replace(' ', '_')}_motion"],
         CONF_BOUNDARY_ENTITIES: boundary_entities or [],
         CONF_BAYESIAN_OBSERVATIONS: [],
     }
@@ -63,7 +64,12 @@ def test_topology_graph_building_and_path_finding():
     # Master Bedroom -> Living Room paths
     mbr_lr_paths = find_all_simple_paths(graph, "Master Bedroom", "Living Room")
     assert len(mbr_lr_paths) >= 2
-    assert mbr_lr_paths[0] == ["Master Bedroom", "Upstairs Hallway & Stairs", "Front Entry", "Living Room"]
+    assert mbr_lr_paths[0] == [
+        "Master Bedroom",
+        "Upstairs Hallway & Stairs",
+        "Front Entry",
+        "Living Room",
+    ]
 
     # Branching: Kitchen -> Living Room
     kitchen_lr_paths = find_all_simple_paths(graph, "Kitchen", "Living Room")
@@ -82,8 +88,12 @@ def test_topology_graph_building_and_path_finding():
 
 def test_high_confidence_source_preservation_blocks_impossible_jump(mock_hass):
     """Verify that high confidence in Master Bedroom suppresses impossible direct jump to Living Room."""
-    mbr_coord = _make_mock_coord(mock_hass, "Master Bedroom", connected_rooms=["Upstairs Hallway & Stairs"])
-    lr_coord = _make_mock_coord(mock_hass, "Living Room", connected_rooms=["Front Entry", "Dining Room"])
+    mbr_coord = _make_mock_coord(
+        mock_hass, "Master Bedroom", connected_rooms=["Upstairs Hallway & Stairs"]
+    )
+    lr_coord = _make_mock_coord(
+        mock_hass, "Living Room", connected_rooms=["Front Entry", "Dining Room"]
+    )
 
     mock_hass.data[DOMAIN] = {
         mbr_coord.entry_id: mbr_coord,
@@ -108,7 +118,9 @@ def test_high_confidence_source_preservation_blocks_impossible_jump(mock_hass):
     }
 
     now = time.time()
-    recent_act: dict[str, float] = {"Master Bedroom": now}  # Zero activity in Upstairs Hallway or Front Entry
+    recent_act: dict[str, float] = {
+        "Master Bedroom": now
+    }  # Zero activity in Upstairs Hallway or Front Entry
 
     traj = corroborate_transition_trajectory(
         candidate_room="Living Room",
@@ -161,7 +173,12 @@ def test_corroborated_path_transition_success(mock_hass):
     )
 
     assert traj.is_valid is True
-    assert traj.corroborated_path == ["Master Bedroom", "Upstairs Hallway & Stairs", "Front Entry", "Living Room"]
+    assert traj.corroborated_path == [
+        "Master Bedroom",
+        "Upstairs Hallway & Stairs",
+        "Front Entry",
+        "Living Room",
+    ]
     assert "corroborated_via" in traj.reason
 
 
@@ -223,7 +240,9 @@ def test_sealed_perimeter_blocks_transit_without_boundary_open(mock_hass):
         boundary_entities=["binary_sensor.master_bedroom_door"],
         mode=Mode.BOUNDED,
     )
-    hall_coord = _make_mock_coord(mock_hass, "Upstairs Hallway & Stairs", connected_rooms=["Master Bedroom"])
+    hall_coord = _make_mock_coord(
+        mock_hass, "Upstairs Hallway & Stairs", connected_rooms=["Master Bedroom"]
+    )
 
     mock_hass.data[DOMAIN] = {
         mbr_coord.entry_id: mbr_coord,
@@ -299,7 +318,10 @@ def test_candidate_settling_and_debounce(mock_hass):
     # Hallway and Entry had corroborating activity
     now = time.time()
     mock_hass.data[DOMAIN]["_store"] = MagicMock()
-    mock_hass.data[DOMAIN]["_store"].global_settings = {"transit_window_sec": 90.0, "settling_window_sec": 2.0}
+    mock_hass.data[DOMAIN]["_store"].global_settings = {
+        "transit_window_sec": 90.0,
+        "settling_window_sec": 2.0,
+    }
     mock_hass.data[DOMAIN]["_store"].get_floorplan = MagicMock(return_value=get_default_floorplan())
     mock_hass.data[DOMAIN]["_store"]._last_spatial_frame = {
         "recent_activity_ts": {
@@ -356,7 +378,10 @@ def test_high_confidence_trigger_settles_immediately(mock_hass):
 
     now = time.time()
     mock_hass.data[DOMAIN]["_store"] = MagicMock()
-    mock_hass.data[DOMAIN]["_store"].global_settings = {"transit_window_sec": 90.0, "settling_window_sec": 2.0}
+    mock_hass.data[DOMAIN]["_store"].global_settings = {
+        "transit_window_sec": 90.0,
+        "settling_window_sec": 2.0,
+    }
     mock_hass.data[DOMAIN]["_store"].get_floorplan = MagicMock(return_value=get_default_floorplan())
     mock_hass.data[DOMAIN]["_store"]._last_spatial_frame = {
         "recent_activity_ts": {

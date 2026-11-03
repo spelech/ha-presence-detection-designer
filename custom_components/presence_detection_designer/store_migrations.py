@@ -244,11 +244,7 @@ def migrate_and_backfill_store_payload(
                 rcfg["bayesian_observations"] = obs
                 dirty = True
 
-    if (
-        hass
-        and hasattr(hass, "config_entries")
-        and hasattr(hass.config_entries, "async_entries")
-    ):
+    if hass and hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_entries"):
         try:
             entries = hass.config_entries.async_entries(DOMAIN)
             for entry in entries:

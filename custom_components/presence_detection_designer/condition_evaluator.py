@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import datetime
 import time
+from collections.abc import Callable
 from typing import Any
 
 from .const import ConditionOperator
@@ -147,7 +147,7 @@ def is_state_stale(state_obj: Any, max_age_seconds: float = 60.0) -> bool:
                 dt_ts = (
                     dt.timestamp()
                     if dt.tzinfo is not None
-                    else dt.replace(tzinfo=datetime.timezone.utc).timestamp()
+                    else dt.replace(tzinfo=datetime.UTC).timestamp()
                 )
                 if (now - dt_ts) > max_age_seconds:
                     return True

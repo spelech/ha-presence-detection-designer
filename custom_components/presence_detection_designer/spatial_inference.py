@@ -8,11 +8,9 @@ we localize occupants into uncovered room subregions and unmonitored blind pocke
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import logging
+from collections.abc import Callable
 from typing import Any
-
-_LOGGER = logging.getLogger(__name__)
 
 from .spatial_catalog import (
     ALL_SHADE_ENTITIES,
@@ -43,6 +41,8 @@ from .spatial_topology import (
     extract_floor_wall_segments,
 )
 from .timeline_reconstructor import reconstruct_house_timeline
+
+_LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "ALL_SHADE_ENTITIES",

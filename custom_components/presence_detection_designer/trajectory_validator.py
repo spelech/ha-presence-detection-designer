@@ -142,7 +142,9 @@ def is_room_high_confidence(coord: Any) -> bool:
         ):
             return True
 
-    if getattr(sm, "bayesian_probability", 0.0) >= 0.80 and getattr(sm, "active_observations", None):
+    if getattr(sm, "bayesian_probability", 0.0) >= 0.80 and getattr(
+        sm, "active_observations", None
+    ):
         return True
 
     return False
@@ -419,7 +421,9 @@ def should_defer_for_settling(
 
     store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE) if coord.hass else None
     gs = store.global_settings if store and hasattr(store, "global_settings") else {}
-    settle_win = float(coord.config.get("settling_window_sec") or gs.get("settling_window_sec", 0.0) or 0.0)
+    settle_win = float(
+        coord.config.get("settling_window_sec") or gs.get("settling_window_sec", 0.0) or 0.0
+    )
     if settle_win <= 0.0:
         return False
 
