@@ -67,6 +67,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
     "ble_decider_enabled": DEFAULT_BLE_DECIDER_ENABLED,
+    "transit_window_sec": 90.0,
+    "settling_window_sec": 2.0,
 }
 
 
