@@ -321,6 +321,9 @@ class PDDStore:
         if not isinstance(floorplan, dict) or not floorplan.get("floors"):
             floorplan = get_default_floorplan()
         self._data["floorplan"] = copy.deepcopy(floorplan)
+        from .trajectory_validator import clear_topology_cache
+
+        clear_topology_cache()
         await self.async_save()
         return copy.deepcopy(self._data["floorplan"])
 
