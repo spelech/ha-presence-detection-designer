@@ -28,7 +28,29 @@ from .const import (
     DOMAIN,
     BoxState,
 )
+from .coordinator_helpers import (
+    async_send_coordinator_test_notification,
+    resolve_global_llm_defaults,
+)
 from .floorplan_presets import get_default_floorplan
+
+__all__ = [
+    "CorroborationResult",
+    "_TOPOLOGY_CACHE",
+    "async_send_coordinator_test_notification",
+    "build_topology_graph",
+    "check_coordinator_trajectory",
+    "clear_topology_cache",
+    "corroborate_transition_trajectory",
+    "find_all_simple_paths",
+    "get_all_room_coordinators",
+    "get_topology_and_paths",
+    "is_room_high_confidence",
+    "is_trigger_high_confidence",
+    "resolve_corroborating_activity_map",
+    "resolve_global_llm_defaults",
+    "should_defer_for_settling",
+]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +67,28 @@ class CorroborationResult:
     all_candidate_paths: list[list[str]] = field(default_factory=list)
     source_room: str | None = None
     reason: str = ""
+
+
+_TOPOLOGY_CACHE: dict[str, tuple[dict[str, set[str]], dict[tuple[str, str], list[list[str]]]]] = {}
+
+
+def clear_topology_cache() -> None:
+    """Clear cached topology graphs and precomputed paths."""
+    _TOPOLOGY_CACHE.clear()
+
+
+def _get_floorplan_cache_key(floorplan: dict[str, Any] | None) -> str:
+    """Derive a stable cache key for a floorplan."""
+    if not floorplan or not isinstance(floorplan, dict):
+        return "__default__"
+    conns = tuple(
+        sorted(
+            (str(c.get("from_room", "")), str(c.get("to_room", "")))
+            for c in (floorplan.get("connections") or [])
+        )
+    )
+    rooms = tuple(sorted(str(r.get("name", "")) for r in (floorplan.get("rooms") or [])))
+    return f"{hash(conns)}_{hash(rooms)}"
 
 
 def build_topology_graph(floorplan: dict[str, Any] | None = None) -> dict[str, set[str]]:
@@ -99,6 +143,29 @@ def find_all_simple_paths(
 
     results.sort(key=len)
     return results
+
+
+def get_topology_and_paths(
+    floorplan: dict[str, Any] | None = None,
+    max_depth: int = 5,
+) -> tuple[dict[str, set[str]], dict[tuple[str, str], list[list[str]]]]:
+    """Retrieve or build-once the topology graph and all precomputed room paths."""
+    cache_key = _get_floorplan_cache_key(floorplan)
+    cached = _TOPOLOGY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    graph = build_topology_graph(floorplan)
+    paths: dict[tuple[str, str], list[list[str]]] = {}
+    room_names = list(graph.keys())
+    for i, start in enumerate(room_names):
+        for goal in room_names[i + 1 :]:
+            fwd = find_all_simple_paths(graph, start, goal, max_depth=max_depth)
+            paths[(start, goal)] = fwd
+            paths[(goal, start)] = [list(reversed(p)) for p in fwd]
+
+    _TOPOLOGY_CACHE[cache_key] = (graph, paths)
+    return graph, paths
 
 
 def is_room_high_confidence(coord: Any) -> bool:
@@ -261,7 +328,7 @@ def corroborate_transition_trajectory(
             reason="house_vacant_initial_entry",
         )
 
-    graph = build_topology_graph(floorplan)
+    graph, paths_cache = get_topology_and_paths(floorplan)
 
     # 1. Direct Adjacency Check (1 hop)
     for c in occupied_coords:
@@ -298,7 +365,7 @@ def corroborate_transition_trajectory(
     all_paths_found: list[list[str]] = []
     for c in rooms_to_check:
         occ_name = getattr(c, "room_name", "")
-        paths = find_all_simple_paths(graph, occ_name, candidate_room, max_depth=5)
+        paths = paths_cache.get((occ_name, candidate_room), [])
         all_paths_found.extend(paths)
 
         for path in paths:
@@ -342,36 +409,6 @@ def corroborate_transition_trajectory(
         source_room=getattr(occupied_coords[0], "room_name", None),
         reason="uncorroborated_distant_transition",
     )
-
-
-def resolve_global_llm_defaults(hass: Any, config: dict[str, Any]) -> dict[str, Any]:
-    """Merge global_settings from PDDStore for any unset LLM fields."""
-    from .const import (
-        CONF_LLM_AGENT_ID,
-        CONF_LLM_API_KEY,
-        CONF_LLM_API_URL,
-        CONF_LLM_MODEL,
-        CONF_LLM_PROVIDER_TYPE,
-        LLMProviderType,
-    )
-
-    gs: dict[str, Any] = {}
-    if hass and isinstance(getattr(hass, "data", None), dict):
-        store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is not None and hasattr(store, "global_settings"):
-            gs = store.global_settings or {}
-
-    return {
-        CONF_LLM_PROVIDER_TYPE: (
-            config.get(CONF_LLM_PROVIDER_TYPE)
-            or gs.get("llm_provider_type")
-            or LLMProviderType.VISION_API
-        ),
-        CONF_LLM_AGENT_ID: config.get(CONF_LLM_AGENT_ID) or gs.get("llm_agent_id"),
-        CONF_LLM_API_URL: config.get(CONF_LLM_API_URL) or gs.get("llm_api_url"),
-        CONF_LLM_API_KEY: config.get(CONF_LLM_API_KEY) or gs.get("llm_api_key"),
-        CONF_LLM_MODEL: config.get(CONF_LLM_MODEL) or gs.get("llm_model"),
-    }
 
 
 def check_coordinator_trajectory(coord: Any, now_ts: float | None = None) -> CorroborationResult:
@@ -434,47 +471,3 @@ def should_defer_for_settling(
     coord._settling_entity = entity_id
     coord._settling_ts = now_ts
     return True
-
-
-async def async_send_coordinator_test_notification(
-    coord: Any,
-    service: str | None = None,
-    channel: str | None = None,
-    verbosity: str | None = None,
-) -> bool:
-    """Send a test diagnostic notification to verify Slack connectivity."""
-    from .notifications import TransitionAttribution
-
-    global_settings: dict[str, Any] = {}
-    if coord.hass and hasattr(coord.hass, "data") and isinstance(coord.hass.data, dict):
-        store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is not None and hasattr(store, "global_settings"):
-            global_settings = dict(store.global_settings or {})
-
-    if service:
-        global_settings["slack_notify_service"] = service
-    if channel:
-        global_settings["slack_channel"] = channel
-    if verbosity:
-        global_settings["slack_verbosity"] = verbosity
-
-    attribution = TransitionAttribution(
-        room_id=coord.entry_id,
-        room_name=coord.room_name,
-        from_state="clear",
-        to_state="occupied",
-        primary_driver="Test Trigger (Manual Studio Verification)",
-        driver_type="sensor",
-        confidence_pct=95.0,
-        threshold_pct=75.0,
-        active_sensors=["test_sensor.manual_ping"],
-        sustaining_conditions=[],
-        arrival_context="Manual Studio Test",
-        duration_occupied_str=None,
-    )
-    return await coord._notification_dispatcher.async_dispatch_notification(
-        coord.hass,
-        attribution,
-        global_settings,
-        {"notify_slack": True, "notify_on_occupied": True},
-    )

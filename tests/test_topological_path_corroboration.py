@@ -402,3 +402,37 @@ def test_high_confidence_trigger_settles_immediately(mock_hass):
     # Immediately promotes to occupied
     assert living_coord.state_machine.is_present is True
     assert living_coord._settling_entity is None
+
+
+def test_topology_and_paths_built_once_and_cached():
+    """Verify topology graph and multi-hop paths are precomputed once and cached."""
+    from unittest.mock import patch
+
+    from custom_components.presence_detection_designer.trajectory_validator import (
+        _TOPOLOGY_CACHE,
+        clear_topology_cache,
+        get_topology_and_paths,
+    )
+
+    clear_topology_cache()
+    assert len(_TOPOLOGY_CACHE) == 0
+
+    # First call builds and caches graph + paths
+    graph1, paths1 = get_topology_and_paths()
+    assert len(_TOPOLOGY_CACHE) == 1
+    assert "Living Room" in graph1
+    assert ("Master Bedroom", "Living Room") in paths1
+    assert len(paths1[("Master Bedroom", "Living Room")]) > 0
+
+    # Second call returns exact cached references without rebuilding
+    with patch(
+        "custom_components.presence_detection_designer.trajectory_validator.build_topology_graph"
+    ) as mock_build:
+        graph2, paths2 = get_topology_and_paths()
+        mock_build.assert_not_called()
+        assert graph1 is graph2
+        assert paths1 is paths2
+
+    # Clear cache resets it
+    clear_topology_cache()
+    assert len(_TOPOLOGY_CACHE) == 0
