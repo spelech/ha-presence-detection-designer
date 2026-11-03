@@ -111,6 +111,10 @@ class RoomPresenceCoordinator:
         self.last_bayesian_eval: BayesianEvaluation | None = None
         self.last_spatial_estimate: dict[str, Any] | None = None
         self._last_spatial_frame: dict[str, Any] | None = None
+        self._settling_entity: str | None = None
+        self._settling_ts: float = 0.0
+        self._last_corroborated_path: list[str] | None = None
+        self._last_suppressed_reason: str | None = None
         self.state_machine: RoomStateMachine = None  # type: ignore[assignment]
 
         self._apply_config_fields(self.config, preserve_state=False)

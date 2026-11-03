@@ -6,20 +6,30 @@ import time
 from typing import Any
 
 from .bayesian_engine import BayesianEvaluation, evaluate_bayesian
+from .condition_evaluator import is_state_stale
 from .const import (
-    CONF_LLM_AGENT_ID,
-    CONF_LLM_API_KEY,
-    CONF_LLM_API_URL,
-    CONF_LLM_MODEL,
-    CONF_LLM_PROVIDER_TYPE,
     DATA_STORE,
     DOMAIN,
     EVENT_PRESENCE_TRANSITION,
     BoxState,
-    LLMProviderType,
 )
-from .condition_evaluator import is_state_stale
-from .notifications import TransitionAttribution
+from .trajectory_validator import (
+    async_send_coordinator_test_notification,
+    check_coordinator_trajectory,
+    resolve_global_llm_defaults,
+    should_defer_for_settling,
+)
+
+__all__ = [
+    "_safe_state_getter",
+    "async_send_coordinator_test_notification",
+    "dispatch_presence_transition",
+    "evaluate_coordinator_bayesian",
+    "notify_connected_rooms_if_active",
+    "process_coordinator_trigger_event",
+    "record_coordinator_timeline_snapshot",
+    "resolve_global_llm_defaults",
+]
 
 
 def _safe_state_getter(hass: Any, entity_id: str) -> Any:
@@ -30,27 +40,6 @@ def _safe_state_getter(hass: Any, entity_id: str) -> Any:
     if state_obj is None or not isinstance(getattr(state_obj, "state", None), str):
         return None
     return state_obj
-
-
-def resolve_global_llm_defaults(hass: Any, config: dict[str, Any]) -> dict[str, Any]:
-    """Merge global_settings from PDDStore for any unset LLM fields."""
-    gs: dict[str, Any] = {}
-    if hass and isinstance(getattr(hass, "data", None), dict):
-        store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is not None and hasattr(store, "global_settings"):
-            gs = store.global_settings or {}
-
-    return {
-        CONF_LLM_PROVIDER_TYPE: (
-            config.get(CONF_LLM_PROVIDER_TYPE)
-            or gs.get("llm_provider_type")
-            or LLMProviderType.VISION_API
-        ),
-        CONF_LLM_AGENT_ID: config.get(CONF_LLM_AGENT_ID) or gs.get("llm_agent_id"),
-        CONF_LLM_API_URL: config.get(CONF_LLM_API_URL) or gs.get("llm_api_url"),
-        CONF_LLM_API_KEY: config.get(CONF_LLM_API_KEY) or gs.get("llm_api_key"),
-        CONF_LLM_MODEL: config.get(CONF_LLM_MODEL) or gs.get("llm_model"),
-    }
 
 
 def dispatch_presence_transition(coord: Any) -> None:
@@ -267,48 +256,6 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
     )
 
 
-async def async_send_coordinator_test_notification(
-    coord: Any,
-    service: str | None = None,
-    channel: str | None = None,
-    verbosity: str | None = None,
-) -> bool:
-    """Send a test diagnostic notification to verify Slack connectivity."""
-    global_settings: dict[str, Any] = {}
-    if coord.hass and hasattr(coord.hass, "data") and isinstance(coord.hass.data, dict):
-        store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is not None and hasattr(store, "global_settings"):
-            global_settings = dict(store.global_settings or {})
-
-    if service:
-        global_settings["slack_notify_service"] = service
-    if channel:
-        global_settings["slack_channel"] = channel
-    if verbosity:
-        global_settings["slack_verbosity"] = verbosity
-
-    attribution = TransitionAttribution(
-        room_id=coord.entry_id,
-        room_name=coord.room_name,
-        from_state="clear",
-        to_state="occupied",
-        primary_driver="Test Trigger (Manual Studio Verification)",
-        driver_type="sensor",
-        confidence_pct=95.0,
-        threshold_pct=75.0,
-        active_sensors=["test_sensor.manual_ping"],
-        sustaining_conditions=[],
-        arrival_context="Manual Studio Test",
-        duration_occupied_str=None,
-    )
-    return await coord._notification_dispatcher.async_dispatch_notification(
-        coord.hass,
-        attribution,
-        global_settings,
-        {"notify_slack": True, "notify_on_occupied": True},
-    )
-
-
 def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     """Evaluate Bayesian sensor fusion across all configured observations and negative-space geometry."""
     if not coord.hass or not hasattr(coord.hass, "states") or not coord.bayesian_enabled:
@@ -441,6 +388,16 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         threshold=coord.bayesian_threshold,
     )
     coord.last_bayesian_eval = evaluation
+    should_trigger_sm = coord.has_explicit_bayesian or has_manual_boost
+    if (
+        evaluation.is_occupied
+        and not coord.state_machine.is_present
+        and should_trigger_sm
+        and not guest_mode_enabled
+    ):
+        if not check_coordinator_trajectory(coord, now_ts=time.time()).is_valid:
+            should_trigger_sm = False
+
     coord.state_machine.handle_bayesian(
         probability=evaluation.probability,
         probability_pct=evaluation.probability_pct,
@@ -448,7 +405,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         summary=evaluation.natural_language_summary,
         active_observations=evaluation.active_observations,
         inactive_observations=evaluation.inactive_observations,
-        trigger_state_machine=coord.has_explicit_bayesian or has_manual_boost,
+        trigger_state_machine=should_trigger_sm,
     )
     record_coordinator_timeline_snapshot(coord)
     if (
@@ -489,6 +446,18 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
             if pinned_rooms and coord.room_name not in pinned_rooms:
                 if not b_occupied and not coord.state_machine.active_conditions:
                     return
+
+            traj = check_coordinator_trajectory(coord, now_ts=now)
+            if not traj.is_valid:
+                coord._last_suppressed_reason = traj.reason
+                return
+
+            if should_defer_for_settling(coord, entity_id, is_active, traj, now):
+                return
+
+    if not is_active and getattr(coord, "_settling_entity", None) == entity_id:
+        coord._settling_entity = None
+        return
 
     coord.state_machine.handle_trigger(entity_id, is_active)
     if is_active:
