@@ -79,9 +79,7 @@ def dispatch_presence_transition(coord: Any) -> None:
                     "box_state": coord.state_machine.box_state,
                     "bayesian_probability": coord.state_machine.bayesian_probability,
                     "bayesian_probability_pct": coord.state_machine.bayesian_probability_pct,
-                    "occupant_type": est.get(
-                        "occupant_type", "human" if curr_presence else "none"
-                    ),
+                    "occupant_type": est.get("occupant_type", "human" if curr_presence else "none"),
                     "occupant_label": est.get(
                         "occupant_label", "Occupant" if curr_presence else ""
                     ),
@@ -145,7 +143,9 @@ def dispatch_presence_transition(coord: Any) -> None:
             ]
     if coord.last_spatial_estimate:
         curr_eval["inferred_location"] = coord.last_spatial_estimate.get("inferred_subregion")
-        curr_eval["negative_space_evidence"] = list(coord.last_spatial_estimate.get("negative_exclusions") or [])
+        curr_eval["negative_space_evidence"] = list(
+            coord.last_spatial_estimate.get("negative_exclusions") or []
+        )
 
     adj_ctx = coord._last_adjacent_arrival
     if not adj_ctx and coord.state_machine.last_handoff_room:
@@ -210,7 +210,11 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
     for other in list(domain_data.values()):
         if other is coord or not hasattr(other, "notify_adjacent_occupancy"):
             continue
-        other_tokens = {other.room_name.lower(), other.entry_id.lower(), other.room_name.lower().replace("'", "").replace(" ", "_")}
+        other_tokens = {
+            other.room_name.lower(),
+            other.entry_id.lower(),
+            other.room_name.lower().replace("'", "").replace(" ", "_"),
+        }
         if other.area_id:
             other_tokens.add(str(other.area_id).strip().lower())
         other_connected = {r.strip().lower() for r in other.connected_rooms if r}
@@ -275,8 +279,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                 gs = store.global_settings
                 guest_mode_enabled = bool(gs.get("guest_mode_enabled", False))
                 neg_space_enabled = (
-                    bool(gs.get("negative_space_enabled", True))
-                    and not guest_mode_enabled
+                    bool(gs.get("negative_space_enabled", True)) and not guest_mode_enabled
                 )
                 ble_decider_enabled = bool(gs.get("ble_decider_enabled", False))
             if hasattr(store, "get_floorplan"):
@@ -293,7 +296,11 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         return str(st.state)
 
     now_ts = time.time()
-    last_frame = getattr(store, "_last_spatial_frame", None) if store is not None else coord._last_spatial_frame
+    last_frame = (
+        getattr(store, "_last_spatial_frame", None)
+        if store is not None
+        else coord._last_spatial_frame
+    )
     try:
         if last_frame and (now_ts - float(last_frame.get("ts", 0.0))) < 0.2:
             frame = last_frame
@@ -315,7 +322,9 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         coord.last_spatial_estimate = None
 
     sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
-    shade_excluded_eids = set(sp.get("shade_sunlight_excluded_entities") or []) if neg_space_enabled else set()
+    shade_excluded_eids = (
+        set(sp.get("shade_sunlight_excluded_entities") or []) if neg_space_enabled else set()
+    )
     pet_excluded_eids = set(sp.get("pet_excluded_entities") or [])
     tracker = getattr(coord, "actuation_tracker", None)
     auto_latched_eids = set(tracker.automated_entities_on) if tracker is not None else set()
@@ -356,9 +365,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                 "prob_given_true": 0.95,
                 "prob_given_false": 0.02,
                 "target_state": "on",
-                "label": (
-                    f"Manual {tracker.last_manual_actor} ({tracker.last_manual_entity})"
-                ),
+                "label": (f"Manual {tracker.last_manual_actor} ({tracker.last_manual_entity})"),
             }
         )
 

@@ -46,9 +46,7 @@ def _extract_spatial_and_causal_attrs(coordinator: Any, is_present: bool) -> dic
         if tracker is not None and callable(getattr(tracker, "as_attributes", None))
         else None
     )
-    tracker_attrs: dict[str, Any] = (
-        tracker_attrs_raw if isinstance(tracker_attrs_raw, dict) else {}
-    )
+    tracker_attrs: dict[str, Any] = tracker_attrs_raw if isinstance(tracker_attrs_raw, dict) else {}
     manual_intent = str(tracker_attrs.get("manual_intent", "auto"))
 
     return {

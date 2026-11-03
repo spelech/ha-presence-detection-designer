@@ -333,7 +333,9 @@ def test_ble_decider_disabled_excludes_floor_bleed_while_logging_telemetry() -> 
     assert "sensor.steve_s_s25_ble_area" not in frame_passive["active_positive_sensors"]
 
     # BUT BLE telemetry is continuously gathered, logged, and surfaced in estimate
-    assert frame_passive["telemetry_ble_by_room"].get("Basement Play Area") == ["sensor.steve_s_s25_ble_area"]
+    assert frame_passive["telemetry_ble_by_room"].get("Basement Play Area") == [
+        "sensor.steve_s_s25_ble_area"
+    ]
     assert frame_passive["raw_ble_positions"].get("sensor.steve_s_s25_ble_area") == "Basement"
     assert frame_passive["prev_ble_states"].get("sensor.steve_s_s25_ble_area") == "Basement"
     assert "sensor.steve_s_s25_ble_area" in b_passive["ble_telemetry"]

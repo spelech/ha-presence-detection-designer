@@ -386,9 +386,11 @@ class RoomPresenceCoordinator:
 
         any_active, descs = evaluate_all(
             self.conditions,
-            lambda eid: None
-            if self.actuation_tracker.is_entity_auto_latched(eid)
-            else _safe_state_getter(self.hass, eid),
+            lambda eid: (
+                None
+                if self.actuation_tracker.is_entity_auto_latched(eid)
+                else _safe_state_getter(self.hass, eid)
+            ),
         )
         self.state_machine.handle_conditions(any_active, descs)
         self._eval_bayesian_and_update()
@@ -432,7 +434,9 @@ class RoomPresenceCoordinator:
         action = self.state_machine.handle_tick(1)
         if action == "REQUEST_LLM_VERIFY":
             if self._is_guest_mode_active():
-                self.state_machine.handle_llm_result(False, "Skipped LLM verification in Guest Mode")
+                self.state_machine.handle_llm_result(
+                    False, "Skipped LLM verification in Guest Mode"
+                )
                 self.async_update_listeners()
                 return
             self.async_update_listeners()
