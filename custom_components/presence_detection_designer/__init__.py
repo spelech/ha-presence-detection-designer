@@ -345,11 +345,22 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             coordinator.actuation_tracker.clear_manual_intent()
             coordinator.async_update_listeners()
 
+    async def handle_set_house_occupant_count(call: Any) -> None:
+        """Set the whole-house occupant headcount and trigger conservation enforcement."""
+        count = int(call.data.get("count", 1))
+        from .house_perimeter import get_house_perimeter_tracker
+
+        tracker = get_house_perimeter_tracker(hass)
+        tracker.set_headcount(count)
+        store = await async_get_store(hass)
+        await store.async_update_global_settings({"house_occupant_count": count})
+
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)
         _register_service(hass, "force_refresh", handle_force_refresh)
         _register_service(hass, "set_guest_mode", handle_set_guest_mode)
         _register_service(hass, "clear_manual_intent", handle_clear_manual_intent)
+        _register_service(hass, "set_house_occupant_count", handle_set_house_occupant_count)
         _register_service(
             hass, "explain_presence", handle_explain_presence, supports_optional_response=True
         )

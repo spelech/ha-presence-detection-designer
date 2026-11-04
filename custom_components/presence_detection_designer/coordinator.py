@@ -415,6 +415,13 @@ class RoomPresenceCoordinator:
 
         is_open = to_state.state in ("on", "open")
         self.state_machine.handle_boundary(entity_id, is_open)
+        if self.hass:
+            from .house_perimeter import get_house_perimeter_tracker
+
+            get_house_perimeter_tracker(self.hass).handle_door_state_change(
+                entity_id=entity_id,
+                is_open=is_open,
+            )
         self.async_update_listeners()
 
     @callback

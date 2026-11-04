@@ -36,6 +36,7 @@ from .const import (
     DEFAULT_BLE_TRACKERS,
     DEFAULT_GUEST_MODE_ENABLED,
     DEFAULT_NEGATIVE_SPACE_ENABLED,
+    DEFAULT_PERIMETER_DOORS,
     DEFAULT_SLACK_CHANNEL,
     DEFAULT_SLACK_NOTIFY_SERVICE,
     DEFAULT_SLACK_VERBOSITY,
@@ -69,6 +70,9 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "ble_decider_enabled": DEFAULT_BLE_DECIDER_ENABLED,
     "transit_window_sec": 90.0,
     "settling_window_sec": 2.0,
+    "house_occupant_count": 1,
+    "enable_conservation_law": True,
+    "perimeter_doors": dict(DEFAULT_PERIMETER_DOORS),
 }
 
 
