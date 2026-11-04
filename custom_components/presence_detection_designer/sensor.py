@@ -129,10 +129,89 @@ class RoomOccupantSensor(PresenceDesignerEntityMixin, SensorEntity):
         }
 
 
+class HouseHeadcountSensor(SensorEntity):
+    """Sensor exposing whole-house occupant count, mode, and perimeter events."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, tracker: Any) -> None:
+        self.tracker = tracker
+        self._attr_name = "House Occupant Count"
+        self._attr_unique_id = f"{DOMAIN}_house_occupant_count"
+        self._attr_icon = "mdi:account-group"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._unsub: Any = None
+
+    @property
+    def name(self) -> str:
+        """Return sensor name."""
+        return self._attr_name
+
+    @property
+    def unique_id(self) -> str:
+        """Return unique id."""
+        return self._attr_unique_id
+
+    @property
+    def icon(self) -> str:
+        """Return icon."""
+        return self._attr_icon
+
+    @property
+    def native_value(self) -> int:
+        """Return estimated headcount."""
+        return self.tracker.state.count
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return whole-house occupancy mode and perimeter transition history."""
+        st = self.tracker.state
+        return {
+            "occupancy_mode": st.mode,
+            "last_perimeter_door": st.last_event_door,
+            "last_vector_type": st.last_event_type,
+            "last_event_ts": st.last_event_ts,
+            "recent_door_events": [
+                {
+                    "door": r.entity_id,
+                    "room": r.room_name,
+                    "vector": r.vector,
+                    "confidence": r.confidence,
+                    "details": r.details,
+                    "duration_open_sec": round(r.closed_ts - r.opened_ts, 1),
+                }
+                for r in reversed(st.history[-5:])
+            ],
+        }
+
+    async def async_added_to_hass(self) -> None:
+        """Register listener for headcount changes."""
+        self._unsub = self.tracker.async_add_listener(self._handle_tracker_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe listener."""
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
+
+    def _handle_tracker_update(self) -> None:
+        """Update sensor state when headcount changes."""
+        if hasattr(self, "async_write_ha_state"):
+            self.async_write_ha_state()
+
+
 async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
     """Set up the sensor platform."""
+    from .house_perimeter import get_house_perimeter_tracker
+
     coordinator: RoomPresenceCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = [OccupancyProbabilitySensor(coordinator, entry.entry_id)]
     if coordinator.config.get("expose_occupant_sensor"):
         entities.append(RoomOccupantSensor(coordinator, entry.entry_id))
+
+    tracker = get_house_perimeter_tracker(hass)
+    if not hass.data[DOMAIN].get("_house_sensor_registered"):
+        entities.append(HouseHeadcountSensor(tracker))
+        hass.data[DOMAIN]["_house_sensor_registered"] = True
+
     async_add_entities(entities)

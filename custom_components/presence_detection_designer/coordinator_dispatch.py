@@ -56,6 +56,11 @@ def dispatch_presence_transition(coord: Any) -> None:
     duration_sec: float | None = None
     if to_state == "occupied":
         coord._occupied_start_time = now_ts
+        from .house_perimeter import get_house_perimeter_tracker
+
+        get_house_perimeter_tracker(coord.hass).enforce_conservation_law(
+            newly_occupied_room=coord.room_name
+        )
     else:
         if coord._occupied_start_time is not None:
             duration_sec = now_ts - coord._occupied_start_time

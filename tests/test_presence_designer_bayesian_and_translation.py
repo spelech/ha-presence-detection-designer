@@ -305,8 +305,10 @@ async def test_probability_sensor_and_services(mock_hass):
 
     added_sensors = []
     await async_setup_sensor(mock_hass, mock_entry, lambda ents: added_sensors.extend(ents))
-    assert len(added_sensors) == 1
-    prob_sensor: OccupancyProbabilitySensor = added_sensors[0]
+    assert any(isinstance(s, OccupancyProbabilitySensor) for s in added_sensors)
+    prob_sensor: OccupancyProbabilitySensor = next(
+        s for s in added_sensors if isinstance(s, OccupancyProbabilitySensor)
+    )
     await prob_sensor.async_added_to_hass()
     assert prob_sensor.native_value == 80.5
     assert prob_sensor.native_unit_of_measurement == "%"
