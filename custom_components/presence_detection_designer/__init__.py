@@ -205,6 +205,16 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             ):
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
+        from .notifications import format_duration
+        from .slack_cards import get_slack_daily_thread_manager
+
+        mgr = get_slack_daily_thread_manager(hass)
+        token = mgr.get_slack_token(hass)
+        store = await async_get_store(hass)
+        gs = store.global_settings or {}
+        channel = str(gs.get("slack_channel") or "#presence-alerts")
+        if token and gs.get("notifications_enabled", True) and gs.get("slack_daily_thread", True):
+            await mgr.async_update_daily_digest(hass, channel, token, format_duration)
 
     async def handle_explain_presence(call: Any) -> dict[str, Any] | None:
         """Generate natural-language and YAML explanations for one or all rooms."""
@@ -345,11 +355,36 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             coordinator.actuation_tracker.clear_manual_intent()
             coordinator.async_update_listeners()
 
+    async def handle_set_house_occupant_count(call: Any) -> None:
+        """Set the whole-house occupant headcount and trigger conservation enforcement."""
+        count = int(call.data.get("count", 1))
+        from .house_perimeter import get_house_perimeter_tracker
+
+        tracker = get_house_perimeter_tracker(hass)
+        tracker.set_headcount(count)
+        store = await async_get_store(hass)
+        await store.async_update_global_settings({"house_occupant_count": count})
+
+    async def handle_update_slack_digest(call: Any) -> None:
+        """Manually trigger an immediate update of the main Slack daily presence card."""
+        from .notifications import format_duration
+        from .slack_cards import get_slack_daily_thread_manager
+
+        mgr = get_slack_daily_thread_manager(hass)
+        token = mgr.get_slack_token(hass)
+        store = await async_get_store(hass)
+        gs = store.global_settings or {}
+        channel = str(gs.get("slack_channel") or "#presence-alerts")
+        if token:
+            await mgr.async_update_daily_digest(hass, channel, token, format_duration)
+
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)
         _register_service(hass, "force_refresh", handle_force_refresh)
         _register_service(hass, "set_guest_mode", handle_set_guest_mode)
         _register_service(hass, "clear_manual_intent", handle_clear_manual_intent)
+        _register_service(hass, "set_house_occupant_count", handle_set_house_occupant_count)
+        _register_service(hass, "update_slack_digest", handle_update_slack_digest)
         _register_service(
             hass, "explain_presence", handle_explain_presence, supports_optional_response=True
         )

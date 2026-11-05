@@ -12,7 +12,6 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .slack_cards import (
-    SlackDailyThreadManager,
     build_transition_card_blocks,
     get_slack_daily_thread_manager,
 )
@@ -25,17 +24,12 @@ DEBOUNCE_SECONDS = 5.0
 
 def format_duration(seconds: float | None) -> str | None:
     """Format duration in seconds into a friendly human-readable string."""
-    if seconds is None or seconds < 0:
+    if seconds is None or not isinstance(seconds, (int, float)) or seconds < 0:
         return None
-    total_sec = int(round(seconds))
-    hrs = total_sec // 3600
-    mins = (total_sec % 3600) // 60
-    secs = total_sec % 60
-
-    parts: list[str] = []
-    if hrs > 0:
-        parts.append(f"{hrs}h")
-    if mins > 0 or hrs > 0:
+    hrs, rem = divmod(int(round(seconds)), 3600)
+    mins, secs = divmod(rem, 60)
+    parts = [f"{hrs}h"] if hrs else []
+    if mins or hrs:
         parts.append(f"{mins}m")
     parts.append(f"{secs}s")
     return " ".join(parts)
@@ -229,9 +223,7 @@ class NotificationDispatcher:
         if v == "minimal":
             if attribution.to_state == "occupied":
                 context_str = (
-                    f", from {attribution.arrival_context}"
-                    if attribution.arrival_context
-                    else ""
+                    f", from {attribution.arrival_context}" if attribution.arrival_context else ""
                 )
                 lines.append(
                     f"🟢 *{attribution.room_name}* occupied ({attribution.confidence_pct:.0f}% via `{attribution.primary_driver}`{context_str})"
@@ -351,11 +343,15 @@ class NotificationDispatcher:
             domain = "notify"
             service = notify_service_full
 
-        verbosity = str(
-            room_config.get("slack_verbosity")
-            or global_settings.get("slack_verbosity")
-            or "compact"
-        ).strip().lower()
+        verbosity = (
+            str(
+                room_config.get("slack_verbosity")
+                or global_settings.get("slack_verbosity")
+                or "compact"
+            )
+            .strip()
+            .lower()
+        )
 
         mgr = get_slack_daily_thread_manager(hass)
         token = mgr.get_slack_token(hass)
@@ -389,8 +385,36 @@ class NotificationDispatcher:
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
 
+        notify_trans = bool(
+            room_config.get("slack_notify_transitions")
+            if room_config.get("slack_notify_transitions") is not None
+            else global_settings.get("slack_notify_transitions", False)
+        )
+
+        def _schedule_digest_update() -> None:
+            if hasattr(hass, "async_create_task"):
+                coro = mgr.async_update_daily_digest(
+                    hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
+                )
+                hass.async_create_task(coro)
+                if (
+                    type(hass.async_create_task).__name__ == "MagicMock"
+                    and getattr(hass.async_create_task, "side_effect", None) is None
+                    and hasattr(coro, "close")
+                ):
+                    coro.close()
+
         # Primary delivery: direct threaded reply via Slack Web API
         if use_threads and token and thread_ts:
+            if not notify_trans:
+                _LOGGER.info(
+                    "Transition for %s (%s) updating daily Slack card (replies muted)",
+                    attribution.room_name,
+                    attribution.to_state,
+                )
+                _schedule_digest_update()
+                return True
+
             threaded_ok = await mgr.async_post_thread_reply(
                 hass,
                 channel,
@@ -408,18 +432,11 @@ class NotificationDispatcher:
                     channel,
                     thread_ts,
                 )
-                if hasattr(hass, "async_create_task"):
-                    coro = mgr.async_update_daily_digest(
-                        hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
-                    )
-                    hass.async_create_task(coro)
-                    if (
-                        type(hass.async_create_task).__name__ == "MagicMock"
-                        and getattr(hass.async_create_task, "side_effect", None) is None
-                        and hasattr(coro, "close")
-                    ):
-                        coro.close()
+                _schedule_digest_update()
                 return True
+
+        if not notify_trans and not use_threads:
+            return True
 
         # Fallback delivery: standard HA notify service
         service_data: dict[str, Any] = {

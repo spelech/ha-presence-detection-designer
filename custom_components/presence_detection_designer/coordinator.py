@@ -111,6 +111,10 @@ class RoomPresenceCoordinator:
         self.last_bayesian_eval: BayesianEvaluation | None = None
         self.last_spatial_estimate: dict[str, Any] | None = None
         self._last_spatial_frame: dict[str, Any] | None = None
+        self._settling_entity: str | None = None
+        self._settling_ts: float = 0.0
+        self._last_corroborated_path: list[str] | None = None
+        self._last_suppressed_reason: str | None = None
         self.state_machine: RoomStateMachine = None  # type: ignore[assignment]
 
         self._apply_config_fields(self.config, preserve_state=False)
@@ -382,9 +386,11 @@ class RoomPresenceCoordinator:
 
         any_active, descs = evaluate_all(
             self.conditions,
-            lambda eid: None
-            if self.actuation_tracker.is_entity_auto_latched(eid)
-            else _safe_state_getter(self.hass, eid),
+            lambda eid: (
+                None
+                if self.actuation_tracker.is_entity_auto_latched(eid)
+                else _safe_state_getter(self.hass, eid)
+            ),
         )
         self.state_machine.handle_conditions(any_active, descs)
         self._eval_bayesian_and_update()
@@ -409,6 +415,13 @@ class RoomPresenceCoordinator:
 
         is_open = to_state.state in ("on", "open")
         self.state_machine.handle_boundary(entity_id, is_open)
+        if self.hass:
+            from .house_perimeter import get_house_perimeter_tracker
+
+            get_house_perimeter_tracker(self.hass).handle_door_state_change(
+                entity_id=entity_id,
+                is_open=is_open,
+            )
         self.async_update_listeners()
 
     @callback
@@ -428,7 +441,9 @@ class RoomPresenceCoordinator:
         action = self.state_machine.handle_tick(1)
         if action == "REQUEST_LLM_VERIFY":
             if self._is_guest_mode_active():
-                self.state_machine.handle_llm_result(False, "Skipped LLM verification in Guest Mode")
+                self.state_machine.handle_llm_result(
+                    False, "Skipped LLM verification in Guest Mode"
+                )
                 self.async_update_listeners()
                 return
             self.async_update_listeners()

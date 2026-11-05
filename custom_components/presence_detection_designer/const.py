@@ -162,3 +162,21 @@ MAX_TIMELINE_EVENTS = 400
 DEFAULT_BLE_TRACKERS = [
     "sensor.steve_s_s25_ble_area",
 ]
+DEFAULT_TRANSIT_WINDOW_SEC = 90.0
+DEFAULT_SETTLING_WINDOW_SEC = 2.0
+
+# House Perimeter & Head-Counter Constants
+CONF_HOUSE_OCCUPANT_COUNT = "house_occupant_count"
+CONF_PERIMETER_DOORS = "perimeter_doors"
+CONF_ENABLE_CONSERVATION_LAW = "enable_conservation_law"
+CONF_SLACK_NOTIFY_TRANSITIONS = "slack_notify_transitions"
+DEFAULT_SLACK_NOTIFY_TRANSITIONS = False
+
+# Default perimeter door entities mapping: entity_id -> room_name
+DEFAULT_PERIMETER_DOORS: dict[str, str] = {
+    "binary_sensor.front_door": "Front Entry",
+    "binary_sensor.back_door": "Kitchen",
+    "binary_sensor.garage_side_door": "Garage",
+    "binary_sensor.laundry_room_door": "Laundry Room",
+    "cover.garage_door": "Garage",
+}

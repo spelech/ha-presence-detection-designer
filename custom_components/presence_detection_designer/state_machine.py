@@ -46,6 +46,7 @@ class RoomStateMachine:
         self.box_state = BoxState.IDLE_CLEAR
         self.vacating_countdown = 0
         self.last_cleared_time: float = 0.0
+        self.last_occupied_time: float = 0.0
         self.retrigger_cooldown: float = 20.0
         self.pending_handoff_room: str | None = None
         self.pending_handoff_ts: float = 0.0
@@ -89,11 +90,26 @@ class RoomStateMachine:
         else:
             self._recalculate_state()
 
+    def force_clear(self, reason: str | None = None) -> None:
+        """Immediately force room presence to clear, canceling any active countdown timers."""
+        self.is_present = False
+        self.box_state = BoxState.IDLE_CLEAR
+        self.vacating_countdown = 0
+        self.bayesian_probability = 0.0
+        self.bayesian_probability_pct = 0.0
+        self.last_cleared_time = time.time()
+        self.pending_handoff_room = None
+        self._active_triggers.clear()
+        self._bayesian_active = False
+        if reason:
+            self.last_handoff_room = reason
+
     def _activate_occupied_state(self) -> None:
         """Transition state machine into occupied state respecting boundary doors."""
         self.is_present = True
         self.vacating_countdown = 0
         self.last_handoff_room = None
+        self.last_occupied_time = time.time()
         if self.mode == Mode.BOUNDED and self.has_boundaries:
             if len(self._open_boundaries) > 0:
                 self.box_state = BoxState.OCCUPIED_UNSEALED

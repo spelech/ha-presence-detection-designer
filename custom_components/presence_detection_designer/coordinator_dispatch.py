@@ -6,20 +6,30 @@ import time
 from typing import Any
 
 from .bayesian_engine import BayesianEvaluation, evaluate_bayesian
+from .condition_evaluator import is_state_stale
 from .const import (
-    CONF_LLM_AGENT_ID,
-    CONF_LLM_API_KEY,
-    CONF_LLM_API_URL,
-    CONF_LLM_MODEL,
-    CONF_LLM_PROVIDER_TYPE,
     DATA_STORE,
     DOMAIN,
     EVENT_PRESENCE_TRANSITION,
     BoxState,
-    LLMProviderType,
 )
-from .condition_evaluator import is_state_stale
-from .notifications import TransitionAttribution
+from .trajectory_validator import (
+    async_send_coordinator_test_notification,
+    check_coordinator_trajectory,
+    resolve_global_llm_defaults,
+    should_defer_for_settling,
+)
+
+__all__ = [
+    "_safe_state_getter",
+    "async_send_coordinator_test_notification",
+    "dispatch_presence_transition",
+    "evaluate_coordinator_bayesian",
+    "notify_connected_rooms_if_active",
+    "process_coordinator_trigger_event",
+    "record_coordinator_timeline_snapshot",
+    "resolve_global_llm_defaults",
+]
 
 
 def _safe_state_getter(hass: Any, entity_id: str) -> Any:
@@ -30,27 +40,6 @@ def _safe_state_getter(hass: Any, entity_id: str) -> Any:
     if state_obj is None or not isinstance(getattr(state_obj, "state", None), str):
         return None
     return state_obj
-
-
-def resolve_global_llm_defaults(hass: Any, config: dict[str, Any]) -> dict[str, Any]:
-    """Merge global_settings from PDDStore for any unset LLM fields."""
-    gs: dict[str, Any] = {}
-    if hass and isinstance(getattr(hass, "data", None), dict):
-        store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is not None and hasattr(store, "global_settings"):
-            gs = store.global_settings or {}
-
-    return {
-        CONF_LLM_PROVIDER_TYPE: (
-            config.get(CONF_LLM_PROVIDER_TYPE)
-            or gs.get("llm_provider_type")
-            or LLMProviderType.VISION_API
-        ),
-        CONF_LLM_AGENT_ID: config.get(CONF_LLM_AGENT_ID) or gs.get("llm_agent_id"),
-        CONF_LLM_API_URL: config.get(CONF_LLM_API_URL) or gs.get("llm_api_url"),
-        CONF_LLM_API_KEY: config.get(CONF_LLM_API_KEY) or gs.get("llm_api_key"),
-        CONF_LLM_MODEL: config.get(CONF_LLM_MODEL) or gs.get("llm_model"),
-    }
 
 
 def dispatch_presence_transition(coord: Any) -> None:
@@ -67,6 +56,11 @@ def dispatch_presence_transition(coord: Any) -> None:
     duration_sec: float | None = None
     if to_state == "occupied":
         coord._occupied_start_time = now_ts
+        from .house_perimeter import get_house_perimeter_tracker
+
+        get_house_perimeter_tracker(coord.hass).enforce_conservation_law(
+            newly_occupied_room=coord.room_name
+        )
     else:
         if coord._occupied_start_time is not None:
             duration_sec = now_ts - coord._occupied_start_time
@@ -90,9 +84,7 @@ def dispatch_presence_transition(coord: Any) -> None:
                     "box_state": coord.state_machine.box_state,
                     "bayesian_probability": coord.state_machine.bayesian_probability,
                     "bayesian_probability_pct": coord.state_machine.bayesian_probability_pct,
-                    "occupant_type": est.get(
-                        "occupant_type", "human" if curr_presence else "none"
-                    ),
+                    "occupant_type": est.get("occupant_type", "human" if curr_presence else "none"),
                     "occupant_label": est.get(
                         "occupant_label", "Occupant" if curr_presence else ""
                     ),
@@ -156,7 +148,9 @@ def dispatch_presence_transition(coord: Any) -> None:
             ]
     if coord.last_spatial_estimate:
         curr_eval["inferred_location"] = coord.last_spatial_estimate.get("inferred_subregion")
-        curr_eval["negative_space_evidence"] = list(coord.last_spatial_estimate.get("negative_exclusions") or [])
+        curr_eval["negative_space_evidence"] = list(
+            coord.last_spatial_estimate.get("negative_exclusions") or []
+        )
 
     adj_ctx = coord._last_adjacent_arrival
     if not adj_ctx and coord.state_machine.last_handoff_room:
@@ -221,7 +215,11 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
     for other in list(domain_data.values()):
         if other is coord or not hasattr(other, "notify_adjacent_occupancy"):
             continue
-        other_tokens = {other.room_name.lower(), other.entry_id.lower(), other.room_name.lower().replace("'", "").replace(" ", "_")}
+        other_tokens = {
+            other.room_name.lower(),
+            other.entry_id.lower(),
+            other.room_name.lower().replace("'", "").replace(" ", "_"),
+        }
         if other.area_id:
             other_tokens.add(str(other.area_id).strip().lower())
         other_connected = {r.strip().lower() for r in other.connected_rooms if r}
@@ -267,48 +265,6 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
     )
 
 
-async def async_send_coordinator_test_notification(
-    coord: Any,
-    service: str | None = None,
-    channel: str | None = None,
-    verbosity: str | None = None,
-) -> bool:
-    """Send a test diagnostic notification to verify Slack connectivity."""
-    global_settings: dict[str, Any] = {}
-    if coord.hass and hasattr(coord.hass, "data") and isinstance(coord.hass.data, dict):
-        store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is not None and hasattr(store, "global_settings"):
-            global_settings = dict(store.global_settings or {})
-
-    if service:
-        global_settings["slack_notify_service"] = service
-    if channel:
-        global_settings["slack_channel"] = channel
-    if verbosity:
-        global_settings["slack_verbosity"] = verbosity
-
-    attribution = TransitionAttribution(
-        room_id=coord.entry_id,
-        room_name=coord.room_name,
-        from_state="clear",
-        to_state="occupied",
-        primary_driver="Test Trigger (Manual Studio Verification)",
-        driver_type="sensor",
-        confidence_pct=95.0,
-        threshold_pct=75.0,
-        active_sensors=["test_sensor.manual_ping"],
-        sustaining_conditions=[],
-        arrival_context="Manual Studio Test",
-        duration_occupied_str=None,
-    )
-    return await coord._notification_dispatcher.async_dispatch_notification(
-        coord.hass,
-        attribution,
-        global_settings,
-        {"notify_slack": True, "notify_on_occupied": True},
-    )
-
-
 def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     """Evaluate Bayesian sensor fusion across all configured observations and negative-space geometry."""
     if not coord.hass or not hasattr(coord.hass, "states") or not coord.bayesian_enabled:
@@ -328,8 +284,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                 gs = store.global_settings
                 guest_mode_enabled = bool(gs.get("guest_mode_enabled", False))
                 neg_space_enabled = (
-                    bool(gs.get("negative_space_enabled", True))
-                    and not guest_mode_enabled
+                    bool(gs.get("negative_space_enabled", True)) and not guest_mode_enabled
                 )
                 ble_decider_enabled = bool(gs.get("ble_decider_enabled", False))
             if hasattr(store, "get_floorplan"):
@@ -346,7 +301,11 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         return str(st.state)
 
     now_ts = time.time()
-    last_frame = getattr(store, "_last_spatial_frame", None) if store is not None else coord._last_spatial_frame
+    last_frame = (
+        getattr(store, "_last_spatial_frame", None)
+        if store is not None
+        else coord._last_spatial_frame
+    )
     try:
         if last_frame and (now_ts - float(last_frame.get("ts", 0.0))) < 0.2:
             frame = last_frame
@@ -368,7 +327,9 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         coord.last_spatial_estimate = None
 
     sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
-    shade_excluded_eids = set(sp.get("shade_sunlight_excluded_entities") or []) if neg_space_enabled else set()
+    shade_excluded_eids = (
+        set(sp.get("shade_sunlight_excluded_entities") or []) if neg_space_enabled else set()
+    )
     pet_excluded_eids = set(sp.get("pet_excluded_entities") or [])
     tracker = getattr(coord, "actuation_tracker", None)
     auto_latched_eids = set(tracker.automated_entities_on) if tracker is not None else set()
@@ -409,9 +370,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                 "prob_given_true": 0.95,
                 "prob_given_false": 0.02,
                 "target_state": "on",
-                "label": (
-                    f"Manual {tracker.last_manual_actor} ({tracker.last_manual_entity})"
-                ),
+                "label": (f"Manual {tracker.last_manual_actor} ({tracker.last_manual_entity})"),
             }
         )
 
@@ -441,6 +400,16 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         threshold=coord.bayesian_threshold,
     )
     coord.last_bayesian_eval = evaluation
+    should_trigger_sm = coord.has_explicit_bayesian or has_manual_boost
+    if (
+        evaluation.is_occupied
+        and not coord.state_machine.is_present
+        and should_trigger_sm
+        and not guest_mode_enabled
+    ):
+        if not check_coordinator_trajectory(coord, now_ts=time.time()).is_valid:
+            should_trigger_sm = False
+
     coord.state_machine.handle_bayesian(
         probability=evaluation.probability,
         probability_pct=evaluation.probability_pct,
@@ -448,7 +417,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         summary=evaluation.natural_language_summary,
         active_observations=evaluation.active_observations,
         inactive_observations=evaluation.inactive_observations,
-        trigger_state_machine=coord.has_explicit_bayesian or has_manual_boost,
+        trigger_state_machine=should_trigger_sm,
     )
     record_coordinator_timeline_snapshot(coord)
     if (
@@ -489,6 +458,18 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
             if pinned_rooms and coord.room_name not in pinned_rooms:
                 if not b_occupied and not coord.state_machine.active_conditions:
                     return
+
+            traj = check_coordinator_trajectory(coord, now_ts=now)
+            if not traj.is_valid:
+                coord._last_suppressed_reason = traj.reason
+                return
+
+            if should_defer_for_settling(coord, entity_id, is_active, traj, now):
+                return
+
+    if not is_active and getattr(coord, "_settling_entity", None) == entity_id:
+        coord._settling_entity = None
+        return
 
     coord.state_machine.handle_trigger(entity_id, is_active)
     if is_active:
