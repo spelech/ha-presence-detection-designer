@@ -57,6 +57,20 @@ DEFAULT_BLE_DECIDER_ENABLED = False
 DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
 DEFAULT_GRACE_TIMEOUT = 60  # 1 minute after door open/close
 DEFAULT_EXTEND_TIMEOUT = 300  # 5 minutes if LLM detects occupant
+
+# Wasp-in-a-Box sealed room re-verification watchdog.
+# A bounded room can seal with all motion clear (occupant sitting still). If no
+# PIR/condition/Bayesian evidence has held the seal for this long, the coordinator
+# requests a Vision AI pass so a truly empty-but-sealed room is unsealed and cleared.
+CONF_SEALED_VERIFY_TIMEOUT = "sealed_verify_timeout"
+DEFAULT_SEALED_VERIFY_TIMEOUT = 300  # 5 minutes
+
+# Stuck / stale camera sub-zone trigger watchdog.
+# A camera person-occupancy trigger held continuously ON this long with zero
+# corroborating PIR/BLE activity is treated as a potential static false-positive,
+# re-verified with Vision AI, and suppressed until it transitions off -> on again.
+CONF_TRIGGER_STUCK_TIMEOUT = "trigger_stuck_timeout"
+DEFAULT_TRIGGER_STUCK_TIMEOUT = 1800  # 30 minutes
 DEFAULT_BAYESIAN_PRIOR = 0.20  # 20% baseline prior probability
 DEFAULT_BAYESIAN_THRESHOLD = 0.75  # 75% posterior threshold to declare occupied
 DEFAULT_LLM_PROMPT = (

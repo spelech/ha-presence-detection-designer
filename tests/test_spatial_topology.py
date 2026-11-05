@@ -579,3 +579,40 @@ def test_ikea_vallhorn_and_wyze_sense_presets_and_dual_lobe_raycast():
     assert "binary_sensor.laundry_room_motion" in sensors_by_id
     assert sensors_by_id["binary_sensor.laundry_room_motion"]["host_room"] == "Laundry Room"
     assert sensors_by_id["binary_sensor.laundry_room_motion"]["model_preset"] == "wyze_sense_pir"
+
+
+def test_topology_demotes_frigate_pixel_motion_from_triggers():
+    """Issue #19: raw Frigate optical pixel motion is removed from triggers and demoted to supporting."""
+    compiled = {
+        "compiled_room_rules": {
+            "Garage": {"connected_rooms": [], "can_be_bounded": False},
+        }
+    }
+    cfg = {
+        CONF_ROOM_NAME: "Garage",
+        CONF_TRIGGER_ENTITIES: ["binary_sensor.garage_motion"],
+        CONF_BAYESIAN_OBSERVATIONS: [
+            {
+                "entity_id": "binary_sensor.garage_motion",
+                "label": "Garage optical pixel motion",
+                "preset": "strong",
+                "prob_given_true": 0.85,
+                "prob_given_false": 0.05,
+            }
+        ],
+    }
+    updated = apply_compiled_topology_to_config(cfg, compiled)
+
+    # Optical pixel motion must never drive the Wasp trigger again.
+    assert "binary_sensor.garage_motion" not in updated[CONF_TRIGGER_ENTITIES]
+    # It survives only as a supporting observation that requires corroboration.
+    obs = next(
+        o
+        for o in updated[CONF_BAYESIAN_OBSERVATIONS]
+        if o["entity_id"] == "binary_sensor.garage_motion"
+    )
+    assert obs["preset"] == "supporting"
+    assert obs["prob_given_true"] == 0.45
+    assert obs["prob_given_false"] == 0.20
+    # The room still gets its authoritative thermal PIR trigger.
+    assert "binary_sensor.garage_ring_motion" in updated[CONF_TRIGGER_ENTITIES]

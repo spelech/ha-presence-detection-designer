@@ -12,6 +12,7 @@ from .const import (
     DOMAIN,
     EVENT_PRESENCE_TRANSITION,
     BoxState,
+    Mode,
 )
 from .trajectory_validator import (
     async_send_coordinator_test_notification,
@@ -333,12 +334,29 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     pet_excluded_eids = set(sp.get("pet_excluded_entities") or [])
     tracker = getattr(coord, "actuation_tracker", None)
     auto_latched_eids = set(tracker.automated_entities_on) if tracker is not None else set()
-    suppressed_eids = shade_excluded_eids | pet_excluded_eids | auto_latched_eids
+    stuck_suppressed_eids = set(getattr(coord, "_stuck_suppressed_entities", set()) or set())
+    suppressed_eids = (
+        shade_excluded_eids | pet_excluded_eids | auto_latched_eids | stuck_suppressed_eids
+    )
+
+    state_machine = getattr(coord, "state_machine", None)
+    # A definitive Vision AI "empty" verdict on a bounded room must not be overridden by
+    # an unconstrained negative-space boost that keeps the sealed box latched occupied.
+    vision_confirmed_vacant = bool(
+        state_machine is not None and getattr(state_machine, "vision_confirmed_vacant", False)
+    )
+    suppress_neg_space_boost = bool(
+        vision_confirmed_vacant
+        and state_machine is not None
+        and getattr(state_machine, "mode", None) == Mode.BOUNDED
+        and getattr(state_machine, "has_boundaries", False)
+    )
 
     obs_to_eval = list(coord.bayesian_observations)
     virtual_neg_space_eid = "__spatial_negative_space__"
     has_neg_space_boost = bool(
         neg_space_enabled
+        and not suppress_neg_space_boost
         and isinstance(coord.last_spatial_estimate, dict)
         and float(coord.last_spatial_estimate.get("probability_boost", 0.0)) > 0.0
     )
@@ -400,7 +418,13 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         threshold=coord.bayesian_threshold,
     )
     coord.last_bayesian_eval = evaluation
-    should_trigger_sm = coord.has_explicit_bayesian or has_manual_boost
+    # Also re-process when a prior manual-on boost latched `_bayesian_active`, so a
+    # later manual-off can unwind it instead of leaving the room latched occupied.
+    should_trigger_sm = (
+        coord.has_explicit_bayesian
+        or has_manual_boost
+        or bool(getattr(coord.state_machine, "_bayesian_active", False))
+    )
     if (
         evaluation.is_occupied
         and not coord.state_machine.is_present
@@ -442,6 +466,10 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
         sp_est.get("pet_excluded_entities") or []
     )
     is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
+
+    if is_active and entity_id in getattr(coord, "_stuck_suppressed_entities", set()):
+        # Stuck camera sub-zone suppressed until it transitions off -> on again.
+        return
 
     if is_active and not coord.state_machine.is_present:
         now = time.time()

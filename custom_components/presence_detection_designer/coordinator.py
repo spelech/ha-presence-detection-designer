@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -55,8 +56,10 @@ from .const import (
     CONF_NOTIFY_ON_OCCUPIED,
     CONF_NOTIFY_SLACK,
     CONF_ROOM_NAME,
+    CONF_SEALED_VERIFY_TIMEOUT,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
+    CONF_TRIGGER_STUCK_TIMEOUT,
     DATA_STORE,
     DEFAULT_BAYESIAN_PRIOR,
     DEFAULT_BAYESIAN_THRESHOLD,
@@ -64,6 +67,8 @@ from .const import (
     DEFAULT_GRACE_TIMEOUT,
     DEFAULT_INACTIVITY_TIMEOUT,
     DEFAULT_LLM_PROMPT,
+    DEFAULT_SEALED_VERIFY_TIMEOUT,
+    DEFAULT_TRIGGER_STUCK_TIMEOUT,
     DOMAIN,
     BoxState,
     Mode,
@@ -82,9 +87,14 @@ from .llm_verifier import LLMVerifier
 from .notifications import NotificationDispatcher
 from .state_machine import RoomStateMachine
 
-__all__ = ["RoomPresenceCoordinator", "_safe_state_getter"]
+__all__ = ["RoomPresenceCoordinator", "_safe_state_getter", "_is_camera_person_entity"]
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_camera_person_entity(entity_id: str) -> bool:
+    """Return True for Frigate/camera person occupancy whole-frame or sub-zone entities."""
+    return "person_occupancy" in str(entity_id).lower()
 
 
 class RoomPresenceCoordinator:
@@ -115,6 +125,12 @@ class RoomPresenceCoordinator:
         self._settling_ts: float = 0.0
         self._last_corroborated_path: list[str] | None = None
         self._last_suppressed_reason: str | None = None
+        # Stuck / stale camera sub-zone trigger watchdog state.
+        self._trigger_on_since: dict[str, float] = {}
+        self._stuck_suppressed_entities: set[str] = set()
+        self._stuck_verify_ts: dict[str, float] = {}
+        self.sealed_verify_timeout: int = DEFAULT_SEALED_VERIFY_TIMEOUT
+        self.trigger_stuck_timeout: int = DEFAULT_TRIGGER_STUCK_TIMEOUT
         self.state_machine: RoomStateMachine = None  # type: ignore[assignment]
 
         self._apply_config_fields(self.config, preserve_state=False)
@@ -166,6 +182,12 @@ class RoomPresenceCoordinator:
         grace_timeout = int(config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT))
         extend_timeout = int(config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT))
         llm_enabled = bool(config.get(CONF_LLM_ENABLED, False))
+        self.sealed_verify_timeout = int(
+            config.get(CONF_SEALED_VERIFY_TIMEOUT, DEFAULT_SEALED_VERIFY_TIMEOUT)
+        )
+        self.trigger_stuck_timeout = int(
+            config.get(CONF_TRIGGER_STUCK_TIMEOUT, DEFAULT_TRIGGER_STUCK_TIMEOUT)
+        )
 
         if preserve_state and self.state_machine is not None:
             self.state_machine.name = self.room_name
@@ -336,7 +358,12 @@ class RoomPresenceCoordinator:
                     continue
                 is_active = st_obj.state in ("on", "playing", "home")
                 if is_active:
+                    if t_eid not in self._trigger_on_since:
+                        self._trigger_on_since[t_eid] = time.time()
                     self.state_machine.handle_trigger(t_eid, True)
+                else:
+                    self._trigger_on_since.pop(t_eid, None)
+                    self._stuck_suppressed_entities.discard(t_eid)
 
         self._eval_conditions_and_update()
 
@@ -403,6 +430,27 @@ class RoomPresenceCoordinator:
     @callback
     def _handle_trigger_change(self, event: Any) -> None:
         """Handle trigger sensor event with transient shielding and rate-limiting cooldown."""
+        entity_id = event.data.get("entity_id")
+        if entity_id:
+            eid = str(entity_id)
+            old_state = event.data.get("old_state")
+            new_state = event.data.get("new_state")
+            was_on = old_state is not None and getattr(old_state, "state", None) in (
+                "on",
+                "playing",
+                "home",
+            )
+            is_on = new_state is not None and getattr(new_state, "state", None) in (
+                "on",
+                "playing",
+                "home",
+            )
+            if is_on and not was_on:
+                self._trigger_on_since[eid] = time.time()
+            elif not is_on and was_on:
+                # Fresh off -> on transition re-arms a previously suppressed stale trigger.
+                self._trigger_on_since.pop(eid, None)
+                self._stuck_suppressed_entities.discard(eid)
         process_coordinator_trigger_event(self, event)
 
     @callback
@@ -452,8 +500,85 @@ class RoomPresenceCoordinator:
             self.async_update_listeners()
         elif self.state_machine.box_state == BoxState.TIMER_ACTIVE:
             self.async_update_listeners()
+        else:
+            await self._async_maybe_reverify_sealed()
+            await self._async_maybe_reverify_stuck_triggers()
 
-    async def async_run_llm_verification(self) -> None:
+    async def _async_maybe_reverify_sealed(self) -> None:
+        """Periodically Vision-AI verify a bounded sealed room that has no sustaining evidence.
+
+        Prevents a room that sealed while only transient optical motion was active from
+        remaining latched in `occupied_sealed` forever once it is actually empty.
+        """
+        sm = self.state_machine
+        if not sm.llm_enabled or self._is_guest_mode_active():
+            return
+        now = time.time()
+        if not sm.sealed_reverification_due(now, float(self.sealed_verify_timeout)):
+            return
+        sm.mark_sealed_reverification(now)
+        self.async_update_listeners()
+        await self.async_run_llm_verification(vacate_on_failure=False)
+
+    async def _async_maybe_reverify_stuck_triggers(self) -> None:
+        """Detect a stuck camera person sub-zone held ON with no corroboration and re-verify it.
+
+        A static false-positive (laundry pile, chair, clothing) in a Frigate sub-zone can
+        stay `on` for hours. When it has no PIR/BLE corroboration and exceeds the stuck
+        timeout, a Vision AI pass is run; a vacant verdict suppresses the trigger until it
+        transitions off -> on again.
+        """
+        sm = self.state_machine
+        if not sm.llm_enabled or self._is_guest_mode_active():
+            return
+        now = time.time()
+        timeout = float(self.trigger_stuck_timeout)
+        for eid in list(sm._active_triggers):
+            if eid in self._stuck_suppressed_entities:
+                continue
+            if not _is_camera_person_entity(eid):
+                continue
+            on_since = self._trigger_on_since.get(eid)
+            if on_since is None:
+                self._trigger_on_since[eid] = now
+                continue
+            if (now - on_since) < timeout:
+                continue
+            if self._room_has_corroboration(eid):
+                continue
+            if (now - self._stuck_verify_ts.get(eid, 0.0)) < timeout:
+                continue
+            self._stuck_verify_ts[eid] = now
+            await self.async_run_llm_verification(vacate_on_failure=False)
+            result = sm.last_llm_result or {}
+            if not result.get("person_detected", False):
+                self._stuck_suppressed_entities.add(eid)
+                sm.handle_trigger(eid, False)
+                self.async_update_listeners()
+                _LOGGER.info(
+                    "Suppressed stuck camera trigger %s in %s after vacant Vision AI verdict",
+                    eid,
+                    self.room_name,
+                )
+            break
+
+    def _room_has_corroboration(self, exclude_eid: str) -> bool:
+        """Return True if the room has independent PIR or BLE evidence besides the camera trigger."""
+        from .spatial_catalog import BLE_TRACKER_ENTITIES, _normalize_ble_area_to_room
+
+        for eid in self.trigger_entities:
+            if eid == exclude_eid or _is_camera_person_entity(eid):
+                continue
+            st = _safe_state_getter(self.hass, eid)
+            if st is not None and str(st.state).lower() in ("on", "playing", "home"):
+                return True
+        for ble_eid in BLE_TRACKER_ENTITIES:
+            st = _safe_state_getter(self.hass, ble_eid)
+            if st is not None and _normalize_ble_area_to_room(str(st.state)) == self.room_name:
+                return True
+        return False
+
+    async def async_run_llm_verification(self, *, vacate_on_failure: bool = True) -> None:
         """Capture snapshot and run LLM verification."""
         image_bytes = await self.verifier.async_acquire_snapshot(
             camera_entity_id=self.camera_entity,
@@ -461,8 +586,9 @@ class RoomPresenceCoordinator:
         )
         if not image_bytes:
             _LOGGER.warning("Could not acquire snapshot for %s, vacating", self.room_name)
-            self.state_machine.handle_llm_result(False, "Failed to capture snapshot")
-            self.async_update_listeners()
+            if vacate_on_failure:
+                self.state_machine.handle_llm_result(False, "Failed to capture snapshot")
+                self.async_update_listeners()
             return
 
         detected, reasoning = await self.verifier.async_verify(image_bytes)
