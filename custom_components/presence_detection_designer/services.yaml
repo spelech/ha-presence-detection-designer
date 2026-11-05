@@ -159,3 +159,8 @@ set_house_occupant_count:
           min: 0
           max: 20
           mode: box
+
+update_slack_digest:
+  name: Update Slack Daily Presence Dashboard
+  description: Immediately update the main Slack daily presence card with current room occupancy, durations, drivers, and house headcount.
+  fields: {}

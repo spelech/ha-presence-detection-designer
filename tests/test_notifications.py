@@ -296,3 +296,137 @@ async def test_auto_create_missing_slack_channel_and_negative_space_formatting(
     )
     assert ok is True
     assert created_channels == ["new-presence-chan"]
+
+
+def test_collect_room_states_identifies_occupied_and_clear():
+    """Verify collect_room_states correctly reads is_present and driver attribution."""
+    import time
+
+    from custom_components.presence_detection_designer.const import DOMAIN
+    from custom_components.presence_detection_designer.notifications import format_duration
+    from custom_components.presence_detection_designer.slack_cards import SlackDailyThreadManager
+
+    mgr = SlackDailyThreadManager()
+    mock_hass = MagicMock()
+
+    coord_office = MagicMock()
+    coord_office.room_name = "Office"
+    coord_office.is_present = True
+    coord_office.state_machine.is_present = True
+    coord_office.state_machine.last_occupied_time = time.time() - 120.0
+    coord_office.state_machine.box_state = "occupied"
+    coord_office.state_machine.last_trigger_entity = "binary_sensor.steves_desk_pir"
+    coord_office.state_machine.active_conditions = []
+    coord_office.last_spatial_estimate = None
+
+    coord_kitchen = MagicMock()
+    coord_kitchen.room_name = "Kitchen"
+    coord_kitchen.is_present = False
+    coord_kitchen.state_machine.is_present = False
+    coord_kitchen.state_machine.box_state = "idle_clear"
+
+    mock_hass.data = {
+        DOMAIN: {
+            "office_id": coord_office,
+            "kitchen_id": coord_kitchen,
+        }
+    }
+
+    occupied, clear = mgr.collect_room_states(mock_hass, format_duration)
+    assert len(occupied) == 1
+    assert occupied[0]["name"] == "Office"
+    assert "2m" in occupied[0]["duration_str"]
+    assert "Steves Desk Pir" in occupied[0]["driver"]
+
+    assert clear == ["Kitchen"]
+
+
+def test_build_daily_digest_blocks_structure():
+    """Verify build_daily_digest_blocks correctly formats occupied, clear, headcount, and transition muting."""
+    from custom_components.presence_detection_designer.slack_cards import build_daily_digest_blocks
+
+    blocks = build_daily_digest_blocks(
+        date_display="Wednesday, Nov 04, 2026",
+        occupied_rooms=[{"name": "Office", "duration_str": "15m", "driver": "Steve's S25+"}],
+        clear_rooms=["Kitchen", "Living Room"],
+        transition_count=42,
+        last_updated_time="07:30 PM",
+        house_headcount=1,
+        occupancy_mode="single_occupant",
+        notify_transitions=False,
+    )
+    serialized = str(blocks)
+    assert "Office" in serialized
+    assert "Kitchen, Living Room" in serialized
+    assert "Headcount:* 1 (single occupant)" in serialized
+    assert "Transitions muted" in serialized
+
+
+@pytest.mark.asyncio
+async def test_async_dispatch_notification_mutes_transition_spam(monkeypatch):
+    """Verify when slack_notify_transitions is False, individual replies are muted but digest is updated."""
+    from custom_components.presence_detection_designer.notifications import (
+        NotificationDispatcher,
+        TransitionAttribution,
+    )
+    from custom_components.presence_detection_designer.slack_cards import (
+        get_slack_daily_thread_manager,
+    )
+
+    dispatcher = NotificationDispatcher()
+    mock_hass = MagicMock()
+    mock_hass.bus = MagicMock()
+
+    mgr = get_slack_daily_thread_manager(mock_hass)
+    monkeypatch.setattr(mgr, "get_slack_token", lambda hass: "xoxb-fake-token")
+
+    post_thread_reply_called = False
+    update_digest_called = False
+
+    async def _mock_get_or_create(hass, channel, token, fmt_fn, call_api_fn=None):
+        return "12345.6789"
+
+    async def _mock_post_reply(*args, **kwargs):
+        nonlocal post_thread_reply_called
+        post_thread_reply_called = True
+        return True
+
+    async def _mock_update_digest(*args, **kwargs):
+        nonlocal update_digest_called
+        update_digest_called = True
+
+    monkeypatch.setattr(mgr, "async_get_or_create_daily_thread", _mock_get_or_create)
+    monkeypatch.setattr(mgr, "async_post_thread_reply", _mock_post_reply)
+    monkeypatch.setattr(mgr, "async_update_daily_digest", _mock_update_digest)
+    monkeypatch.setattr(dispatcher, "async_ensure_slack_channel", AsyncMock())
+
+    attr = TransitionAttribution(
+        room_id="office",
+        room_name="Office",
+        from_state="clear",
+        to_state="occupied",
+        primary_driver="Steve Phone",
+        driver_type="sensor",
+        confidence_pct=95.0,
+        threshold_pct=70.0,
+        active_sensors=["sensor.steve_phone"],
+        sustaining_conditions=[],
+    )
+
+    # When slack_notify_transitions is False:
+    result = await dispatcher.async_dispatch_notification(
+        hass=mock_hass,
+        attribution=attr,
+        global_settings={
+            "notifications_enabled": True,
+            "slack_daily_thread": True,
+            "slack_notify_transitions": False,
+            "slack_channel": "#presence-alerts",
+        },
+        room_config={},
+    )
+    assert result is True
+    # Individual reply is MUTED
+    assert post_thread_reply_called is False
+    # Main card update is SCHEDULED
+    assert mock_hass.async_create_task.called

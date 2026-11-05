@@ -169,6 +169,8 @@ DEFAULT_SETTLING_WINDOW_SEC = 2.0
 CONF_HOUSE_OCCUPANT_COUNT = "house_occupant_count"
 CONF_PERIMETER_DOORS = "perimeter_doors"
 CONF_ENABLE_CONSERVATION_LAW = "enable_conservation_law"
+CONF_SLACK_NOTIFY_TRANSITIONS = "slack_notify_transitions"
+DEFAULT_SLACK_NOTIFY_TRANSITIONS = False
 
 # Default perimeter door entities mapping: entity_id -> room_name
 DEFAULT_PERIMETER_DOORS: dict[str, str] = {
