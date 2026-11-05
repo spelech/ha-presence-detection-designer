@@ -64,6 +64,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "slack_channel": DEFAULT_SLACK_CHANNEL,
     "slack_verbosity": DEFAULT_SLACK_VERBOSITY,
     "slack_daily_thread": True,
+    "slack_notify_transitions": False,
     "include_camera_snapshot": False,
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
@@ -274,10 +275,15 @@ class PDDStore:
             "guest_mode_enabled",
             "ble_decider_enabled",
             "slack_daily_thread",
+            "slack_notify_transitions",
             "include_camera_snapshot",
+            "enable_conservation_law",
         ):
             if bkey in updates and updates[bkey] is not None:
                 gs[bkey] = bool(updates[bkey])
+
+        if "house_occupant_count" in updates and updates["house_occupant_count"] is not None:
+            gs["house_occupant_count"] = max(0, int(updates["house_occupant_count"]))
 
         if "ble_trackers" in updates and updates["ble_trackers"] is not None:
             raw_ble = updates["ble_trackers"]
@@ -288,6 +294,10 @@ class PDDStore:
 
         await self.async_save()
         return copy.deepcopy(gs)
+
+    async def async_save_global_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
+        """Alias for async_update_global_settings."""
+        return await self.async_update_global_settings(updates)
 
     def get_daily_threads(self) -> dict[str, Any]:
         """Return cached daily thread metadata map."""
