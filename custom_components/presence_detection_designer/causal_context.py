@@ -266,6 +266,11 @@ def process_coordinator_actuator_event(coord: Any, event: Any) -> None:
             coord._eval_bayesian_and_update()
             coord.state_machine.handle_trigger(str(entity_id), True)
             coord._notify_connected_rooms_if_active()
+        elif res.get("action") == "off":
+            # A manual turn-off removes the actuator as an active trigger so the room
+            # can begin its vacating countdown instead of latching occupied forever.
+            coord._eval_bayesian_and_update()
+            coord.state_machine.handle_trigger(str(entity_id), False)
         coord.async_update_listeners()
     elif res.get("actor") == "automation":
         coord._eval_conditions_and_update()

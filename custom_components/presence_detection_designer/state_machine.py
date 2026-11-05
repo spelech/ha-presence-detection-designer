@@ -56,6 +56,12 @@ class RoomStateMachine:
         self.override = False
         self.last_llm_result: dict[str, Any] | None = None
 
+        # Vision AI corroboration of vacancy, used to suppress negative-space boosts
+        # and sealed-box re-latching until fresh human evidence arrives.
+        self.vision_confirmed_vacant: bool = False
+        # Timestamp from which a bounded sealed box has had zero sustaining evidence.
+        self._sealed_clear_since: float = 0.0
+
         # Bayesian state tracking (starts at 0.0% when vacant with no active evidence)
         self.bayesian_probability: float = 0.0
         self.bayesian_probability_pct: float = 0.0
@@ -176,6 +182,8 @@ class RoomStateMachine:
             self._active_triggers.add(entity_id)
             self.last_trigger_entity = entity_id
             self.pending_handoff_room = None
+            self.vision_confirmed_vacant = False
+            self._sealed_clear_since = 0.0
             self._activate_occupied_state()
         else:
             self._active_triggers.discard(entity_id)
@@ -189,6 +197,8 @@ class RoomStateMachine:
 
         if is_open:
             self._open_boundaries.add(entity_id)
+            self.vision_confirmed_vacant = False
+            self._sealed_clear_since = 0.0
             if self.is_present and self.mode == Mode.BOUNDED:
                 self.box_state = BoxState.OCCUPIED_UNSEALED
         else:
@@ -211,6 +221,7 @@ class RoomStateMachine:
             return
 
         if any_active:
+            self._sealed_clear_since = 0.0
             self._activate_occupied_state()
         else:
             self._check_begin_countdown_if_clear()
@@ -238,6 +249,7 @@ class RoomStateMachine:
 
         if is_occupied:
             self._bayesian_active = True
+            self._sealed_clear_since = 0.0
             if self.active_observations and not self._active_triggers:
                 self.last_trigger_entity = self.active_observations[0].get("entity_id")
             self._activate_occupied_state()
@@ -305,6 +317,32 @@ class RoomStateMachine:
         self._sync_timer_decay_probability()
         return None
 
+    def sealed_reverification_due(self, now: float, timeout: float) -> bool:
+        """Return True when a bounded sealed box warrants a Vision AI vacancy re-check.
+
+        The Wasp-in-a-Box holds presence while perimeter doors are closed even with no
+        motion (occupant sitting still). If no PIR, sustaining condition, or Bayesian
+        evidence has held the seal for `timeout` seconds, a bounded room may in fact be
+        empty but sealed, so a periodic Vision AI pass is requested to break the latch.
+        """
+        if not self.llm_enabled:
+            return False
+        if self.mode != Mode.BOUNDED or not self.has_boundaries:
+            return False
+        if self.override or not self.is_present or self.box_state != BoxState.OCCUPIED_SEALED:
+            return False
+        if self._active_triggers or self.active_conditions or self._bayesian_active:
+            self._sealed_clear_since = now
+            return False
+        if self._sealed_clear_since <= 0.0:
+            self._sealed_clear_since = now
+            return False
+        return (now - self._sealed_clear_since) >= max(1.0, float(timeout))
+
+    def mark_sealed_reverification(self, now: float) -> None:
+        """Reset the sealed re-verification watchdog clock after a Vision AI pass is requested."""
+        self._sealed_clear_since = now
+
     def handle_llm_result(self, person_detected: bool, reasoning: str = "") -> None:
         """Process result from LLM verification."""
         self.last_llm_result = {
@@ -314,11 +352,23 @@ class RoomStateMachine:
         }
 
         if person_detected:
+            self.vision_confirmed_vacant = False
+            self._sealed_clear_since = 0.0
+            if (
+                self.mode == Mode.BOUNDED
+                and self.has_boundaries
+                and self.box_state == BoxState.OCCUPIED_SEALED
+            ):
+                # Sealed box with a confirmed occupant: stay sealed and reset the
+                # re-verification watchdog instead of starting an open-room timer.
+                self.is_present = True
+                return
             self.is_present = True
             self.box_state = BoxState.TIMER_ACTIVE
             self.vacating_countdown = self.extend_timeout
             self._sync_timer_decay_probability()
         else:
+            self.vision_confirmed_vacant = True
             self.is_present = False
             self.box_state = BoxState.IDLE_CLEAR
             self.vacating_countdown = 0

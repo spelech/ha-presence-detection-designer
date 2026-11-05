@@ -139,6 +139,19 @@ def apply_compiled_topology_to_config(
             if str(t.get("entity_id") if isinstance(t, dict) else t) not in _STALE_ENTITY_IDS
         ]
 
+    # Raw Frigate optical pixel-luminance motion must never drive the Wasp trigger:
+    # it fires on lighting/cloud/shadow shifts and re-latches rooms with idle PIRs.
+    # Restrict it to a supporting Bayesian observation that requires corroboration.
+    from .spatial_catalog import FRIGATE_PIXEL_MOTION_ENTITIES
+
+    if updated.get(CONF_TRIGGER_ENTITIES):
+        updated[CONF_TRIGGER_ENTITIES] = [
+            t
+            for t in (updated.get(CONF_TRIGGER_ENTITIES, []) or [])
+            if str(t.get("entity_id") if isinstance(t, dict) else t)
+            not in FRIGATE_PIXEL_MOTION_ENTITIES
+        ]
+
     obs_list = [
         o
         for o in (updated.get(CONF_BAYESIAN_OBSERVATIONS, []) or [])
@@ -172,7 +185,11 @@ def apply_compiled_topology_to_config(
             continue
         item = dict(obs)
         eid = str(item.get("entity_id", ""))
-        if eid in spillover_eids:
+        if eid in FRIGATE_PIXEL_MOTION_ENTITIES:
+            item["preset"] = str(BayesianWeightPreset.SUPPORTING)
+            item["prob_given_true"] = 0.45
+            item["prob_given_false"] = 0.20
+        elif eid in spillover_eids:
             if eid in ("binary_sensor.nursery_person_occupancy", "binary_sensor.guest_room_motion"):
                 item["preset"] = str(BayesianWeightPreset.MODERATE)
                 item["prob_given_true"] = 0.72

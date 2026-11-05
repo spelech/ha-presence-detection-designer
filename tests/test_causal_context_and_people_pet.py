@@ -9,10 +9,12 @@ from custom_components.presence_detection_designer.causal_context import (
     classify_actuation_context,
 )
 from custom_components.presence_detection_designer.const import (
+    CONF_INACTIVITY_TIMEOUT,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
     DOMAIN,
+    BoxState,
 )
 from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
 from custom_components.presence_detection_designer.sensor import RoomOccupantSensor
@@ -184,3 +186,57 @@ def test_coordinator_google_assistant_manual_off_and_auto_latch_prevention():
     coord.async_update_listeners()
     assert bin_sensor.extra_state_attributes["manual_intent"] == "auto"
     assert bin_sensor.extra_state_attributes["manual_off_suppressed"] is False
+
+
+def test_manual_actuator_off_begins_vacating_countdown():
+    """Issue #17: manually turning off an actuator must begin the clearance countdown.
+
+    Regression: `process_coordinator_actuator_event` only handled `action == 'on'`, so
+    the actuator stayed in `_active_triggers` and the room latched occupied forever.
+    """
+    hass = MagicMock()
+    hass.bus = MagicMock()
+    hass.states = MagicMock()
+    hass.data = {DOMAIN: {}}
+
+    state_map = {"light.master_bath_vanity_lights": _make_state("on")}
+    hass.states.get = lambda eid: state_map.get(eid)
+
+    config = {
+        CONF_ROOM_NAME: "Master Bathroom",
+        CONF_TRIGGER_ENTITIES: ["light.master_bath_vanity_lights"],
+        CONF_INACTIVITY_TIMEOUT: 30,
+    }
+    coord = RoomPresenceCoordinator(hass, "master_bath_entry", config)
+
+    # 1. Physical wall switch turns the light ON -> room becomes occupied.
+    on_evt = MagicMock()
+    on_evt.data = {
+        "entity_id": "light.master_bath_vanity_lights",
+        "old_state": _make_state("off"),
+        "new_state": _make_state("on"),
+    }
+    coord._handle_actuator_change(on_evt)
+    assert coord.state_machine.is_present is True
+    assert "light.master_bath_vanity_lights" in coord.state_machine._active_triggers
+
+    # 2. Physical wall switch turns the light OFF -> actuator removed, countdown starts.
+    state_map["light.master_bath_vanity_lights"] = _make_state("off")
+    off_evt = MagicMock()
+    off_evt.data = {
+        "entity_id": "light.master_bath_vanity_lights",
+        "old_state": _make_state("on"),
+        "new_state": state_map["light.master_bath_vanity_lights"],
+    }
+    coord._handle_actuator_change(off_evt)
+
+    assert "light.master_bath_vanity_lights" not in coord.state_machine._active_triggers
+    assert coord.state_machine.box_state == BoxState.TIMER_ACTIVE
+    assert coord.state_machine.vacating_countdown == 30
+
+    # 3. Countdown elapses -> room clears and manual intent resets to 'auto'.
+    coord.state_machine.handle_tick(30)
+    coord.async_update_listeners()
+    assert coord.state_machine.is_present is False
+    assert coord.state_machine.box_state == BoxState.IDLE_CLEAR
+    assert coord.actuation_tracker.manual_intent == "auto"

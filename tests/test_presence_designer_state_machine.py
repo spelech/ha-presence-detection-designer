@@ -149,3 +149,69 @@ def test_manual_override():
     sm.set_override(False)
     assert sm.is_present is False
     assert sm.box_state == BoxState.IDLE_CLEAR
+
+
+def _sealed_garage_machine(llm_enabled: bool = True) -> RoomStateMachine:
+    """Return a bounded Garage machine sealed with one transient motion trigger."""
+    sm = RoomStateMachine(
+        name="Garage",
+        mode=Mode.BOUNDED,
+        grace_timeout=30,
+        llm_enabled=llm_enabled,
+    )
+    sm.handle_trigger("binary_sensor.garage_ring_motion", is_active=True)
+    sm.handle_boundary("binary_sensor.garage_side_door", is_open=False)
+    sm.handle_trigger("binary_sensor.garage_ring_motion", is_active=False)
+    return sm
+
+
+def test_sealed_box_llm_vacant_unseals_and_clears():
+    """Issue #18: Vision AI confirming vacant must unseal and clear an occupied_sealed room."""
+    sm = _sealed_garage_machine()
+    assert sm.box_state == BoxState.OCCUPIED_SEALED
+    assert sm.is_present is True
+
+    sm.handle_llm_result(False, "The garage contains a parked vehicle, no occupants visible.")
+
+    assert sm.is_present is False
+    assert sm.box_state == BoxState.IDLE_CLEAR
+    assert sm.vision_confirmed_vacant is True
+
+
+def test_sealed_box_llm_person_detected_stays_sealed():
+    """A positive Vision AI verdict on a sealed bounded room keeps it sealed (no open-room timer)."""
+    sm = _sealed_garage_machine()
+    sm.handle_llm_result(True, "Person standing at the workbench")
+
+    assert sm.is_present is True
+    assert sm.box_state == BoxState.OCCUPIED_SEALED
+    assert sm.vision_confirmed_vacant is False
+
+
+def test_sealed_reverification_due_after_quiet_timeout():
+    """Issue #18: a sealed room with no sustaining evidence becomes due for a Vision AI re-check."""
+    sm = _sealed_garage_machine()
+    assert sm.box_state == BoxState.OCCUPIED_SEALED
+
+    # First call arms the quiet clock; not due until the timeout elapses.
+    assert sm.sealed_reverification_due(1000.0, 300.0) is False
+    assert sm.sealed_reverification_due(1200.0, 300.0) is False
+    assert sm.sealed_reverification_due(1300.1, 300.0) is True
+
+
+def test_sealed_reverification_resets_on_human_evidence():
+    """Fresh PIR evidence resets the sealed re-verification quiet clock."""
+    sm = _sealed_garage_machine()
+    assert sm.sealed_reverification_due(1000.0, 300.0) is False
+    assert sm.sealed_reverification_due(1300.1, 300.0) is True
+
+    sm.handle_trigger("binary_sensor.garage_ring_motion", is_active=True)
+    sm.handle_trigger("binary_sensor.garage_ring_motion", is_active=False)
+
+    assert sm.sealed_reverification_due(1400.0, 300.0) is False
+
+
+def test_sealed_reverification_disabled_without_llm():
+    """Without Vision AI configured the sealed box is never re-verified (preserves stillness hold)."""
+    sm = _sealed_garage_machine(llm_enabled=False)
+    assert sm.sealed_reverification_due(1_000_000.0, 300.0) is False
