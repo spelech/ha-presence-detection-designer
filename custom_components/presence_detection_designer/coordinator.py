@@ -413,7 +413,10 @@ class RoomPresenceCoordinator:
         if not to_state or not entity_id:
             return
 
-        is_open = to_state.state in ("on", "open")
+        # Covers report transitional states. "opening" is still an opening edge;
+        # "closing"/"closed" are closed. The perimeter tracker also de-duplicates
+        # repeated same-state events so one garage cycle cannot count twice.
+        is_open = to_state.state in ("on", "open", "opening")
         self.state_machine.handle_boundary(entity_id, is_open)
         if self.hass:
             from .house_perimeter import get_house_perimeter_tracker
@@ -438,6 +441,10 @@ class RoomPresenceCoordinator:
 
     async def _async_handle_tick(self, _now: Any) -> None:
         """Execute 1 second tick."""
+        if self.hass:
+            from .house_perimeter import get_house_perimeter_tracker
+
+            get_house_perimeter_tracker(self.hass).reconcile_headcount()
         action = self.state_machine.handle_tick(1)
         if action == "REQUEST_LLM_VERIFY":
             if self._is_guest_mode_active():
