@@ -5,18 +5,140 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .bayesian_engine import build_effective_observations
+from .causal_context import resolve_room_actuator_entities
+from .config_translator import (
+    config_to_yaml_representations,
+    explain_config_in_natural_language,
+)
 from .const import (
+    CONF_AREA_ID,
+    CONF_BAYESIAN_ENABLED,
+    CONF_BAYESIAN_OBSERVATIONS,
+    CONF_BAYESIAN_PRIOR,
+    CONF_BAYESIAN_THRESHOLD,
+    CONF_BOUNDARY_ENTITIES,
+    CONF_CAMERA_ENTITY,
+    CONF_CAMERA_SNAPSHOT_URL,
+    CONF_CONNECTED_ROOMS,
+    CONF_EXTEND_TIMEOUT,
+    CONF_GRACE_TIMEOUT,
+    CONF_INACTIVITY_TIMEOUT,
     CONF_LLM_AGENT_ID,
     CONF_LLM_API_KEY,
     CONF_LLM_API_URL,
+    CONF_LLM_ENABLED,
     CONF_LLM_MODEL,
+    CONF_LLM_PROMPT,
     CONF_LLM_PROVIDER_TYPE,
+    CONF_MODE,
+    CONF_NOTIFY_ON_CLEARED,
+    CONF_NOTIFY_ON_OCCUPIED,
+    CONF_NOTIFY_SLACK,
+    CONF_ROOM_NAME,
+    CONF_SUSTAINING_CONDITIONS,
+    CONF_TRIGGER_ENTITIES,
     DATA_STORE,
+    DEFAULT_BAYESIAN_PRIOR,
+    DEFAULT_BAYESIAN_THRESHOLD,
+    DEFAULT_EXTEND_TIMEOUT,
+    DEFAULT_GRACE_TIMEOUT,
+    DEFAULT_INACTIVITY_TIMEOUT,
+    DEFAULT_LLM_PROMPT,
     DOMAIN,
     LLMProviderType,
+    Mode,
 )
+from .llm_verifier import LLMVerifier
+from .state_machine import RoomStateMachine
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def apply_coordinator_config_fields(
+    coord: Any, config: dict[str, Any], preserve_state: bool = False
+) -> None:
+    """Populate coordinator attributes and state machine from config dict."""
+    coord.config = dict(config)
+    coord.room_name = config.get(CONF_ROOM_NAME, "Room")
+    coord.area_id = config.get(CONF_AREA_ID)
+    coord.boundary_entities = list(config.get(CONF_BOUNDARY_ENTITIES, []) or [])
+    coord.trigger_entities = list(config.get(CONF_TRIGGER_ENTITIES, []) or [])
+    coord.monitored_actuator_entities = resolve_room_actuator_entities(coord.room_name, config)
+    coord.connected_rooms = [str(r) for r in (config.get(CONF_CONNECTED_ROOMS, []) or []) if r]
+    coord.conditions = list(config.get(CONF_SUSTAINING_CONDITIONS, []) or [])
+
+    coord.bayesian_enabled = bool(config.get(CONF_BAYESIAN_ENABLED, True))
+    coord.bayesian_prior = float(config.get(CONF_BAYESIAN_PRIOR, DEFAULT_BAYESIAN_PRIOR))
+    coord.bayesian_threshold = float(
+        config.get(CONF_BAYESIAN_THRESHOLD, DEFAULT_BAYESIAN_THRESHOLD)
+    )
+    coord.has_explicit_bayesian = bool(config.get(CONF_BAYESIAN_OBSERVATIONS))
+    coord.bayesian_observations = build_effective_observations(config)
+
+    mode_val = config.get(CONF_MODE)
+    if not mode_val or str(mode_val).lower() == "auto":
+        coord.mode = Mode.BOUNDED if len(coord.boundary_entities) > 0 else Mode.OPEN
+    else:
+        try:
+            coord.mode = Mode(mode_val)
+        except ValueError:
+            coord.mode = Mode.BOUNDED if len(coord.boundary_entities) > 0 else Mode.OPEN
+
+    raw_notify_slack = config.get(CONF_NOTIFY_SLACK)
+    coord.notify_slack = True if raw_notify_slack is None else bool(raw_notify_slack)
+    raw_notify_occ = config.get(CONF_NOTIFY_ON_OCCUPIED)
+    coord.notify_on_occupied = True if raw_notify_occ is None else bool(raw_notify_occ)
+    raw_notify_clr = config.get(CONF_NOTIFY_ON_CLEARED)
+    coord.notify_on_cleared = True if raw_notify_clr is None else bool(raw_notify_clr)
+
+    inactivity_timeout = int(config.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT))
+    grace_timeout = int(config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT))
+    extend_timeout = int(config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT))
+    llm_enabled = bool(config.get(CONF_LLM_ENABLED, False))
+
+    if preserve_state and coord.state_machine is not None:
+        coord.state_machine.name = coord.room_name
+        coord.state_machine.mode = coord.mode
+        coord.state_machine.has_boundaries = bool(coord.boundary_entities)
+        coord.state_machine.inactivity_timeout = inactivity_timeout
+        coord.state_machine.grace_timeout = grace_timeout
+        coord.state_machine.extend_timeout = extend_timeout
+        coord.state_machine.llm_enabled = llm_enabled
+        coord.state_machine.bayesian_prior = coord.bayesian_prior
+        coord.state_machine.bayesian_threshold = coord.bayesian_threshold
+        coord.state_machine._active_triggers.intersection_update(coord.trigger_entities)
+        coord.state_machine._open_boundaries.intersection_update(coord.boundary_entities)
+    else:
+        coord.state_machine = RoomStateMachine(
+            name=coord.room_name,
+            mode=coord.mode,
+            inactivity_timeout=inactivity_timeout,
+            grace_timeout=grace_timeout,
+            extend_timeout=extend_timeout,
+            llm_enabled=llm_enabled,
+            bayesian_prior=coord.bayesian_prior,
+            bayesian_threshold=coord.bayesian_threshold,
+            has_boundaries=bool(coord.boundary_entities),
+        )
+
+    llm_cfg = coord._resolve_global_llm_defaults(config)
+    coord.verifier = LLMVerifier(
+        hass=coord.hass,
+        provider_type=llm_cfg[CONF_LLM_PROVIDER_TYPE],
+        agent_id=llm_cfg[CONF_LLM_AGENT_ID],
+        api_url=llm_cfg[CONF_LLM_API_URL],
+        api_key=llm_cfg[CONF_LLM_API_KEY],
+        model=llm_cfg[CONF_LLM_MODEL],
+        prompt=config.get(CONF_LLM_PROMPT, DEFAULT_LLM_PROMPT),
+    )
+
+    coord.camera_entity = config.get(CONF_CAMERA_ENTITY)
+    coord.camera_snapshot_url = config.get(CONF_CAMERA_SNAPSHOT_URL)
+
+    coord.rule_guide = explain_config_in_natural_language(config)
+    coord.yaml_representations = config_to_yaml_representations(config)
+
 
 
 def resolve_global_llm_defaults(hass: Any, config: dict[str, Any]) -> dict[str, Any]:

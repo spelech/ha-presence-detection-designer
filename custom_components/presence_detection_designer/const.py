@@ -203,3 +203,20 @@ DEFAULT_PERIMETER_DOORS: dict[str, str] = {
     "binary_sensor.garage_side_door": "Garage",
     "cover.garage_door": "Garage",
 }
+
+# Exterior corroborating motion sensors required for perimeter exits.
+# Egress through a configured door must be corroborated by motion on one of
+# its exterior sensors (during door-open window or within corroboration window).
+CONF_EXIT_CORROBORATORS = "exit_corroborators"
+DEFAULT_EXIT_CORROBORATORS: dict[str, list[str]] = {
+    "binary_sensor.garage_side_door": [
+        "binary_sensor.driveway_spotlight_camera_motion",
+        "binary_sensor.driveway_camera_motion",
+        "binary_sensor.backyard_motion",
+    ],
+}
+
+# Window in seconds to wait for exterior corroboration after door closure
+CONF_EXIT_CORROBORATION_WINDOW = "exit_corroboration_window"
+DEFAULT_EXIT_CORROBORATION_WINDOW = 30.0
+

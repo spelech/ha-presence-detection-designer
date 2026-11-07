@@ -14,8 +14,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .const import (
+    CONF_EXIT_CORROBORATION_WINDOW,
+    CONF_EXIT_CORROBORATORS,
     DATA_STORE,
     DEFAULT_DOOR_DUPLICATE_WINDOW,
+    DEFAULT_EXIT_CORROBORATION_WINDOW,
+    DEFAULT_EXIT_CORROBORATORS,
     DEFAULT_INTERIOR_DOORS,
     DEFAULT_MAX_OCCUPANTS,
     DEFAULT_PERIMETER_DOORS,
@@ -59,12 +63,13 @@ class HousePerimeterTracker:
     def __init__(self, hass: Any) -> None:
         self.hass = hass
         self._listeners: list[Callable[[], None]] = []
+        self._unsub_trackers: list[Callable[[], None]] = []
         self._door_opened_ts: dict[str, float] = {}
         self._door_is_open: dict[str, bool] = {}
-        # Last counted vector per door, used to suppress duplicate transits.
         self._last_vector_by_door: dict[str, str] = {}
         self._last_vector_ts_by_door: dict[str, float] = {}
-        # Timestamp when every room was last observed clear (for stale-count reset).
+        self._exterior_last_active_ts: dict[str, float] = {}
+        self._pending_exit_corroborations: list[dict[str, Any]] = []
         self._all_clear_since: float | None = None
         self._last_reconcile_ts: float = 0.0
         self.state = HouseOccupancyState()
@@ -87,38 +92,65 @@ class HousePerimeterTracker:
             configured = DEFAULT_INTERIOR_DOORS
         return {str(entity_id) for entity_id in configured}
 
-    def _max_occupants(self) -> int:
-        """Return the automatic headcount ceiling."""
+    def _setting_num(self, key: str, default: float, is_int: bool = False) -> Any:
         try:
-            return max(0, int(self._global_settings().get("max_occupants", DEFAULT_MAX_OCCUPANTS)))
+            val = float(self._global_settings().get(key, default))
+            return max(0, int(val)) if is_int else max(0.0, val)
         except (TypeError, ValueError):
-            return DEFAULT_MAX_OCCUPANTS
+            return int(default) if is_int else float(default)
+
+    def _max_occupants(self) -> int:
+        return self._setting_num("max_occupants", DEFAULT_MAX_OCCUPANTS, is_int=True)
 
     def _stale_count_timeout(self) -> float:
-        """Return seconds of whole-house vacancy required to reset a stale count."""
-        try:
-            return max(
-                0.0,
-                float(
-                    self._global_settings().get("stale_count_timeout", DEFAULT_STALE_COUNT_TIMEOUT)
-                ),
-            )
-        except (TypeError, ValueError):
-            return float(DEFAULT_STALE_COUNT_TIMEOUT)
+        return self._setting_num("stale_count_timeout", DEFAULT_STALE_COUNT_TIMEOUT)
 
     def _door_duplicate_window(self) -> float:
-        """Return seconds within which a repeated same-vector door transit is ignored."""
-        try:
-            return max(
-                0.0,
-                float(
-                    self._global_settings().get(
-                        "door_duplicate_window", DEFAULT_DOOR_DUPLICATE_WINDOW
-                    )
-                ),
-            )
-        except (TypeError, ValueError):
-            return float(DEFAULT_DOOR_DUPLICATE_WINDOW)
+        return self._setting_num("door_duplicate_window", DEFAULT_DOOR_DUPLICATE_WINDOW)
+
+    def _exit_corroboration_window(self) -> float:
+        return self._setting_num(CONF_EXIT_CORROBORATION_WINDOW, DEFAULT_EXIT_CORROBORATION_WINDOW)
+
+    def get_configured_exit_corroborators(self) -> dict[str, list[str]]:
+        """Return dict of exit corroborator motion sensors per door entity."""
+        cfg = dict(DEFAULT_EXIT_CORROBORATORS)
+        custom = self._global_settings().get(CONF_EXIT_CORROBORATORS)
+        if isinstance(custom, dict) and custom:
+            for door, sensors in custom.items():
+                if isinstance(sensors, (list, tuple)):
+                    cfg[door] = [str(s) for s in sensors]
+        return cfg
+
+    def _find_active_corroborator(self, corroborators: list[str], since_ts: float) -> str | None:
+        """Return first active corroborator sensor if active since since_ts."""
+        for c in corroborators:
+            if self._exterior_last_active_ts.get(c, 0.0) >= since_ts:
+                return c
+            if self.hass and hasattr(self.hass, "states"):
+                st = self.hass.states.get(c)
+                if st and st.state in ("on", "open", "active", "detected"):
+                    return c
+        return None
+
+    def handle_exterior_state_change(
+        self, entity_id: str, is_active: bool, now_ts: float | None = None
+    ) -> list[DoorTransitionRecord]:
+        """Record exterior motion and resolve any pending exit corroborations."""
+        now = now_ts if now_ts is not None else time.time()
+        if is_active:
+            self._exterior_last_active_ts[entity_id] = now
+            return self.check_pending_exit_corroborations(now_ts=now)
+        return []
+
+    def check_pending_exit_corroborations(
+        self, now_ts: float | None = None
+    ) -> list[DoorTransitionRecord]:
+        """Check and resolve pending exit corroborations based on exterior motion or timeout."""
+        from .perimeter_helpers import resolve_pending_exit_corroborations
+
+        return resolve_pending_exit_corroborations(self, now_ts=now_ts)
+
+
 
     def _load_initial_count(self) -> None:
         """Load initial headcount from store global_settings if present."""
@@ -208,6 +240,31 @@ class HousePerimeterTracker:
             opened_at = now - 5.0  # reasonable default if we missed open
 
         vector, confidence, details = self._infer_door_vector(entity_id, host_room, opened_at, now)
+        if vector == "pending_egress":
+            corroborators = self.get_configured_exit_corroborators().get(entity_id, [])
+            self._pending_exit_corroborations.append({
+                "door_entity": entity_id,
+                "room_name": host_room,
+                "opened_ts": opened_at,
+                "closed_ts": now,
+                "deadline_ts": now + self._exit_corroboration_window(),
+                "corroborators": corroborators,
+            })
+            _LOGGER.info(
+                "House Perimeter: exit on %s (%s) held pending exterior corroboration",
+                entity_id,
+                host_room,
+            )
+            return DoorTransitionRecord(
+                entity_id=entity_id,
+                room_name=host_room,
+                opened_ts=opened_at,
+                closed_ts=now,
+                vector="pending_egress",
+                confidence=confidence,
+                details=details,
+            )
+
         if self._is_duplicate_vector(entity_id, vector, now):
             _LOGGER.debug("House Perimeter: suppressed duplicate %s on %s", vector, entity_id)
             vector = "ambiguous"
@@ -226,6 +283,19 @@ class HousePerimeterTracker:
         self._apply_vector(record)
         return record
 
+    def _vet_exit_vector(
+        self,
+        door_entity: str,
+        host_room: str,
+        opened_ts: float,
+        confidence: float,
+        details: str,
+    ) -> tuple[str, float, str]:
+        """Check if egress requires exterior corroboration before confirming."""
+        from .perimeter_helpers import vet_exit_vector
+
+        return vet_exit_vector(self, door_entity, host_room, opened_ts, confidence, details)
+
     def _infer_door_vector(
         self,
         door_entity: str,
@@ -234,59 +304,10 @@ class HousePerimeterTracker:
         closed_ts: float,
     ) -> tuple[str, float, str]:
         """Directionally vector door transit into ingress vs egress based on sensor timings."""
-        from .trajectory_validator import get_all_room_coordinators
+        from .perimeter_helpers import infer_door_vector
 
-        coords = {getattr(c, "room_name", ""): c for c in get_all_room_coordinators(self.hass)}
-        host_coord = coords.get(host_room)
+        return infer_door_vector(self, door_entity, host_room, opened_ts, closed_ts)
 
-        # Check if interior room motion occurred BEFORE door opened
-        interior_motion_before = False
-        if host_coord and hasattr(host_coord, "state_machine"):
-            sm = host_coord.state_machine
-            if sm._active_triggers:
-                interior_motion_before = True
-            elif sm.last_occupied_time and (opened_ts - sm.last_occupied_time) < 30.0:
-                interior_motion_before = True
-
-        # Check other occupied interior rooms
-        other_occupied = [
-            r
-            for r, c in coords.items()
-            if r != host_room and getattr(c, "state_machine", None) and c.state_machine.is_present
-        ]
-
-        # Case 1: The house is genuinely vacant -> any perimeter cycle is an arrival.
-        if self.state.count <= 0:
-            if not interior_motion_before:
-                return "ingress", 0.95, "Arrival from vacant state"
-            # Contradictory evidence: the count says vacant but someone just moved
-            # inside the host room. Treat the door cycle as an exit rather than
-            # inventing a second occupant.
-            return "egress", 0.60, f"Interior motion in {host_room} contradicts vacant count"
-
-        # Case 2: Interior motion in the host room before the door opened -> egress.
-        # This remains valid even when other rooms are occupied.
-        if interior_motion_before:
-            return "egress", 0.85, f"Occupant in {host_room} exited through perimeter"
-
-        # Case 3: No prior interior motion. An arrival is only plausible while the
-        # head count does not already exceed the rooms we can physically observe.
-        # This is the guard that stops a stuck door from inflating the count.
-        observed_rooms = len(other_occupied)
-        if host_coord and getattr(host_coord, "state_machine", None):
-            if host_coord.state_machine.is_present:
-                observed_rooms += 1
-        if observed_rooms > 0 and self.state.count <= observed_rooms:
-            return "ingress", 0.80, f"Arrival while {', '.join(other_occupied)} occupied"
-
-        if other_occupied:
-            return (
-                "ambiguous",
-                0.40,
-                f"Door cycled while headcount ({self.state.count}) exceeds observed rooms",
-            )
-
-        return "ambiguous", 0.50, f"Door cycled on {host_room} with neutral priors"
 
     def _is_duplicate_vector(self, entity_id: str, vector: str, now: float) -> bool:
         """Return True for a repeated same-direction transit of the same door."""
@@ -361,6 +382,7 @@ class HousePerimeterTracker:
           ``stale_count_timeout`` seconds (catches missed egress events).
         """
         now = now_ts if now_ts is not None else time.time()
+        self.check_pending_exit_corroborations(now_ts=now)
         if not force and (now - self._last_reconcile_ts) < 60.0:
             return False
         self._last_reconcile_ts = now
@@ -406,57 +428,17 @@ class HousePerimeterTracker:
         return changed
 
     def enforce_conservation_law(self, newly_occupied_room: str | None = None) -> list[str]:
-        """Enforce conservation law: total occupied rooms must not exceed house occupant count.
+        """Enforce conservation law: total occupied rooms must not exceed house occupant count."""
+        from .perimeter_helpers import enforce_conservation_law
 
-        When count == 0: all rooms are vacated immediately.
-        When count == 1: at most 1 room can be occupied; when a new room is occupied,
-        all other rooms without active triggers or high-confidence anchors are vacated.
-        Returns list of room names vacated by conservation law.
-        """
-        vacated_rooms: list[str] = []
-        if not self.hass or not hasattr(self.hass, "data") or not isinstance(self.hass.data, dict):
-            return vacated_rooms
+        return enforce_conservation_law(self, newly_occupied_room=newly_occupied_room)
 
-        store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if store is not None and hasattr(store, "global_settings"):
-            gs = store.global_settings or {}
-            if not gs.get("enable_conservation_law", True):
-                return vacated_rooms
+    async def async_setup(self) -> None:
+        """Subscribe to state changes on configured exterior corroborators."""
+        from .perimeter_helpers import async_setup_perimeter_tracking
 
-        from .trajectory_validator import get_all_room_coordinators
+        await async_setup_perimeter_tracking(self)
 
-        coordinators = get_all_room_coordinators(self.hass)
-        occupied = [c for c in coordinators if c.state_machine and c.state_machine.is_present]
-
-        # Case 0: House is vacant -> all rooms must be clear
-        if self.state.count == 0:
-            for c in occupied:
-                c.state_machine.force_clear()
-                vacated_rooms.append(c.room_name)
-                c.async_update_listeners()
-            return vacated_rooms
-
-        # Case 1: Single occupant -> at most 1 room occupied
-        if self.state.count == 1 and len(occupied) > 1:
-            target_keep = newly_occupied_room
-            if not target_keep:
-                # Keep room with most recent trigger or highest probability
-                target_keep = max(
-                    occupied,
-                    key=lambda c: getattr(c.state_machine, "last_occupied_time", 0.0),
-                ).room_name
-
-            for c in occupied:
-                if c.room_name != target_keep:
-                    # Clear timer and presence immediately
-                    c.state_machine.force_clear()
-                    c._last_adjacent_arrival = (
-                        f"Vacated by Conservation Law (single occupant in {target_keep})"
-                    )
-                    vacated_rooms.append(c.room_name)
-                    c.async_update_listeners()
-
-        return vacated_rooms
 
 
 def get_house_perimeter_tracker(hass: Any) -> HousePerimeterTracker:
@@ -467,4 +449,10 @@ def get_house_perimeter_tracker(hass: Any) -> HousePerimeterTracker:
     if tracker is None or not isinstance(tracker, HousePerimeterTracker):
         tracker = HousePerimeterTracker(hass)
         hass.data[DOMAIN]["_house_perimeter_tracker"] = tracker
+        if hasattr(hass, "async_create_task"):
+            coro = tracker.async_setup()
+            hass.async_create_task(coro)
+            if type(hass.async_create_task).__name__ == "MagicMock" and hasattr(coro, "close"):
+                coro.close()
     return tracker
+
