@@ -18,56 +18,13 @@ except Exception:  # noqa: BLE001
         return func
 
 
-from .bayesian_engine import (
-    BayesianEvaluation,
-    build_effective_observations,
-    config_to_yaml_representations,
-    explain_config_in_natural_language,
-)
+from .bayesian_engine import BayesianEvaluation
 from .causal_context import (
     RoomActuationTracker,
     process_coordinator_actuator_event,
-    resolve_room_actuator_entities,
 )
 from .condition_evaluator import evaluate_all, is_state_stale
-from .const import (
-    CONF_AREA_ID,
-    CONF_BAYESIAN_ENABLED,
-    CONF_BAYESIAN_OBSERVATIONS,
-    CONF_BAYESIAN_PRIOR,
-    CONF_BAYESIAN_THRESHOLD,
-    CONF_BOUNDARY_ENTITIES,
-    CONF_CAMERA_ENTITY,
-    CONF_CAMERA_SNAPSHOT_URL,
-    CONF_CONNECTED_ROOMS,
-    CONF_EXTEND_TIMEOUT,
-    CONF_GRACE_TIMEOUT,
-    CONF_INACTIVITY_TIMEOUT,
-    CONF_LLM_AGENT_ID,
-    CONF_LLM_API_KEY,
-    CONF_LLM_API_URL,
-    CONF_LLM_ENABLED,
-    CONF_LLM_MODEL,
-    CONF_LLM_PROMPT,
-    CONF_LLM_PROVIDER_TYPE,
-    CONF_MODE,
-    CONF_NOTIFY_ON_CLEARED,
-    CONF_NOTIFY_ON_OCCUPIED,
-    CONF_NOTIFY_SLACK,
-    CONF_ROOM_NAME,
-    CONF_SUSTAINING_CONDITIONS,
-    CONF_TRIGGER_ENTITIES,
-    DATA_STORE,
-    DEFAULT_BAYESIAN_PRIOR,
-    DEFAULT_BAYESIAN_THRESHOLD,
-    DEFAULT_EXTEND_TIMEOUT,
-    DEFAULT_GRACE_TIMEOUT,
-    DEFAULT_INACTIVITY_TIMEOUT,
-    DEFAULT_LLM_PROMPT,
-    DOMAIN,
-    BoxState,
-    Mode,
-)
+from .const import DATA_STORE, DOMAIN, BoxState
 from .coordinator_dispatch import (
     _safe_state_getter,
     async_send_coordinator_test_notification,
@@ -78,7 +35,7 @@ from .coordinator_dispatch import (
     record_coordinator_timeline_snapshot,
     resolve_global_llm_defaults,
 )
-from .llm_verifier import LLMVerifier
+from .coordinator_helpers import apply_coordinator_config_fields
 from .notifications import NotificationDispatcher
 from .state_machine import RoomStateMachine
 
@@ -125,89 +82,8 @@ class RoomPresenceCoordinator:
 
     def _apply_config_fields(self, config: dict[str, Any], preserve_state: bool = False) -> None:
         """Populate coordinator attributes and state machine from config dict."""
-        self.config = dict(config)
-        self.room_name: str = config.get(CONF_ROOM_NAME, "Room")
-        self.area_id: str | None = config.get(CONF_AREA_ID)
-        self.boundary_entities: list[str] = list(config.get(CONF_BOUNDARY_ENTITIES, []) or [])
-        self.trigger_entities: list[str] = list(config.get(CONF_TRIGGER_ENTITIES, []) or [])
-        self.monitored_actuator_entities = resolve_room_actuator_entities(self.room_name, config)
-        self.connected_rooms: list[str] = [
-            str(r) for r in (config.get(CONF_CONNECTED_ROOMS, []) or []) if r
-        ]
-        self.conditions: list[dict[str, Any]] = list(
-            config.get(CONF_SUSTAINING_CONDITIONS, []) or []
-        )
+        apply_coordinator_config_fields(self, config, preserve_state=preserve_state)
 
-        self.bayesian_enabled: bool = bool(config.get(CONF_BAYESIAN_ENABLED, True))
-        self.bayesian_prior: float = float(config.get(CONF_BAYESIAN_PRIOR, DEFAULT_BAYESIAN_PRIOR))
-        self.bayesian_threshold: float = float(
-            config.get(CONF_BAYESIAN_THRESHOLD, DEFAULT_BAYESIAN_THRESHOLD)
-        )
-        self.has_explicit_bayesian: bool = bool(config.get(CONF_BAYESIAN_OBSERVATIONS))
-        self.bayesian_observations: list[dict[str, Any]] = build_effective_observations(config)
-
-        mode_val = config.get(CONF_MODE)
-        if not mode_val or str(mode_val).lower() == "auto":
-            self.mode = Mode.BOUNDED if len(self.boundary_entities) > 0 else Mode.OPEN
-        else:
-            try:
-                self.mode = Mode(mode_val)
-            except ValueError:
-                self.mode = Mode.BOUNDED if len(self.boundary_entities) > 0 else Mode.OPEN
-
-        raw_notify_slack = config.get(CONF_NOTIFY_SLACK)
-        self.notify_slack: bool = True if raw_notify_slack is None else bool(raw_notify_slack)
-        raw_notify_occ = config.get(CONF_NOTIFY_ON_OCCUPIED)
-        self.notify_on_occupied: bool = True if raw_notify_occ is None else bool(raw_notify_occ)
-        raw_notify_clr = config.get(CONF_NOTIFY_ON_CLEARED)
-        self.notify_on_cleared: bool = True if raw_notify_clr is None else bool(raw_notify_clr)
-
-        inactivity_timeout = int(config.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT))
-        grace_timeout = int(config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT))
-        extend_timeout = int(config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT))
-        llm_enabled = bool(config.get(CONF_LLM_ENABLED, False))
-
-        if preserve_state and self.state_machine is not None:
-            self.state_machine.name = self.room_name
-            self.state_machine.mode = self.mode
-            self.state_machine.has_boundaries = bool(self.boundary_entities)
-            self.state_machine.inactivity_timeout = inactivity_timeout
-            self.state_machine.grace_timeout = grace_timeout
-            self.state_machine.extend_timeout = extend_timeout
-            self.state_machine.llm_enabled = llm_enabled
-            self.state_machine.bayesian_prior = self.bayesian_prior
-            self.state_machine.bayesian_threshold = self.bayesian_threshold
-            self.state_machine._active_triggers.intersection_update(self.trigger_entities)
-            self.state_machine._open_boundaries.intersection_update(self.boundary_entities)
-        else:
-            self.state_machine = RoomStateMachine(
-                name=self.room_name,
-                mode=self.mode,
-                inactivity_timeout=inactivity_timeout,
-                grace_timeout=grace_timeout,
-                extend_timeout=extend_timeout,
-                llm_enabled=llm_enabled,
-                bayesian_prior=self.bayesian_prior,
-                bayesian_threshold=self.bayesian_threshold,
-                has_boundaries=bool(self.boundary_entities),
-            )
-
-        llm_cfg = self._resolve_global_llm_defaults(config)
-        self.verifier = LLMVerifier(
-            hass=self.hass,
-            provider_type=llm_cfg[CONF_LLM_PROVIDER_TYPE],
-            agent_id=llm_cfg[CONF_LLM_AGENT_ID],
-            api_url=llm_cfg[CONF_LLM_API_URL],
-            api_key=llm_cfg[CONF_LLM_API_KEY],
-            model=llm_cfg[CONF_LLM_MODEL],
-            prompt=config.get(CONF_LLM_PROMPT, DEFAULT_LLM_PROMPT),
-        )
-
-        self.camera_entity = config.get(CONF_CAMERA_ENTITY)
-        self.camera_snapshot_url = config.get(CONF_CAMERA_SNAPSHOT_URL)
-
-        self.rule_guide = explain_config_in_natural_language(config)
-        self.yaml_representations = config_to_yaml_representations(config)
 
     async def async_apply_config_in_place(self, new_config: dict[str, Any]) -> None:
         """Hot-apply an updated configuration without losing active room presence or entity listeners."""
@@ -413,7 +289,10 @@ class RoomPresenceCoordinator:
         if not to_state or not entity_id:
             return
 
-        is_open = to_state.state in ("on", "open")
+        # Covers report transitional states. "opening" is still an opening edge;
+        # "closing"/"closed" are closed. The perimeter tracker also de-duplicates
+        # repeated same-state events so one garage cycle cannot count twice.
+        is_open = to_state.state in ("on", "open", "opening")
         self.state_machine.handle_boundary(entity_id, is_open)
         if self.hass:
             from .house_perimeter import get_house_perimeter_tracker
@@ -438,6 +317,10 @@ class RoomPresenceCoordinator:
 
     async def _async_handle_tick(self, _now: Any) -> None:
         """Execute 1 second tick."""
+        if self.hass:
+            from .house_perimeter import get_house_perimeter_tracker
+
+            get_house_perimeter_tracker(self.hass).reconcile_headcount()
         action = self.state_machine.handle_tick(1)
         if action == "REQUEST_LLM_VERIFY":
             if self._is_guest_mode_active():
@@ -448,9 +331,7 @@ class RoomPresenceCoordinator:
                 return
             self.async_update_listeners()
             await self.async_run_llm_verification()
-        elif action == "VACATED":
-            self.async_update_listeners()
-        elif self.state_machine.box_state == BoxState.TIMER_ACTIVE:
+        elif action == "VACATED" or self.state_machine.box_state == BoxState.TIMER_ACTIVE:
             self.async_update_listeners()
 
     async def async_run_llm_verification(self) -> None:
