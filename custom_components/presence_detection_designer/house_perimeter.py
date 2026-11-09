@@ -150,8 +150,6 @@ class HousePerimeterTracker:
 
         return resolve_pending_exit_corroborations(self, now_ts=now_ts)
 
-
-
     def _load_initial_count(self) -> None:
         """Load initial headcount from store global_settings if present."""
         if not self.hass or not hasattr(self.hass, "data") or not isinstance(self.hass.data, dict):
@@ -242,14 +240,16 @@ class HousePerimeterTracker:
         vector, confidence, details = self._infer_door_vector(entity_id, host_room, opened_at, now)
         if vector == "pending_egress":
             corroborators = self.get_configured_exit_corroborators().get(entity_id, [])
-            self._pending_exit_corroborations.append({
-                "door_entity": entity_id,
-                "room_name": host_room,
-                "opened_ts": opened_at,
-                "closed_ts": now,
-                "deadline_ts": now + self._exit_corroboration_window(),
-                "corroborators": corroborators,
-            })
+            self._pending_exit_corroborations.append(
+                {
+                    "door_entity": entity_id,
+                    "room_name": host_room,
+                    "opened_ts": opened_at,
+                    "closed_ts": now,
+                    "deadline_ts": now + self._exit_corroboration_window(),
+                    "corroborators": corroborators,
+                }
+            )
             _LOGGER.info(
                 "House Perimeter: exit on %s (%s) held pending exterior corroboration",
                 entity_id,
@@ -307,7 +307,6 @@ class HousePerimeterTracker:
         from .perimeter_helpers import infer_door_vector
 
         return infer_door_vector(self, door_entity, host_room, opened_ts, closed_ts)
-
 
     def _is_duplicate_vector(self, entity_id: str, vector: str, now: float) -> bool:
         """Return True for a repeated same-direction transit of the same door."""
@@ -440,7 +439,6 @@ class HousePerimeterTracker:
         await async_setup_perimeter_tracking(self)
 
 
-
 def get_house_perimeter_tracker(hass: Any) -> HousePerimeterTracker:
     """Retrieve or initialize singleton HousePerimeterTracker in hass.data."""
     if DOMAIN not in hass.data:
@@ -455,4 +453,3 @@ def get_house_perimeter_tracker(hass: Any) -> HousePerimeterTracker:
             if type(hass.async_create_task).__name__ == "MagicMock" and hasattr(coro, "close"):
                 coro.close()
     return tracker
-

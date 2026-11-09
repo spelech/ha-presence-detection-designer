@@ -102,9 +102,7 @@ def infer_door_vector(
     return "ambiguous", 0.50, f"Door cycled on {host_room} with neutral priors"
 
 
-def resolve_pending_exit_corroborations(
-    tracker: Any, now_ts: float | None = None
-) -> list[Any]:
+def resolve_pending_exit_corroborations(tracker: Any, now_ts: float | None = None) -> list[Any]:
     """Check and resolve pending exit corroborations based on exterior motion or timeout."""
     from .house_perimeter import DoorTransitionRecord
 
@@ -113,9 +111,7 @@ def resolve_pending_exit_corroborations(
     still_pending = []
 
     for p in tracker._pending_exit_corroborations:
-        corroborator = tracker._find_active_corroborator(
-            p["corroborators"], p["opened_ts"] - 15.0
-        )
+        corroborator = tracker._find_active_corroborator(p["corroborators"], p["opened_ts"] - 15.0)
         if corroborator:
             record = DoorTransitionRecord(
                 entity_id=p["door_entity"],
@@ -153,12 +149,14 @@ def resolve_pending_exit_corroborations(
     return resolved
 
 
-def enforce_conservation_law(
-    tracker: Any, newly_occupied_room: str | None = None
-) -> list[str]:
+def enforce_conservation_law(tracker: Any, newly_occupied_room: str | None = None) -> list[str]:
     """Enforce conservation law: total occupied rooms must not exceed house occupant count."""
     vacated_rooms: list[str] = []
-    if not tracker.hass or not hasattr(tracker.hass, "data") or not isinstance(tracker.hass.data, dict):
+    if (
+        not tracker.hass
+        or not hasattr(tracker.hass, "data")
+        or not isinstance(tracker.hass.data, dict)
+    ):
         return vacated_rooms
 
     store = tracker.hass.data.get(DOMAIN, {}).get(DATA_STORE)

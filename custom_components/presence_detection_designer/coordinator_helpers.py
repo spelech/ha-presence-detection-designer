@@ -140,7 +140,6 @@ def apply_coordinator_config_fields(
     coord.yaml_representations = config_to_yaml_representations(config)
 
 
-
 def resolve_global_llm_defaults(hass: Any, config: dict[str, Any]) -> dict[str, Any]:
     """Merge global_settings from PDDStore for any unset LLM fields."""
     gs: dict[str, Any] = {}

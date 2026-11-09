@@ -455,13 +455,17 @@ def test_side_door_exit_held_pending_without_exterior_motion(mock_hass):
 
     now = 1000.0
     tracker.handle_door_state_change("binary_sensor.garage_side_door", True, now_ts=now)
-    rec = tracker.handle_door_state_change("binary_sensor.garage_side_door", False, now_ts=now + 5.0)
+    rec = tracker.handle_door_state_change(
+        "binary_sensor.garage_side_door", False, now_ts=now + 5.0
+    )
 
     assert rec is not None
     assert rec.vector == "pending_egress"
     assert tracker.state.count == 1
     assert len(tracker._pending_exit_corroborations) == 1
-    assert tracker._pending_exit_corroborations[0]["door_entity"] == "binary_sensor.garage_side_door"
+    assert (
+        tracker._pending_exit_corroborations[0]["door_entity"] == "binary_sensor.garage_side_door"
+    )
 
 
 def test_side_door_exit_immediately_corroborated_by_driveway_motion(mock_hass):
@@ -475,9 +479,13 @@ def test_side_door_exit_immediately_corroborated_by_driveway_motion(mock_hass):
     tracker.set_headcount(1)
 
     now = 1000.0
-    tracker.handle_exterior_state_change("binary_sensor.driveway_spotlight_camera_motion", True, now_ts=now - 2.0)
+    tracker.handle_exterior_state_change(
+        "binary_sensor.driveway_spotlight_camera_motion", True, now_ts=now - 2.0
+    )
     tracker.handle_door_state_change("binary_sensor.garage_side_door", True, now_ts=now)
-    rec = tracker.handle_door_state_change("binary_sensor.garage_side_door", False, now_ts=now + 5.0)
+    rec = tracker.handle_door_state_change(
+        "binary_sensor.garage_side_door", False, now_ts=now + 5.0
+    )
 
     assert rec is not None
     assert rec.vector == "egress"
@@ -499,13 +507,17 @@ def test_side_door_exit_delayed_corroboration_by_backyard_motion(mock_hass):
 
     now = 1000.0
     tracker.handle_door_state_change("binary_sensor.garage_side_door", True, now_ts=now)
-    rec = tracker.handle_door_state_change("binary_sensor.garage_side_door", False, now_ts=now + 5.0)
+    rec = tracker.handle_door_state_change(
+        "binary_sensor.garage_side_door", False, now_ts=now + 5.0
+    )
 
     assert rec is not None and rec.vector == "pending_egress"
     assert tracker.state.count == 2
 
     # Backyard motion trips 15 seconds after door closed (within 30s window)
-    resolved = tracker.handle_exterior_state_change("binary_sensor.backyard_motion", True, now_ts=now + 20.0)
+    resolved = tracker.handle_exterior_state_change(
+        "binary_sensor.backyard_motion", True, now_ts=now + 20.0
+    )
 
     assert len(resolved) == 1
     assert resolved[0].vector == "egress"
@@ -527,7 +539,9 @@ def test_side_door_exit_corroboration_window_expires_as_ambiguous(mock_hass):
 
     now = 1000.0
     tracker.handle_door_state_change("binary_sensor.garage_side_door", True, now_ts=now)
-    rec = tracker.handle_door_state_change("binary_sensor.garage_side_door", False, now_ts=now + 5.0)
+    rec = tracker.handle_door_state_change(
+        "binary_sensor.garage_side_door", False, now_ts=now + 5.0
+    )
     assert rec is not None and rec.vector == "pending_egress"
     assert tracker.state.count == 2
 
@@ -545,9 +559,7 @@ def test_custom_exit_corroborators_and_window_config(mock_hass):
     _install_global_settings(
         mock_hass,
         **{
-            CONF_EXIT_CORROBORATORS: {
-                "binary_sensor.back_door": ["binary_sensor.patio_motion"]
-            },
+            CONF_EXIT_CORROBORATORS: {"binary_sensor.back_door": ["binary_sensor.patio_motion"]},
             CONF_EXIT_CORROBORATION_WINDOW: 15.0,
         },
     )
@@ -567,12 +579,16 @@ def test_custom_exit_corroborators_and_window_config(mock_hass):
     assert tracker.state.count == 1
 
     # Driveway motion does NOT corroborate back door
-    resolved_wrong = tracker.handle_exterior_state_change("binary_sensor.driveway_camera_motion", True, now_ts=now + 6.0)
+    resolved_wrong = tracker.handle_exterior_state_change(
+        "binary_sensor.driveway_camera_motion", True, now_ts=now + 6.0
+    )
     assert len(resolved_wrong) == 0
     assert tracker.state.count == 1
 
     # Patio motion corroborates back door
-    resolved = tracker.handle_exterior_state_change("binary_sensor.patio_motion", True, now_ts=now + 8.0)
+    resolved = tracker.handle_exterior_state_change(
+        "binary_sensor.patio_motion", True, now_ts=now + 8.0
+    )
     assert len(resolved) == 1
     assert resolved[0].vector == "egress"
     assert tracker.state.count == 0
@@ -595,4 +611,3 @@ def test_unconfigured_door_does_not_require_exterior_corroboration(mock_hass):
     assert rec is not None
     assert rec.vector == "egress"
     assert tracker.state.count == 0
-

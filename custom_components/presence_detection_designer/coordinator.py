@@ -84,7 +84,6 @@ class RoomPresenceCoordinator:
         """Populate coordinator attributes and state machine from config dict."""
         apply_coordinator_config_fields(self, config, preserve_state=preserve_state)
 
-
     async def async_apply_config_in_place(self, new_config: dict[str, Any]) -> None:
         """Hot-apply an updated configuration without losing active room presence or entity listeners."""
         self._unsubscribe_trackers()
