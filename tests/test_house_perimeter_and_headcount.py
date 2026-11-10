@@ -148,16 +148,18 @@ def test_conservation_law_vacant_clears_all_rooms(mock_hass):
         living_coord.entry_id: living_coord,
     }
 
-    # Simulate both rooms occupied
+    # Simulate both rooms occupied, then motion ceased (in countdown timer)
     office_coord.state_machine.handle_trigger("binary_sensor.office_motion", True)
     living_coord.state_machine.handle_trigger("binary_sensor.living_room_motion", True)
+    office_coord.state_machine.handle_trigger("binary_sensor.office_motion", False)
+    living_coord.state_machine.handle_trigger("binary_sensor.living_room_motion", False)
     assert office_coord.state_machine.is_present is True
     assert living_coord.state_machine.is_present is True
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(0)
 
-    # Both rooms must be forcefully cleared
+    # Both rooms without active triggers must be forcefully cleared
     assert office_coord.state_machine.is_present is False
     assert office_coord.state_machine.box_state == BoxState.IDLE_CLEAR
     assert living_coord.state_machine.is_present is False

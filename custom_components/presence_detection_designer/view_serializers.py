@@ -145,6 +145,8 @@ def serialize_room_coordinator(
         "bayesian_threshold": coordinator.bayesian_threshold,
         "bayesian_threshold_pct": round(coordinator.bayesian_threshold * 100.0, 1),
         "bayesian_occupied": sm.bayesian_occupied,
+        "_active_triggers": list(sm._active_triggers),
+        "_bayesian_active": sm._bayesian_active,
         "active_observations": sm.active_observations,
         "inactive_observations": sm.inactive_observations,
         "active_conditions": sm.active_conditions,

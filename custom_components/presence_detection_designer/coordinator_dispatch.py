@@ -469,7 +469,6 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
 
     if not is_active and getattr(coord, "_settling_entity", None) == entity_id:
         coord._settling_entity = None
-        return
 
     coord.state_machine.handle_trigger(entity_id, is_active)
     if is_active:

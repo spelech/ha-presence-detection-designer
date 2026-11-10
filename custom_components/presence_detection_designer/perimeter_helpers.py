@@ -162,7 +162,7 @@ def enforce_conservation_law(tracker: Any, newly_occupied_room: str | None = Non
     store = tracker.hass.data.get(DOMAIN, {}).get(DATA_STORE)
     if store is not None and hasattr(store, "global_settings"):
         gs = store.global_settings or {}
-        if not gs.get("enable_conservation_law", True):
+        if not gs.get("enable_conservation_law", False):
             return vacated_rooms
 
     from .trajectory_validator import get_all_room_coordinators
@@ -170,9 +170,16 @@ def enforce_conservation_law(tracker: Any, newly_occupied_room: str | None = Non
     coordinators = get_all_room_coordinators(tracker.hass)
     occupied = [c for c in coordinators if c.state_machine and c.state_machine.is_present]
 
-    # Case 0: House is vacant -> all rooms must be clear
+    # Case 0: House is vacant -> all rooms must be clear, UNLESS they have active physical triggers/conditions
     if tracker.state.count == 0:
         for c in occupied:
+            sm = getattr(c, "state_machine", None)
+            if sm and (sm._active_triggers or sm.active_conditions or getattr(sm, "_bayesian_active", False) or getattr(sm, "bayesian_occupied", False)):
+                _LOGGER.warning(
+                    "Conservation Law: Room %s has active physical presence/triggers while occupant count is 0; declining force-clear to prevent flapping",
+                    c.room_name,
+                )
+                continue
             c.state_machine.force_clear()
             vacated_rooms.append(c.room_name)
             c.async_update_listeners()
@@ -189,6 +196,14 @@ def enforce_conservation_law(tracker: Any, newly_occupied_room: str | None = Non
 
         for c in occupied:
             if c.room_name != target_keep:
+                sm = getattr(c, "state_machine", None)
+                if sm and (sm._active_triggers or sm.active_conditions or getattr(sm, "_bayesian_active", False) or getattr(sm, "bayesian_occupied", False)):
+                    _LOGGER.info(
+                        "Conservation Law: Room %s has active triggers; not vacating despite single-occupant target %s",
+                        c.room_name,
+                        target_keep,
+                    )
+                    continue
                 c.state_machine.force_clear()
                 c._last_adjacent_arrival = (
                     f"Vacated by Conservation Law (single occupant in {target_keep})"

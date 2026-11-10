@@ -206,12 +206,10 @@ class RoomPresenceCoordinator:
 
         for t_eid in self.trigger_entities:
             st_obj = _safe_state_getter(self.hass, t_eid)
-            if st_obj is not None:
-                if is_state_stale(st_obj, max_age_seconds=60.0):
-                    continue
+            is_active = False
+            if st_obj is not None and not is_state_stale(st_obj, max_age_seconds=60.0):
                 is_active = st_obj.state in ("on", "playing", "home")
-                if is_active:
-                    self.state_machine.handle_trigger(t_eid, True)
+            self.state_machine.handle_trigger(t_eid, is_active)
 
         self._eval_conditions_and_update()
 

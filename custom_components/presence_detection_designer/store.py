@@ -78,7 +78,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "transit_window_sec": 90.0,
     "settling_window_sec": 2.0,
     "house_occupant_count": 1,
-    "enable_conservation_law": True,
+    "enable_conservation_law": False,
     "perimeter_doors": dict(DEFAULT_PERIMETER_DOORS),
     "interior_doors": list(DEFAULT_INTERIOR_DOORS),
     "max_occupants": DEFAULT_MAX_OCCUPANTS,
