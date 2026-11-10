@@ -192,8 +192,9 @@ class RoomStateMachine:
             if self.is_present and self.mode == Mode.BOUNDED:
                 self.box_state = BoxState.OCCUPIED_UNSEALED
         else:
+            was_open = entity_id in self._open_boundaries
             self._open_boundaries.discard(entity_id)
-            if self.is_present and self.mode == Mode.BOUNDED:
+            if self.is_present and self.mode == Mode.BOUNDED and was_open:
                 if self._active_triggers or self.active_conditions or self._bayesian_active:
                     # Door closed with someone actively moving or sustained condition
                     self.box_state = BoxState.OCCUPIED_SEALED
@@ -242,9 +243,8 @@ class RoomStateMachine:
                 self.last_trigger_entity = self.active_observations[0].get("entity_id")
             self._activate_occupied_state()
         else:
-            was_active = self._bayesian_active
             self._bayesian_active = False
-            if was_active:
+            if self.is_present and self.box_state in (BoxState.OCCUPIED, BoxState.OCCUPIED_UNSEALED):
                 self._check_begin_countdown_if_clear()
             elif self.box_state == BoxState.TIMER_ACTIVE and not self.active_observations:
                 self._sync_timer_decay_probability()
@@ -253,15 +253,16 @@ class RoomStateMachine:
         """Zero out vacating countdown immediately if an adjacent connected room finds the occupant.
 
         Only clears when this room has NO active sensors/conditions and is purely waiting
-        on its inactivity/grace countdown (`BoxState.TIMER_ACTIVE`).
+        on its inactivity/grace countdown (`BoxState.TIMER_ACTIVE`) or has ceased motion in sealed box.
         """
         if self.override:
             return False
         if (
-            self.box_state == BoxState.TIMER_ACTIVE
+            self.box_state in (BoxState.TIMER_ACTIVE, BoxState.OCCUPIED_SEALED, BoxState.OCCUPIED, BoxState.OCCUPIED_UNSEALED)
             and not self._active_triggers
             and not self.active_conditions
             and not self._bayesian_active
+            and not self.bayesian_occupied
         ):
             self.vacating_countdown = 0
             self.is_present = False
@@ -285,6 +286,28 @@ class RoomStateMachine:
 
         if self.pending_handoff_room and (time.time() - self.pending_handoff_ts) > 45.0:
             self.pending_handoff_room = None
+
+        # Check if an occupied room has cleared its triggers and should begin counting down
+        if self.box_state in (BoxState.OCCUPIED, BoxState.OCCUPIED_UNSEALED):
+            if (
+                not self._active_triggers
+                and not self.active_conditions
+                and not self._bayesian_active
+                and not self.bayesian_occupied
+            ):
+                self._check_begin_countdown_if_clear()
+
+        # Check if an occupied sealed room has cleared its triggers and has LLM verification enabled
+        if self.box_state == BoxState.OCCUPIED_SEALED and self.llm_enabled:
+            if (
+                not self._active_triggers
+                and not self.active_conditions
+                and not self._bayesian_active
+                and not self.bayesian_occupied
+            ):
+                self.box_state = BoxState.TIMER_ACTIVE
+                self.vacating_countdown = self.inactivity_timeout
+                self._sync_timer_decay_probability()
 
         if self.box_state != BoxState.TIMER_ACTIVE:
             return None

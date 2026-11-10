@@ -149,3 +149,73 @@ def test_manual_override():
     sm.set_override(False)
     assert sm.is_present is False
     assert sm.box_state == BoxState.IDLE_CLEAR
+
+
+def test_occupied_room_starts_countdown_when_all_sensors_idle_on_tick():
+    """Verify that an OCCUPIED room with 0 active triggers and 0 conditions starts countdown on tick."""
+    sm = RoomStateMachine(name="Master Bedroom", mode=Mode.OPEN, inactivity_timeout=120)
+    # Simulate room triggered occupied
+    sm.handle_trigger("binary_sensor.pir", is_active=True)
+    assert sm.box_state == BoxState.OCCUPIED
+    assert sm.is_present is True
+
+    # Now sensor turns off, but simulate edge case where bayesian evaluation was already idle
+    sm._active_triggers.clear()
+    sm._bayesian_active = False
+    sm.bayesian_occupied = False
+    # Still in OCCUPIED
+    assert sm.box_state == BoxState.OCCUPIED
+
+    # On next 1-second tick, it must automatically start vacating countdown!
+    sm.handle_tick(1)
+    assert sm.box_state == BoxState.TIMER_ACTIVE
+    assert sm.vacating_countdown == 119
+    assert sm.is_present is True
+
+
+def test_bounded_room_with_llm_starts_countdown_when_sealed_motion_ceases():
+    """Verify that a sealed bounded room with camera LLM enabled counts down to verification when motion ceases."""
+    sm = RoomStateMachine(
+        name="Garage",
+        mode=Mode.BOUNDED,
+        inactivity_timeout=60,
+        has_boundaries=True,
+        llm_enabled=True,
+    )
+    # Door opens, motion trips, door closes while moving -> OCCUPIED_SEALED
+    sm.handle_boundary("cover.garage_door", is_open=True)
+    sm.handle_trigger("binary_sensor.garage_motion", is_active=True)
+    sm.handle_boundary("cover.garage_door", is_open=False)
+    assert sm.box_state == BoxState.OCCUPIED_SEALED
+
+    # Motion ceases
+    sm.handle_trigger("binary_sensor.garage_motion", is_active=False)
+    # Because LLM is enabled, it must begin counting down towards camera verification instead of staying sealed forever!
+    sm.handle_tick(1)
+    assert sm.box_state == BoxState.TIMER_ACTIVE
+    assert sm.vacating_countdown == 59
+
+
+def test_adjacent_handoff_clears_sealed_room_when_motion_ceased():
+    """Verify that walking into an adjacent room clears a sealed room when this room has no active triggers."""
+    sm = RoomStateMachine(
+        name="Master Bathroom",
+        mode=Mode.BOUNDED,
+        has_boundaries=True,
+        llm_enabled=False,
+    )
+    # Door opens, motion trips, door closes -> OCCUPIED_SEALED
+    sm.handle_boundary("binary_sensor.door", is_open=True)
+    sm.handle_trigger("binary_sensor.motion", is_active=True)
+    sm.handle_boundary("binary_sensor.door", is_open=False)
+    assert sm.box_state == BoxState.OCCUPIED_SEALED
+
+    # Person leaves bathroom into Bedroom: motion in bathroom ceases
+    sm.handle_trigger("binary_sensor.motion", is_active=False)
+
+    # Master Bedroom detects occupant -> adjacent handoff
+    cleared = sm.handle_adjacent_room_occupied("Master Bedroom")
+    assert cleared is True
+    assert sm.is_present is False
+    assert sm.box_state == BoxState.IDLE_CLEAR
+    assert sm.last_handoff_room == "Master Bedroom"
