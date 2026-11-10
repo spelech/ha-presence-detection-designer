@@ -22,6 +22,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._roomSearch = "";
     this._roomFilter = "all"; // "all" | "occupied" | "vacant"
     this._studioView = "design"; // "design" | "floorplan" | "statistics" | "replay"
+    this._editorTab = "setup"; // "setup" | "rules" | "diagnostics"
     this._showAdvanced = false;
     this._advTab = "tuning"; // "tuning" | "truth" | "yaml" | "revisions"
     this._rightTab = "yaml"; // "yaml" | "ha_yaml" | "nl" | "guide"
@@ -1833,6 +1834,40 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           color: #ffffff;
         }
 
+        .editor-tabs-bar {
+          display: flex;
+          gap: 8px;
+          border-bottom: 2px solid var(--ha-divider);
+          padding-bottom: 8px;
+          margin: 14px 0 16px 0;
+          flex-wrap: wrap;
+        }
+        .editor-tab-btn {
+          background: var(--ha-card, #ffffff);
+          border: 1px solid var(--ha-divider);
+          color: var(--ha-muted);
+          padding: 8px 16px;
+          border-radius: 8px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease-in-out;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .editor-tab-btn:hover {
+          color: var(--ha-text);
+          background: var(--ha-subtle);
+        }
+        .editor-tab-btn.active {
+          background: var(--ha-primary);
+          border-color: var(--ha-primary);
+          color: #ffffff;
+          font-weight: 600;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
         .code-area {
           width: 100%;
           min-height: 200px;
@@ -1964,13 +1999,24 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <!-- LEFT SIDEBAR: Simple Room List -->
           <div class="sidebar-card">
             <div class="sidebar-top">
-              <input
-                type="text"
-                class="input"
-                id="room-search-input"
-                placeholder="Search rooms..."
-                value="${this._escape(this._roomSearch)}"
-              />
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+                <input
+                  type="text"
+                  class="input"
+                  id="room-search-input"
+                  placeholder="Search rooms..."
+                  value="${this._escape(this._roomSearch)}"
+                  style="flex:1;"
+                />
+                <button
+                  class="btn btn-sm"
+                  id="btn-add-new-room"
+                  title="Create a new room in Home Assistant"
+                  style="white-space:nowrap;padding:4px 8px;font-size:12px;font-weight:600;"
+                >
+                  + Add Room
+                </button>
+              </div>
               <div class="seg-group">
                 ${[
                   { id: "all", label: "All" },
@@ -2234,6 +2280,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const occLabel = spEst.occupant_label || "";
     const occType = spEst.occupant_type || "";
     const isPinned = Boolean(spEst.definitive_tracker_pinned);
+    const editorTab = this._editorTab || "setup";
 
     return `
       <!-- 1. Compact Status & Action Header Card -->
@@ -2306,333 +2353,369 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         </div>
       </div>
 
-      <!-- 2. Card 1: Presence & Motion Sensors -->
-      <div class="ha-card">
-        <div class="card-head">
-          <div>
-            <h3 class="card-title">Presence &amp; Motion Sensors</h3>
-            <div class="card-desc">
-              Choose which sensors detect people in this room and whether they can trigger occupancy on their own or need confirmation from another sensor.
-            </div>
-          </div>
-        </div>
-
-        <div class="list-divider">
-          ${
-            observations.length === 0
-              ? `<div style="padding:16px 0;font-size:13px;color:var(--ha-muted);">No sensors added to this room yet.</div>`
-              : observations
-                  .map((obs, idx) => {
-                    const key = `${obs.entity_id}|${obs.label}`;
-                    const isAct = Boolean(activeMap[key] || activeMap[obs.entity_id]);
-                    const friendlyName =
-                      obs.label || entityNameMap[obs.entity_id] || obs.entity_id || "Sensor";
-                    const roleGroup = this._friendlyRoleGroup(obs);
-                    return `
-                    <div class="sensor-row" data-obs-idx="${idx}">
-                      <div class="sensor-info">
-                        <span class="status-dot ${isAct ? "occupied" : "clear"}" title="${
-                      isAct ? "Currently active" : "Clear"
-                    }"></span>
-                        <div style="min-width:0;">
-                          <div class="sensor-title">${this._escape(friendlyName)}</div>
-                          <div class="sensor-sub">${this._escape(obs.entity_id)}${
-                      obs.state && obs.state !== "on" ? ` = ${this._escape(obs.state)}` : ""
-                    }</div>
-                        </div>
-                      </div>
-
-                      <div>
-                        <select class="select obs-role-simple" data-idx="${idx}">
-                          <option value="primary" ${
-                            roleGroup === "primary" ? "selected" : ""
-                          }>Main room sensor (triggers room alone)</option>
-                          <option value="shared" ${
-                            roleGroup === "shared" ? "selected" : ""
-                          }>Shared / hallway view (needs confirmation)</option>
-                          <option value="keepalive" ${
-                            roleGroup === "keepalive" ? "selected" : ""
-                          }>Keep-alive only (extends timer once occupied)</option>
-                        </select>
-                      </div>
-
-                      <div style="text-align:right;">
-                        <button class="btn-danger-text obs-del" data-idx="${idx}">Remove</button>
-                      </div>
-                    </div>`;
-                  })
-                  .join("")
-          }
-        </div>
-
-        <div style="display:grid;grid-template-columns:minmax(0, 1.3fr) minmax(0, 1.2fr) auto;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--ha-divider);align-items:center;">
-          <input
-            type="text"
-            class="input"
-            id="simple-add-obs-entity"
-            list="pdd-all-entities"
-            placeholder="Add sensor (e.g. binary_sensor.living_room_motion)..."
-          />
-          <select class="select" id="simple-add-obs-role">
-            <option value="primary">Main room sensor (triggers room alone)</option>
-            <option value="shared" selected>Shared / hallway view (needs confirmation)</option>
-            <option value="keepalive">Keep-alive only (extends timer once occupied)</option>
-          </select>
-          <button class="btn" id="btn-simple-add-obs">+ Add Sensor</button>
-        </div>
+      <!-- 2. Editor Navigation Tabs -->
+      <div class="editor-tabs-bar">
+        <button class="editor-tab-btn ${editorTab === "setup" ? "active" : ""}" data-editor-tab="setup">
+          ⚙️ Quick Setup
+        </button>
+        <button class="editor-tab-btn ${editorTab === "rules" ? "active" : ""}" data-editor-tab="rules">
+          ⚡ Sensors &amp; Rules
+        </button>
+        <button class="editor-tab-btn ${editorTab === "diagnostics" ? "active" : ""}" data-editor-tab="diagnostics">
+          🔬 Advanced &amp; Diagnostics
+        </button>
       </div>
 
-      <!-- 3. Card 2: Keep Occupied While Active (TV, Media, Appliances) -->
-      <div class="ha-card">
-        <div class="card-head">
-          <div>
-            <h3 class="card-title">Keep Occupied While Active</h3>
-            <div class="card-desc">
-              Prevent the room from clearing when someone is sitting still watching TV, listening to music, or using a device.
-            </div>
-          </div>
-        </div>
-
-        <div class="list-divider">
-          ${
-            conditions.length === 0
-              ? `<div style="padding:14px 0;font-size:13px;color:var(--ha-muted);">No keep-occupied media or appliance rules configured.</div>`
-              : conditions
-                  .map(
-                    (c, idx) => `
-                  <div style="display:grid;grid-template-columns:minmax(0, 1.4fr) minmax(90px, 120px) minmax(90px, 120px) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--ha-divider);">
-                    <input
-                      type="text"
-                      class="input cond-field"
-                      data-idx="${idx}"
-                      data-key="entity_id"
-                      list="pdd-all-entities"
-                      placeholder="media_player.living_room_tv"
-                      value="${this._escape(c.entity_id || "")}"
-                    />
-                    <select class="select cond-field" data-idx="${idx}" data-key="operator">
-                      <option value="equals" ${(c.operator || "equals") === "equals" ? "selected" : ""}>is</option>
-                      <option value="not_equals" ${c.operator === "not_equals" ? "selected" : ""}>is not</option>
-                      <option value="greater_than" ${c.operator === "greater_than" ? "selected" : ""}>above</option>
-                      <option value="less_than" ${c.operator === "less_than" ? "selected" : ""}>below</option>
-                    </select>
-                    <input
-                      type="text"
-                      class="input cond-field"
-                      data-idx="${idx}"
-                      data-key="state"
-                      placeholder="playing"
-                      value="${this._escape(c.state ?? "playing")}"
-                    />
-                    <button class="btn-danger-text cond-del" data-idx="${idx}">Remove</button>
-                  </div>`
-                  )
-                  .join("")
-          }
-        </div>
-
-        <div style="margin-top:12px;">
-          <button class="btn btn-sm" id="btn-add-condition">+ Add Keep-Occupied Rule</button>
-        </div>
-      </div>
-
-      <!-- 4. Card 3: Clearing & Room Connections -->
-      <div class="ha-card">
-        <div class="card-head">
-          <div>
-            <h3 class="card-title">Clearing &amp; Room Connections</h3>
-            <div class="card-desc">
-              Control how long the room stays occupied after activity stops, and which neighboring rooms immediately clear the countdown when someone walks out.
-            </div>
-          </div>
-        </div>
-
-        <div class="list-divider">
-          <!-- Clear Delay -->
-          <div class="setting-row">
+      <!-- 3. Tab Contents -->
+      ${
+        editorTab === "setup"
+          ? `
+        <!-- Card: Room Identity & Area Assignment -->
+        <div class="ha-card">
+          <div class="card-head">
             <div>
-              <div class="setting-label">Clear after inactivity</div>
-              <div class="setting-help">How long to wait after all sensors stop seeing activity (${timeoutMinText}).</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;width:150px;">
-              <input
-                type="number"
-                class="input"
-                id="cfg-inactivity-timeout"
-                min="15"
-                max="3600"
-                step="15"
-                value="${timeoutSec}"
-              />
-              <span style="font-size:13px;color:var(--ha-muted);">sec</span>
+              <h3 class="card-title">Room Identity &amp; Area Assignment</h3>
+              <div class="card-desc">
+                Assign this room to a Home Assistant physical area and configure clear timeouts.
+              </div>
             </div>
           </div>
 
-          <!-- Adjacent Rooms Hand-Off -->
-          <div class="setting-row" style="align-items:flex-start;flex-direction:column;">
-            <div style="width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div class="list-divider">
+            <div class="setting-row">
               <div>
-                <div class="setting-label">Connected adjacent rooms</div>
+                <div class="setting-label">Home Assistant Area</div>
                 <div class="setting-help">
-                  If this room is only counting down and someone is detected in a connected room, clear the countdown immediately.
+                  Link this room to a physical area to align entity discovery, device placement, and automations.
                 </div>
               </div>
-              <button class="btn btn-sm" id="btn-open-floorplan-tab">Edit on Floorplan</button>
-            </div>
-
-            <div class="chip-row" style="margin-top:8px;">
-              ${
-                connectedRooms.length === 0
-                  ? `<span style="font-size:13px;color:var(--ha-muted);">No adjacent rooms linked.</span>`
-                  : connectedRooms
-                      .map(
-                        (rname, i) => `
-                      <span class="ha-chip">
-                        ${this._escape(rname)}
-                        <button class="del-connected-room" data-idx="${i}" title="Unlink room">×</button>
-                      </span>`
-                      )
-                      .join("")
-              }
-              <div style="display:inline-flex;gap:6px;align-items:center;">
-                <select class="select" id="add-connected-room-input" style="width:190px;padding:5px 10px;">
-                  <option value="">+ Link adjacent room...</option>
-                  ${rooms
-                    .filter(
-                      (r) =>
-                        r.room_name !== (cfg.room_name || selRoom.room_name) &&
-                        !connectedRooms.includes(r.room_name)
-                    )
+              <div style="min-width:220px;">
+                <select class="select" id="cfg-area-id">
+                  <option value="">— None —</option>
+                  ${areas
                     .map(
-                      (r) =>
-                        `<option value="${this._escape(r.room_name)}">${this._escape(
-                          r.room_name
-                        )}</option>`
+                      (a) =>
+                        `<option value="${this._escape(a.id)}" ${
+                          cfg.area_id === a.id ? "selected" : ""
+                        }>${this._escape(a.name)}</option>`
                     )
                     .join("")}
                 </select>
               </div>
             </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Clear after inactivity</div>
+                <div class="setting-help">How long to wait after all sensors stop seeing activity before clearing occupancy (${timeoutMinText}).</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;width:150px;">
+                <input
+                  type="number"
+                  class="input"
+                  id="cfg-inactivity-timeout"
+                  min="15"
+                  max="3600"
+                  step="15"
+                  value="${timeoutSec}"
+                />
+                <span style="font-size:13px;color:var(--ha-muted);">sec</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Room Connections & Boundaries -->
+        <div class="ha-card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">Room Connections &amp; Boundaries</h3>
+              <div class="card-desc">
+                Configure adjacent room hand-offs and door boundary latches to eliminate false clearing.
+              </div>
+            </div>
           </div>
 
-          <!-- Closed Door Latch Toggle -->
-          <div class="setting-row" style="align-items:flex-start;flex-direction:column;">
-            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-              <input
-                type="checkbox"
-                id="cfg-bounded-toggle"
-                ${hasDoorSeal ? "checked" : ""}
-                style="width:16px;height:16px;"
-              />
-              <div>
-                <div class="setting-label">Closed doors trap occupancy in this room</div>
-                <div class="setting-help">
-                  Enable only if every exit from this room has a physical door contact sensor.
+          <div class="list-divider">
+            <!-- Adjacent Rooms Hand-Off -->
+            <div class="setting-row" style="align-items:flex-start;flex-direction:column;">
+              <div style="width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                <div>
+                  <div class="setting-label">Connected adjacent rooms</div>
+                  <div class="setting-help">
+                    If this room is counting down and motion is detected in a connected room, clear this room immediately.
+                  </div>
+                </div>
+                <button class="btn btn-sm" id="btn-open-floorplan-tab">Edit on Floorplan</button>
+              </div>
+
+              <div class="chip-row" style="margin-top:8px;">
+                ${
+                  connectedRooms.length === 0
+                    ? `<span style="font-size:13px;color:var(--ha-muted);">No adjacent rooms linked.</span>`
+                    : connectedRooms
+                        .map(
+                          (rname, i) => `
+                        <span class="ha-chip">
+                          ${this._escape(rname)}
+                          <button class="del-connected-room" data-idx="${i}" title="Unlink room">×</button>
+                        </span>`
+                        )
+                        .join("")
+                }
+                <div style="display:inline-flex;gap:6px;align-items:center;">
+                  <select class="select" id="add-connected-room-input" style="width:190px;padding:5px 10px;">
+                    <option value="">+ Link adjacent room...</option>
+                    ${rooms
+                      .filter(
+                        (r) =>
+                          r.room_name !== (cfg.room_name || selRoom.room_name) &&
+                          !connectedRooms.includes(r.room_name)
+                      )
+                      .map(
+                        (r) =>
+                          `<option value="${this._escape(r.room_name)}">${this._escape(
+                            r.room_name
+                          )}</option>`
+                      )
+                      .join("")}
+                  </select>
                 </div>
               </div>
-            </label>
+            </div>
 
+            <!-- Closed Door Latch Toggle -->
+            <div class="setting-row" style="align-items:flex-start;flex-direction:column;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input
+                  type="checkbox"
+                  id="cfg-bounded-toggle"
+                  ${hasDoorSeal ? "checked" : ""}
+                  style="width:16px;height:16px;"
+                />
+                <div>
+                  <div class="setting-label">Closed doors trap occupancy in this room (Wasp-in-a-Box)</div>
+                  <div class="setting-help">
+                    Keep the room latched occupied when doors are closed. Enable only if every physical exit has a door contact sensor.
+                  </div>
+                </div>
+              </label>
+
+              ${
+                hasDoorSeal
+                  ? `
+                <div style="margin-top:12px;width:100%;padding:12px;background:var(--ha-subtle);border-radius:8px;border:1px solid var(--ha-divider);">
+                  <div style="font-size:12.5px;font-weight:500;margin-bottom:8px;">Door contact sensors for this room</div>
+                  <div class="chip-row" style="margin-bottom:10px;">
+                    ${
+                      boundaries.length === 0
+                        ? `<span style="font-size:12.5px;color:var(--ha-warning);">Add at least one door contact sensor below so the room can latch when closed.</span>`
+                        : boundaries
+                            .map(
+                              (eid, i) => `
+                            <span class="ha-chip">
+                              ${this._escape(eid)}
+                              <button class="del-boundary" data-idx="${i}">×</button>
+                            </span>`
+                            )
+                            .join("")
+                    }
+                  </div>
+                  <div style="display:flex;gap:8px;max-width:420px;">
+                    <input type="text" class="input" id="add-boundary-input" list="pdd-all-entities" placeholder="binary_sensor.room_door" />
+                    <button class="btn btn-sm" id="btn-add-boundary">Add Door</button>
+                  </div>
+                </div>`
+                  : ""
+              }
+            </div>
+          </div>
+        </div>
+      `
+          : editorTab === "rules"
+          ? `
+        <!-- Card 1: Presence & Motion Sensors -->
+        <div class="ha-card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">Presence &amp; Motion Sensors</h3>
+              <div class="card-desc">
+                Choose which sensors detect people in this room and assign whether they trigger alone or require corroboration.
+              </div>
+            </div>
+          </div>
+
+          <div class="list-divider">
             ${
-              hasDoorSeal
-                ? `
-              <div style="margin-top:12px;width:100%;padding:12px;background:var(--ha-subtle);border-radius:8px;border:1px solid var(--ha-divider);">
-                <div style="font-size:12.5px;font-weight:500;margin-bottom:8px;">Door contact sensors for this room</div>
-                <div class="chip-row" style="margin-bottom:10px;">
-                  ${
-                    boundaries.length === 0
-                      ? `<span style="font-size:12.5px;color:var(--ha-warning);">Add at least one door contact sensor below so the room can seal when closed.</span>`
-                      : boundaries
-                          .map(
-                            (eid, i) => `
-                          <span class="ha-chip">
-                            ${this._escape(eid)}
-                            <button class="del-boundary" data-idx="${i}">×</button>
-                          </span>`
-                          )
-                          .join("")
-                  }
-                </div>
-                <div style="display:flex;gap:8px;max-width:420px;">
-                  <input type="text" class="input" id="add-boundary-input" list="pdd-all-entities" placeholder="binary_sensor.room_door" />
-                  <button class="btn btn-sm" id="btn-add-boundary">Add Door</button>
-                </div>
-              </div>`
-                : ""
+              observations.length === 0
+                ? `<div style="padding:16px 0;font-size:13px;color:var(--ha-muted);">No sensors added to this room yet.</div>`
+                : observations
+                    .map((obs, idx) => {
+                      const key = `${obs.entity_id}|${obs.label}`;
+                      const isAct = Boolean(activeMap[key] || activeMap[obs.entity_id]);
+                      const friendlyName =
+                        obs.label || entityNameMap[obs.entity_id] || obs.entity_id || "Sensor";
+                      const roleGroup = this._friendlyRoleGroup(obs);
+                      return `
+                      <div class="sensor-row" data-obs-idx="${idx}">
+                        <div class="sensor-info">
+                          <span class="status-dot ${isAct ? "occupied" : "clear"}" title="${
+                        isAct ? "Currently active" : "Clear"
+                      }"></span>
+                          <div style="min-width:0;">
+                            <div class="sensor-title">${this._escape(friendlyName)}</div>
+                            <div class="sensor-sub">${this._escape(obs.entity_id)}${
+                        obs.state && obs.state !== "on" ? ` = ${this._escape(obs.state)}` : ""
+                      }</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <select class="select obs-role-simple" data-idx="${idx}">
+                            <option value="primary" ${
+                              roleGroup === "primary" ? "selected" : ""
+                            }>Main room sensor (triggers room alone)</option>
+                            <option value="shared" ${
+                              roleGroup === "shared" ? "selected" : ""
+                            }>Shared / hallway view (needs confirmation)</option>
+                            <option value="keepalive" ${
+                              roleGroup === "keepalive" ? "selected" : ""
+                            }>Keep-alive only (extends timer once occupied)</option>
+                          </select>
+                        </div>
+
+                        <div style="text-align:right;">
+                          <button class="btn-danger-text obs-del" data-idx="${idx}">Remove</button>
+                        </div>
+                      </div>`;
+                    })
+                    .join("")
             }
           </div>
-        </div>
-      </div>
 
-      <!-- 4b. Slack Presence Notifications Card -->
-      <div class="ha-card">
-        <div class="card-head">
-          <div>
-            <h3 class="card-title">Slack Presence Notifications</h3>
-            <div class="card-desc">
-              Send diagnostic alerts to <code>#presence-alerts</code> when presence transitions in this room.
-            </div>
+          <div style="display:grid;grid-template-columns:minmax(0, 1.3fr) minmax(0, 1.2fr) auto;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--ha-divider);align-items:center;">
+            <input
+              type="text"
+              class="input"
+              id="simple-add-obs-entity"
+              list="pdd-all-entities"
+              placeholder="Add sensor (e.g. binary_sensor.living_room_motion)..."
+            />
+            <select class="select" id="simple-add-obs-role">
+              <option value="primary">Main room sensor (triggers room alone)</option>
+              <option value="shared" selected>Shared / hallway view (needs confirmation)</option>
+              <option value="keepalive">Keep-alive only (extends timer once occupied)</option>
+            </select>
+            <button class="btn" id="btn-simple-add-obs">+ Add Sensor</button>
           </div>
         </div>
 
-        <div class="list-divider">
-          <div class="setting-row">
+        <!-- Card 2: Keep Occupied While Active (TV, Media, Appliances) -->
+        <div class="ha-card">
+          <div class="card-head">
             <div>
-              <div class="setting-label">Enable Slack alerts for this room</div>
-              <div class="setting-help">Send real-time cards detailing what sensor or rule caused this room to occupy or clear.</div>
-            </div>
-            <div>
-              <input type="checkbox" id="cfg-notify-slack" ${cfg.notify_slack ? "checked" : ""} style="width:16px;height:16px;" />
-            </div>
-          </div>
-
-          <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
-            <div>
-              <div class="setting-label">Transition Triggers</div>
-              <div class="setting-help">Choose which presence transitions trigger a Slack notification.</div>
-            </div>
-            <div style="display:flex;gap:18px;">
-              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-                <input type="checkbox" id="cfg-notify-on-occupied" ${cfg.notify_on_occupied !== false ? "checked" : ""} />
-                Alert on Occupied
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-                <input type="checkbox" id="cfg-notify-on-cleared" ${cfg.notify_on_cleared !== false ? "checked" : ""} />
-                Alert on Cleared
-              </label>
+              <h3 class="card-title">Keep Occupied While Active</h3>
+              <div class="card-desc">
+                Prevent the room from clearing when someone is sitting still watching TV, listening to music, or using a device.
+              </div>
             </div>
           </div>
 
-          <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
+          <div class="list-divider">
+            ${
+              conditions.length === 0
+                ? `<div style="padding:14px 0;font-size:13px;color:var(--ha-muted);">No keep-occupied media or appliance rules configured.</div>`
+                : conditions
+                    .map(
+                      (c, idx) => `
+                    <div style="display:grid;grid-template-columns:minmax(0, 1.4fr) minmax(90px, 120px) minmax(90px, 120px) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--ha-divider);">
+                      <input
+                        type="text"
+                        class="input cond-field"
+                        data-idx="${idx}"
+                        data-key="entity_id"
+                        list="pdd-all-entities"
+                        placeholder="media_player.living_room_tv"
+                        value="${this._escape(c.entity_id || "")}"
+                      />
+                      <select class="select cond-field" data-idx="${idx}" data-key="operator">
+                        <option value="equals" ${(c.operator || "equals") === "equals" ? "selected" : ""}>is</option>
+                        <option value="not_equals" ${c.operator === "not_equals" ? "selected" : ""}>is not</option>
+                        <option value="greater_than" ${c.operator === "greater_than" ? "selected" : ""}>above</option>
+                        <option value="less_than" ${c.operator === "less_than" ? "selected" : ""}>below</option>
+                      </select>
+                      <input
+                        type="text"
+                        class="input cond-field"
+                        data-idx="${idx}"
+                        data-key="state"
+                        placeholder="playing"
+                        value="${this._escape(c.state ?? "playing")}"
+                      />
+                      <button class="btn-danger-text cond-del" data-idx="${idx}">Remove</button>
+                    </div>`
+                    )
+                    .join("")
+            }
+          </div>
+
+          <div style="margin-top:12px;">
+            <button class="btn btn-sm" id="btn-add-condition">+ Add Keep-Occupied Rule</button>
+          </div>
+        </div>
+
+        <!-- Card 3: Slack Presence Notifications -->
+        <div class="ha-card">
+          <div class="card-head">
             <div>
-              <div class="setting-label">Attach Camera Snapshot for Detection Review</div>
-              <div class="setting-help">Attach Frigate detection capture to alert card to audit light vs human/pet (defaults to OFF).</div>
+              <h3 class="card-title">Slack Presence Notifications</h3>
+              <div class="card-desc">
+                Send diagnostic alerts to <code>#presence-alerts</code> when presence transitions in this room.
+              </div>
             </div>
-            <div>
-              <input type="checkbox" id="cfg-include-camera-snapshot" ${cfg.include_camera_snapshot ? "checked" : ""} style="width:16px;height:16px;" />
+          </div>
+
+          <div class="list-divider">
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Enable Slack alerts for this room</div>
+                <div class="setting-help">Send real-time cards detailing what sensor or rule caused this room to occupy or clear.</div>
+              </div>
+              <div>
+                <input type="checkbox" id="cfg-notify-slack" ${cfg.notify_slack ? "checked" : ""} style="width:16px;height:16px;" />
+              </div>
+            </div>
+
+            <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
+              <div>
+                <div class="setting-label">Transition Triggers</div>
+                <div class="setting-help">Choose which presence transitions trigger a Slack notification.</div>
+              </div>
+              <div style="display:flex;gap:18px;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                  <input type="checkbox" id="cfg-notify-on-occupied" ${cfg.notify_on_occupied !== false ? "checked" : ""} />
+                  Alert on Occupied
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                  <input type="checkbox" id="cfg-notify-on-cleared" ${cfg.notify_on_cleared !== false ? "checked" : ""} />
+                  Alert on Cleared
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
+              <div>
+                <div class="setting-label">Attach Camera Snapshot for Detection Review</div>
+                <div class="setting-help">Attach Frigate detection capture to alert card to audit light vs human/pet (defaults to OFF).</div>
+              </div>
+              <div>
+                <input type="checkbox" id="cfg-include-camera-snapshot" ${cfg.include_camera_snapshot ? "checked" : ""} style="width:16px;height:16px;" />
+              </div>
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- 5. Progressive Disclosure: Collapsible Advanced Settings & Diagnostics -->
-      <div class="advanced-toggle-bar" id="btn-toggle-advanced">
-        <div>
-          <div style="font-size:14px;font-weight:500;color:var(--ha-text);">
-            ${this._showAdvanced ? "▾ Hide Advanced Settings & Diagnostics" : "▸ Advanced Settings & Diagnostics"}
-          </div>
-          <div style="font-size:12.5px;color:var(--ha-muted);margin-top:2px;">
-            Bayesian weights, AI camera vision check, sensor combination truth table, YAML editor, and revision history
-          </div>
-        </div>
-        <span style="font-size:12.5px;color:var(--ha-primary-text);font-weight:500;">
-          ${this._showAdvanced ? "Collapse" : "Expand"}
-        </span>
-      </div>
-
-      ${
-        this._showAdvanced
-          ? this._renderAdvancedDrawer(selRoom, cfg, prev, areas, presets, activeMap)
-          : ""
+      `
+          : this._renderAdvancedDrawer(selRoom, cfg, prev, areas, presets, activeMap)
       }
     `;
   }
@@ -4508,6 +4591,24 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           this.render();
         }
       });
+    });
+
+    // Editor 3-tab navigation
+    root.querySelectorAll(".editor-tab-btn[data-editor-tab], .sub-tab[data-editor-tab]").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._editorTab = el.getAttribute("data-editor-tab") || "setup";
+        this.render();
+      });
+    });
+
+    // Sidebar: Add Room button
+    root.querySelector("#btn-add-new-room")?.addEventListener("click", () => {
+      const url = "/config/integrations/dashboard/add?domain=presence_detection_designer";
+      if (window.top && window.top.location) {
+        window.top.location.href = url;
+      } else {
+        window.location.href = url;
+      }
     });
 
     // Advanced drawer toggle & tabs
