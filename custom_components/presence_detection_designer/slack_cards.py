@@ -14,6 +14,14 @@ from homeassistant.core import HomeAssistant
 _LOGGER = logging.getLogger(__name__)
 
 
+def _mrkdwn(text: str) -> dict[str, str]:
+    return {"type": "mrkdwn", "text": text}
+
+
+def _section(text: str) -> dict[str, Any]:
+    return {"type": "section", "text": _mrkdwn(text)}
+
+
 def build_transition_card_blocks(
     attribution: Any,
     verbosity: str = "compact",
@@ -31,36 +39,44 @@ def build_transition_card_blocks(
     if is_occ:
         ctx.extend(
             [
-                {"type": "mrkdwn", "text": f"*Confidence:* {attribution.confidence_pct:.0f}%"},
-                {"type": "mrkdwn", "text": f"*Threshold:* {attribution.threshold_pct:.0f}%"},
+                _mrkdwn(f"*Confidence:* {attribution.confidence_pct:.0f}%"),
+                _mrkdwn(f"*Threshold:* {attribution.threshold_pct:.0f}%"),
             ]
         )
         if attribution.arrival_context:
-            ctx.append({"type": "mrkdwn", "text": f"*From:* {attribution.arrival_context}"})
+            ctx.append(_mrkdwn(f"*From:* {attribution.arrival_context}"))
     else:
         if attribution.duration_occupied_str:
-            ctx.append({"type": "mrkdwn", "text": f"*Occupied for:* {attribution.duration_occupied_str}"})
-        ctx.append({"type": "mrkdwn", "text": f"*Final Belief:* {attribution.confidence_pct:.0f}%"})
+            ctx.append(_mrkdwn(f"*Occupied for:* {attribution.duration_occupied_str}"))
+        ctx.append(_mrkdwn(f"*Final Belief:* {attribution.confidence_pct:.0f}%"))
     if ctx:
         blocks.append({"type": "context", "elements": ctx[:10]})
 
-    fields: list[dict[str, Any]] = [{"type": "mrkdwn", "text": f"*Driver:*\n`{attribution.primary_driver}`"}]
+    fields: list[dict[str, Any]] = [_mrkdwn(f"*Driver:*\n`{attribution.primary_driver}`")]
     if is_occ:
         if attribution.active_sensors:
             s_str = ", ".join(f"`{s.split('.')[-1]}`" for s in attribution.active_sensors[:3])
-            fields.append({"type": "mrkdwn", "text": f"*Active Sensors:*\n{s_str}"})
+            fields.append(_mrkdwn(f"*Active Sensors:*\n{s_str}"))
         if attribution.sustaining_conditions:
-            fields.append({"type": "mrkdwn", "text": f"*Sustaining:*\n{', '.join(f'`{s}`' for s in attribution.sustaining_conditions[:2])}"})
+            fields.append(
+                _mrkdwn(
+                    f"*Sustaining:*\n{', '.join(f'`{s}`' for s in attribution.sustaining_conditions[:2])}"
+                )
+            )
         if attribution.inferred_location:
-            fields.append({"type": "mrkdwn", "text": f"*Location:*\n{attribution.inferred_location}"})
+            fields.append(_mrkdwn(f"*Location:*\n{attribution.inferred_location}"))
         if attribution.negative_space_evidence:
-            fields.append({"type": "mrkdwn", "text": f"*Exclusion:*\n{attribution.negative_space_evidence[0][:80]}"})
+            fields.append(_mrkdwn(f"*Exclusion:*\n{attribution.negative_space_evidence[0][:80]}"))
     else:
-        fields.append({"type": "mrkdwn", "text": f"*Clearance:*\n{attribution.primary_driver}"})
+        fields.append(_mrkdwn(f"*Clearance:*\n{attribution.primary_driver}"))
 
     sec: dict[str, Any] = {"type": "section", "fields": fields[:10]}
     if include_snapshot and snapshot_url:
-        sec["accessory"] = {"type": "image", "image_url": snapshot_url, "alt_text": f"{attribution.room_name} snapshot"}
+        sec["accessory"] = {
+            "type": "image",
+            "image_url": snapshot_url,
+            "alt_text": f"{attribution.room_name} snapshot",
+        }
     blocks.append(sec)
     if str(verbosity).lower().strip() == "full":
         blocks.append({"type": "divider"})
@@ -79,7 +95,14 @@ def build_daily_digest_blocks(
 ) -> list[dict[str, Any]]:
     """Build the main top-level daily dashboard message for Slack."""
     blocks: list[dict[str, Any]] = [
-        {"type": "header", "text": {"type": "plain_text", "text": f"🏠 Presence Dashboard — {date_display}"[:150], "emoji": True}}
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"🏠 Presence Dashboard — {date_display}"[:150],
+                "emoji": True,
+            },
+        }
     ]
     if occupied_rooms:
         lines = []
@@ -92,21 +115,27 @@ def build_daily_digest_blocks(
         occ_text = "_⚪ All rooms currently clear._"
 
     clear_text = ", ".join(clear_rooms[:20]) if clear_rooms else "_None_"
-    blocks.extend([
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Currently Occupied ({len(occupied_rooms)}):*\n{occ_text}"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Cleared ({len(clear_rooms)}):*\n{clear_text}"}},
-        {"type": "divider"},
-    ])
+    blocks.extend(
+        [
+            _section(f"*Currently Occupied ({len(occupied_rooms)}):*\n{occ_text}"),
+            _section(f"*Cleared ({len(clear_rooms)}):*\n{clear_text}"),
+            {"type": "divider"},
+        ]
+    )
     ctx = [
-        {"type": "mrkdwn", "text": f"⏱️ *Updated:* {last_updated_time}"},
-        {"type": "mrkdwn", "text": f"🔄 *Today's Transitions:* {transition_count}"},
+        _mrkdwn(f"⏱️ *Updated:* {last_updated_time}"),
+        _mrkdwn(f"🔄 *Today's Transitions:* {transition_count}"),
     ]
     if house_headcount is not None:
         mode_str = f" ({occupancy_mode.replace('_', ' ')})" if occupancy_mode else ""
         icon = "👤" if house_headcount == 1 else ("👥" if house_headcount > 1 else "⚪")
-        ctx.append({"type": "mrkdwn", "text": f"{icon} *Headcount:* {house_headcount}{mode_str}"})
-    subtext = "🧵 _Transitions logged below_" if notify_transitions else "⚡ _Live dashboard • Transitions muted_"
-    ctx.append({"type": "mrkdwn", "text": subtext})
+        ctx.append(_mrkdwn(f"{icon} *Headcount:* {house_headcount}{mode_str}"))
+    subtext = (
+        "🧵 _Transitions logged below_"
+        if notify_transitions
+        else "⚡ _Live dashboard • Transitions muted_"
+    )
+    ctx.append(_mrkdwn(subtext))
     blocks.append({"type": "context", "elements": ctx[:10]})
     return blocks
 
@@ -162,23 +191,32 @@ class SlackDailyThreadManager:
         """Extract Slack bot API token from Home Assistant config entries or storage."""
         if self._cached_token:
             return self._cached_token
-        if hass and hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_entries"):
-            try:
-                for entry in hass.config_entries.async_entries("slack") or []:
-                    cand = getattr(entry, "data", {}).get("api_key")
-                    if isinstance(cand, str) and cand.startswith("xox"):
-                        self._cached_token = cand
-                        return cand
-            except Exception:  # noqa: BLE001
-                pass
+        if (
+            hass
+            and hasattr(hass, "config_entries")
+            and hasattr(hass.config_entries, "async_entries")
+        ):
+            for entry in hass.config_entries.async_entries("slack") or []:
+                cand = getattr(entry, "data", {}).get("api_key")
+                if isinstance(cand, str) and cand.startswith("xox"):
+                    self._cached_token = cand
+                    return cand
 
-        for path in ("/config/.storage/core.config_entries", "/ha/823SCD-Docker/.storage/core.config_entries"):
+        for path in (
+            "/config/.storage/core.config_entries",
+            "/ha/823SCD-Docker/.storage/core.config_entries",
+        ):
             try:
                 import os
+
                 if os.path.isfile(path):
                     with open(path, encoding="utf-8") as f:
                         for entry in json.load(f).get("data", {}).get("entries", []):
-                            cand = entry.get("data", {}).get("api_key") if entry.get("domain") == "slack" else None
+                            cand = (
+                                entry.get("data", {}).get("api_key")
+                                if entry.get("domain") == "slack"
+                                else None
+                            )
                             if isinstance(cand, str) and cand.startswith("xox"):
                                 self._cached_token = cand
                                 return cand
@@ -241,7 +279,11 @@ class SlackDailyThreadManager:
             from .const import DATA_STORE, DOMAIN
 
             store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
-            if store and hasattr(store, "async_save_daily_thread") and hasattr(hass, "async_create_task"):
+            if (
+                store
+                and hasattr(store, "async_save_daily_thread")
+                and hasattr(hass, "async_create_task")
+            ):
                 coro = store.async_save_daily_thread(channel_id, entry)
                 hass.async_create_task(coro)
                 if type(hass.async_create_task).__name__ == "MagicMock" and hasattr(coro, "close"):
@@ -271,11 +313,9 @@ class SlackDailyThreadManager:
                 raw_occ = getattr(coord, "_occupied_start_time", None)
                 if not isinstance(raw_occ, (int, float)):
                     raw_occ = getattr(coord.state_machine, "last_occupied_time", None)
-                last_occ = float(raw_occ) if isinstance(raw_occ, (int, float)) else None
-                if last_occ and format_duration_fn:
-                    dur_str = format_duration_fn(time.time() - last_occ)
+                if isinstance(raw_occ, (int, float)) and format_duration_fn:
+                    dur_str = format_duration_fn(time.time() - float(raw_occ))
 
-                driver = None
                 sm = coord.state_machine
                 if (
                     getattr(sm, "box_state", None) == "timer_active"
@@ -292,7 +332,7 @@ class SlackDailyThreadManager:
                     driver = coord.last_spatial_estimate.get(
                         "occupant_label"
                     ) or coord.last_spatial_estimate.get("spatial_method")
-                if not driver:
+                else:
                     driver = "Sensor Fusion"
 
                 occupied.append({"name": name, "duration_str": dur_str, "driver": driver})
@@ -305,27 +345,25 @@ class SlackDailyThreadManager:
 
     def _get_extra_status(self, hass: Any) -> tuple[int | None, str | None, bool]:
         """Retrieve house headcount, mode, and notify_transitions flag."""
-        headcount = None
-        mode = None
-        notify_trans = False
+        headcount, mode, notify_trans = None, None, False
         if not hass or not hasattr(hass, "data") or not isinstance(hass.data, dict):
             return headcount, mode, notify_trans
-
-        from .const import DATA_STORE, DOMAIN
 
         try:
             from .house_perimeter import get_house_perimeter_tracker
 
             tracker = get_house_perimeter_tracker(hass)
-            headcount = tracker.state.count
-            mode = tracker.state.mode
+            headcount, mode = tracker.state.count, tracker.state.mode
         except Exception:  # noqa: BLE001
             pass
 
+        from .const import DATA_STORE, DOMAIN
+
         store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
         if store and hasattr(store, "global_settings"):
-            gs = store.global_settings or {}
-            notify_trans = bool(gs.get("slack_notify_transitions", False))
+            notify_trans = bool(
+                (store.global_settings or {}).get("slack_notify_transitions", False)
+            )
 
         return headcount, mode, notify_trans
 
