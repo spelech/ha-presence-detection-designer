@@ -172,11 +172,50 @@ CONF_ENABLE_CONSERVATION_LAW = "enable_conservation_law"
 CONF_SLACK_NOTIFY_TRANSITIONS = "slack_notify_transitions"
 DEFAULT_SLACK_NOTIFY_TRANSITIONS = False
 
+# Head-count safety constraints.
+# Automatic ingress is capped at this value so a stuck/mis-vectored perimeter
+# door can never inflate the house count without bound. Manual overrides via
+# set_house_occupant_count may exceed it (e.g. a party).
+CONF_MAX_OCCUPANTS = "max_occupants"
+DEFAULT_MAX_OCCUPANTS = 12
+
+# Doors that are physically interior to the house (e.g. garage -> laundry).
+# Crossing one cannot change the whole-house head count.
+CONF_INTERIOR_DOORS = "interior_doors"
+DEFAULT_INTERIOR_DOORS = ["binary_sensor.laundry_room_door"]
+
+# If the head count is > 0 but every room has been clear for this long, the
+# count is reconciled to zero. Catches missed egress events and stale counts.
+CONF_STALE_COUNT_TIMEOUT = "stale_count_timeout"
+DEFAULT_STALE_COUNT_TIMEOUT = 900  # 15 minutes
+
+# Suppress repeated same-direction transits of the same door within this window
+# (one person fumbling with a door should not count as several people).
+CONF_DOOR_DUPLICATE_WINDOW = "door_duplicate_window"
+DEFAULT_DOOR_DUPLICATE_WINDOW = 45.0
+
 # Default perimeter door entities mapping: entity_id -> room_name
+# The laundry-room door is interior (garage -> laundry) and is therefore in
+# DEFAULT_INTERIOR_DOORS rather than the perimeter map.
 DEFAULT_PERIMETER_DOORS: dict[str, str] = {
     "binary_sensor.front_door": "Front Entry",
     "binary_sensor.back_door": "Kitchen",
     "binary_sensor.garage_side_door": "Garage",
-    "binary_sensor.laundry_room_door": "Laundry Room",
     "cover.garage_door": "Garage",
 }
+
+# Exterior corroborating motion sensors required for perimeter exits.
+# Egress through a configured door must be corroborated by motion on one of
+# its exterior sensors (during door-open window or within corroboration window).
+CONF_EXIT_CORROBORATORS = "exit_corroborators"
+DEFAULT_EXIT_CORROBORATORS: dict[str, list[str]] = {
+    "binary_sensor.garage_side_door": [
+        "binary_sensor.driveway_spotlight_camera_motion",
+        "binary_sensor.driveway_camera_motion",
+        "binary_sensor.backyard_motion",
+    ],
+}
+
+# Window in seconds to wait for exterior corroboration after door closure
+CONF_EXIT_CORROBORATION_WINDOW = "exit_corroboration_window"
+DEFAULT_EXIT_CORROBORATION_WINDOW = 30.0
