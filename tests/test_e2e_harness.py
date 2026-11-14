@@ -332,3 +332,22 @@ async def test_e2e_signal_exclusivity_ups_and_leftovers() -> None:
     assert result.snapshots["Office"]["occupancy_state"] == OccupancyState.VACANT
     assert result.snapshots["Family Room"]["occupancy_state"] == OccupancyState.VACANT
     assert result.snapshots["Master Bathroom"]["occupancy_state"] == OccupancyState.VACANT
+
+
+@pytest.mark.requirement("BAYES-01", category="BAYESIAN", req_type="FailClosedGuardrail")
+@pytest.mark.requirement("BAYES-04", category="BAYESIAN", req_type="FailClosedGuardrail")
+@pytest.mark.asyncio
+async def test_e2e_bayesian_score_hold_and_confirmed_ble_penalty() -> None:
+    """@requirement BAYES-01: Bayesian scores and holds while occupied, never starts vacant, and penalizes only on confirmed BLE."""
+    scenario_path = Path(__file__).parent / "scenarios" / "bayesian_score_hold_and_ble.json"
+    spec = load_scenario_file(scenario_path)
+    result = await run_scenario(
+        spec,
+        reproduction_command="python scripts/replay_scenario.py --scenario tests/scenarios/bayesian_score_hold_and_ble.json",
+    )
+    assert result.snapshots["Office"]["occupancy_state"] == OccupancyState.VACANT
+    assert result.snapshots["Office"]["bayesian_occupied"] is False
+    assert any(
+        t["room"] == "Office" and t["dest"] == OccupancyState.OCCUPIED_HOLDING
+        for t in result.transitions
+    )

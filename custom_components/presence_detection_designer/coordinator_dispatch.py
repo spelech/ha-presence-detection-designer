@@ -5,7 +5,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from .bayesian_engine import BayesianEvaluation, evaluate_bayesian
+from .bayesian_engine import (
+    BayesianEvaluation,
+    apply_contextual_bayesian_penalties,
+    evaluate_bayesian,
+)
 from .condition_evaluator import is_state_stale
 from .const import (
     DATA_STORE,
@@ -226,6 +230,17 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
 
         if (my_connected & other_tokens) or (other_connected & my_tokens):
             other.notify_adjacent_occupancy(coord.room_name)
+        elif (
+            coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
+            and getattr(other, "bayesian_enabled", False)
+            and getattr(other.state_machine, "state", None) == OccupancyState.OCCUPIED_HOLDING
+            and any(
+                classify_sensor_reliability(str(obs.get("entity_id", ""))).category == "ble_tracker"
+                for obs in getattr(other, "bayesian_observations", ())
+            )
+        ):
+            other._eval_bayesian_and_update()
+            other.async_update_listeners()
 
 
 def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
@@ -348,6 +363,13 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
             return _SuppressedState()
         return st
 
+    obs_to_eval = apply_contextual_bayesian_penalties(
+        obs_to_eval,
+        room_name=coord.room_name,
+        spatial_frame=getattr(coord, "_last_spatial_frame", None),
+        hass=coord.hass,
+        guest_mode_enabled=guest_mode_enabled,
+    )
     evaluation = evaluate_bayesian(
         obs_to_eval,
         _bayesian_state_getter,
@@ -381,7 +403,10 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         pv.pir_cleared(now_ts=now_ts)
         sync_coordinator_evidence(coord, trigger_bayesian=should_trigger_sm, now_ts=now_ts)
     record_coordinator_timeline_snapshot(coord)
-    if ((evaluation.is_occupied and should_trigger_sm) or pv_promoted) and not guest_mode_enabled:
+    if (
+        (evaluation.is_occupied and should_trigger_sm and coord.state_machine.is_present)
+        or pv_promoted
+    ) and not guest_mode_enabled:
         notify_connected_rooms_if_active(coord)
     return evaluation
 

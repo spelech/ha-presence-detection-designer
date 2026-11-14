@@ -187,14 +187,14 @@ class RoomPresenceStateMachine:
             return "llm_verifying"
         if self.snapshot.camera_confirmed:
             return "camera"
-        if self.snapshot.bayesian_occupied:
-            return "bayesian"
         if self.snapshot.active_triggers:
             return "trigger"
         if self.snapshot.human_present:
             return "spatial"
         if self.snapshot.active_conditions:
             return "condition"
+        if self.snapshot.bayesian_occupied:
+            return "bayesian"
         if self.snapshot.spatial_blind_pocket_hold:
             return "blind_pocket"
         if self.is_cooling_down:

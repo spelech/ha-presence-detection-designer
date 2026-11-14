@@ -264,15 +264,15 @@ def apply_compiled_topology_to_config(
                 item["prob_given_false"] = 0.12
             else:
                 item["preset"] = str(BayesianWeightPreset.SUPPORTING)
-                item["prob_given_true"] = 0.45
+                item["prob_given_true"] = 0.55
                 item["prob_given_false"] = 0.20
         elif room_name == "Guest Room" and eid == "binary_sensor.guest_room_occupancy":
             item["preset"] = str(BayesianWeightPreset.SUPPORTING)
-            item["prob_given_true"] = 0.45
+            item["prob_given_true"] = 0.55
             item["prob_given_false"] = 0.20
         elif eid == "sensor.tab_s10_lite_ble_area" and room_name != "Master Bedroom":
             item["preset"] = str(BayesianWeightPreset.SUPPORTING)
-            item["prob_given_true"] = 0.45
+            item["prob_given_true"] = 0.55
             item["prob_given_false"] = 0.25
         else:
             temper_observation_dict_reliability(item)

@@ -370,9 +370,40 @@ def migrate_and_backfill_store_payload(
             rcfg["trigger_entities"] = cleaned_trigs
             dirty = True
 
+        dedup_obs: list[dict[str, Any]] = []
+        seen_obs_keys: set[tuple[str, str, str, str | None]] = set()
         for obs_item in rcfg.get("bayesian_observations") or []:
-            if isinstance(obs_item, dict) and temper_observation_dict_reliability(obs_item):
+            if not isinstance(obs_item, dict):
                 dirty = True
+                continue
+            eid_s = str(obs_item.get("entity_id", ""))
+            pt_val = obs_item.get("prob_given_true")
+            pf_val = obs_item.get("prob_given_false")
+            if (
+                pt_val is not None
+                and pf_val is not None
+                and abs(float(pt_val) - float(pf_val)) < 0.005
+            ):
+                dirty = True
+                continue
+            okey = (
+                eid_s,
+                str(obs_item.get("operator", "equals")),
+                str(obs_item.get("state", "on")),
+                str(obs_item["attribute"]) if obs_item.get("attribute") is not None else None,
+            )
+            if okey in seen_obs_keys:
+                dirty = True
+                continue
+            seen_obs_keys.add(okey)
+            if obs_item.pop("penalize_when_off", None):
+                dirty = True
+            if temper_observation_dict_reliability(obs_item):
+                dirty = True
+            dedup_obs.append(obs_item)
+        if len(dedup_obs) != len(rcfg.get("bayesian_observations") or []):
+            rcfg["bayesian_observations"] = dedup_obs
+            dirty = True
 
         rname = str(rcfg.get("room_name", ""))
         for old_eid, new_eid, new_label, new_preset, new_pt, new_pf in room_pir_backfills.get(

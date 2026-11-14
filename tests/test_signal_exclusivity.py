@@ -208,8 +208,10 @@ async def test_leftover_lights_media_dhumidity_and_ups_never_trigger_vacant_room
             assert coord.state_machine.is_present is False, rname
             assert coord._active_triggers == set(), rname
 
-        # Person-coupled BLE proximity trigger enters occupied_confirmed cleanly
+        # BAYES-01: BLE in Bayesian observations alone stays vacant until a person-coupled trigger fires
         harness.set_state("sensor.steve_s_s25_ble_area", "Office")
+        assert harness.coordinators["Office"].state_machine.state == OccupancyState.VACANT
+        harness.set_state("binary_sensor.office_motion_occupancy", "on")
         assert (
             harness.coordinators["Office"].state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
         )

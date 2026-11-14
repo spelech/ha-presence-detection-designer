@@ -398,6 +398,7 @@ class VirtualHAHarness:
             "pir_validation_state": attrs.get("pir_validation_state"),
             "pir_corroboration_source": attrs.get("pir_corroboration_source"),
             "probability_pct": ps.native_value,
+            "bayesian_occupied": attrs["bayesian_occupied"],
             "human_present": attrs["human_present"],
             "pet_present": attrs["pet_present"],
             "transition_count": len(coord.state_machine.transition_history),

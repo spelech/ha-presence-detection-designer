@@ -1041,10 +1041,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       const autoTriggers = [...(this._draftConfig.trigger_entities || [])];
       for (const o of obs) {
         const preset = o.preset || o.weight || "moderate";
+        const lowEid = (o.entity_id || "").toLowerCase();
+        const isNonHumanBinary =
+          lowEid.includes("media_playing") ||
+          lowEid.endsWith("_door") ||
+          lowEid.includes("door_") ||
+          lowEid.endsWith("_window") ||
+          lowEid.includes("contact");
         if (
           (preset === "decisive" || preset === "strong") &&
           o.entity_id &&
           o.entity_id.startsWith("binary_sensor.") &&
+          !isNonHumanBinary &&
           !autoTriggers.includes(o.entity_id)
         ) {
           autoTriggers.push(o.entity_id);

@@ -298,9 +298,10 @@ async def test_probability_sensor_and_services(mock_hass):
     await async_setup_entry(mock_hass, mock_entry)
 
     coord: RoomPresenceCoordinator = mock_hass.data[DOMAIN]["office_entry"]
-    # Because Steve's S25+ is in Office (moderate) + Ecobee Occupancy is on (supporting),
-    # startup evaluation reaches 80.5% (>= 75% threshold) and marks room present!
-    assert coord.state_machine.is_present is True
+    # BAYES-01: Startup Bayesian reaches 80.5% (>= 75% threshold),
+    # but Bayesian alone NEVER starts occupancy from vacant without a direct trigger.
+    assert coord.state_machine.is_present is False
+    assert coord.state_machine.bayesian_occupied is True
     assert coord.state_machine.bayesian_probability_pct == 80.5
 
     added_sensors = []
