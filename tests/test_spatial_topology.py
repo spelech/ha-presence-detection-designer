@@ -481,7 +481,7 @@ def test_calibrated_v4_floorplan_and_device_model_presets():
     assert DEVICE_MODEL_PRESETS["tapo_c110_overhead"]["fov_deg"] == 164
 
     fp = get_default_floorplan()
-    assert fp["version"] == 4
+    assert fp["version"] == 5
     assert "floor_wall_segments" in fp
     assert set(fp["floor_wall_segments"].keys()) == {"upstairs", "main", "basement"}
 
@@ -576,6 +576,7 @@ def test_ikea_vallhorn_and_wyze_sense_presets_and_dual_lobe_raycast():
     fp = get_default_floorplan()
     sensors_by_id = {s["id"]: s for s in fp["sensors"]}
     assert "binary_sensor.motion_detector_basement1" not in sensors_by_id
-    assert "binary_sensor.laundry_room_motion" in sensors_by_id
-    assert sensors_by_id["binary_sensor.laundry_room_motion"]["host_room"] == "Laundry Room"
-    assert sensors_by_id["binary_sensor.laundry_room_motion"]["model_preset"] == "wyze_sense_pir"
+    assert "binary_sensor.laundry_room_ring_motion" in sensors_by_id
+    assert sensors_by_id["binary_sensor.laundry_room_ring_motion"]["host_room"] == "Laundry Room"
+    assert sensors_by_id["binary_sensor.laundry_room_ring_motion"]["model_preset"] == "ring_alarm_pir_gen2"
+    assert "sonoff_snzb_03pr2" in DEVICE_MODEL_PRESETS

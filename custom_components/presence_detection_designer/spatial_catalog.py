@@ -162,7 +162,7 @@ BLIND_POCKET_DEFINITIONS: dict[str, dict[str, Any]] = {
         ],
         "parent_rooms": ["Master Bedroom"],
         "excluding_cameras": ["camera.master_bedroom"],
-        "excluding_sensors": ["binary_sensor.upstairs_hallway_motion"],
+        "excluding_sensors": ["binary_sensor.upstairs_hallway_motion_occupancy"],
         "label": "Master Bathroom & Closet (Blind Pocket — excluded from Master Bedroom camera cone)",
         "hold_window_sec": 900.0,
     },
@@ -171,11 +171,11 @@ BLIND_POCKET_DEFINITIONS: dict[str, dict[str, Any]] = {
             "binary_sensor.guest_room_motion",
             "binary_sensor.guest_room_occupancy",
             "binary_sensor.nursery_person_occupancy",
-            "binary_sensor.upstairs_hallway_motion",
+            "binary_sensor.upstairs_hallway_motion_occupancy",
         ],
         "parent_rooms": ["Upstairs Hallway", "Margot's Room", "Office"],
         "excluding_cameras": ["camera.nursery", "camera.office", "camera.master_bedroom"],
-        "excluding_sensors": ["binary_sensor.upstairs_hallway_motion"],
+        "excluding_sensors": ["binary_sensor.upstairs_hallway_motion_occupancy"],
         "label": "Guest Room (Blind Pocket — excluded from Nursery, Office & Master Bedroom cameras)",
         "hold_window_sec": 600.0,
     },
@@ -263,6 +263,7 @@ SUNLIT_STATIC_SUBZONES: dict[str, dict[str, Any]] = {
     "binary_sensor.master_bed_person_occupancy": {
         "room": "Master Bedroom",
         "corroborating_entities": (
+            "binary_sensor.master_bedroom_motion_occupancy",
             "binary_sensor.master_bedroom_motion",
             "binary_sensor.master_open_area_person_occupancy",
             "binary_sensor.master_bedroom_entryway_person_occupancy",
@@ -275,6 +276,7 @@ SUNLIT_STATIC_SUBZONES: dict[str, dict[str, Any]] = {
     "binary_sensor.master_bedroom_walkway_person_occupancy": {
         "room": "Master Bedroom",
         "corroborating_entities": (
+            "binary_sensor.master_bedroom_motion_occupancy",
             "binary_sensor.master_bedroom_motion",
             "binary_sensor.master_open_area_person_occupancy",
             "binary_sensor.master_bedroom_entryway_person_occupancy",
@@ -287,6 +289,7 @@ SUNLIT_STATIC_SUBZONES: dict[str, dict[str, Any]] = {
     "binary_sensor.living_room_bay_windows_person_occupancy": {
         "room": "Living Room",
         "corroborating_entities": (
+            "binary_sensor.living_room_motion_occupancy",
             "binary_sensor.living_room_couch_person_occupancy",
             "binary_sensor.living_room_floor_person_occupancy",
             "binary_sensor.living_room_entry_person_occupancy",

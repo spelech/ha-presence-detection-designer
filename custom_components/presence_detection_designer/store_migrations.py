@@ -36,21 +36,33 @@ _REMOVED_SENSOR_IDS: frozenset[str] = frozenset(
         "binary_sensor.family_room_motion",
         "binary_sensor.motion_sensor_gen2_motion_detection",
         "binary_sensor.basement_motion",
+        "binary_sensor.basement_stairs_ring_motion",
         "binary_sensor.utility_room_door",
+        "binary_sensor.kitchen_motion",
+        "binary_sensor.laundry_room_motion",
+        "binary_sensor.master_bathroom_motion",
+        "binary_sensor.upstairs_hallway_motion",
+        "binary_sensor.upstairs_stairs_motion",
     }
 )
 
 _BACKFILL_SENSOR_IDS: tuple[str, ...] = (
     "binary_sensor.family_room_ecobee_motion",
     "binary_sensor.family_room_ring_motion",
+    "binary_sensor.family_room_motion_occupancy",
+    "binary_sensor.kitchen_motion_occupancy",
+    "binary_sensor.living_room_motion_occupancy",
+    "binary_sensor.dining_room_motion_occupancy",
+    "binary_sensor.master_bedroom_motion_occupancy",
+    "binary_sensor.master_bathroom_motion_occupancy",
+    "binary_sensor.upstairs_hallway_motion_occupancy",
+    "binary_sensor.office_motion_occupancy",
     "binary_sensor.guest_room_motion_occupancy",
-    "binary_sensor.laundry_room_motion",
-    "binary_sensor.upstairs_hallway_motion",
-    "binary_sensor.upstairs_stairs_motion",
-    "binary_sensor.master_bathroom_motion",
-    "binary_sensor.kitchen_motion",
+    "binary_sensor.laundry_room_ring_motion",
+    "binary_sensor.basement_stairs_top_motion",
+    "binary_sensor.basement_stairs_bottom_motion",
+    "binary_sensor.upstairs_stairs_bottom_motion",
     "binary_sensor.garage_ring_motion",
-    "binary_sensor.basement_stairs_ring_motion",
     "binary_sensor.basement_ecobee_motion",
     "binary_sensor.laundry_room_door",
 )
@@ -84,7 +96,7 @@ def migrate_and_backfill_store_payload(
             for fl in fp_dict.get("floors", []) or []
         )
         if not has_blueprint or int(fp_dict.get("version", 0) or 0) < int(
-            default_fp.get("version", 4)
+            default_fp.get("version", 5)
         ):
             stored["floorplan"] = copy.deepcopy(default_fp)
             fp_dict = stored["floorplan"]
@@ -159,10 +171,6 @@ def migrate_and_backfill_store_payload(
                     for k in ("name", "host_room", "x", "y", "heading_deg"):
                         sen[k] = ds[k]
                     dirty = True
-                elif sid == "binary_sensor.upstairs_hallway_motion" and sen.get("y") == 260:
-                    for k in ("name", "x", "y", "heading_deg"):
-                        sen[k] = ds[k]
-                    dirty = True
                 elif sid == "binary_sensor.guest_room_motion" and sen.get("x") == 858:
                     for k in ("name", "x", "y", "heading_deg"):
                         sen[k] = ds[k]
@@ -180,27 +188,145 @@ def migrate_and_backfill_store_payload(
         ]
         dirty = True
 
-    room_pir_backfills: dict[str, tuple[str | None, str, str]] = {
-        "Guest Room": (
-            None,
-            "binary_sensor.guest_room_motion_occupancy",
-            "Guest Room VALLHORN PIR Motion",
-        ),
-        "Master Bathroom": (
-            "binary_sensor.wyzesense_77a65433",
-            "binary_sensor.master_bathroom_motion",
-            "Master Bathroom Wyze PIR Motion",
-        ),
-        "Kitchen": (
-            "binary_sensor.wyzesense_77a64d08",
-            "binary_sensor.kitchen_motion",
-            "Kitchen Wyze PIR Motion",
-        ),
-        "Garage": (
-            "binary_sensor.ring_motion_sensor_55812",
-            "binary_sensor.garage_ring_motion",
-            "Garage Ring PIR Motion",
-        ),
+    room_pir_backfills: dict[str, list[tuple[str | None, str, str, str, float, float]]] = {
+        "Guest Room": [
+            (
+                None,
+                "binary_sensor.guest_room_motion_occupancy",
+                "Guest Room VALLHORN PIR Motion",
+                "strong",
+                0.90,
+                0.05,
+            )
+        ],
+        "Master Bathroom": [
+            (
+                "binary_sensor.master_bathroom_motion",
+                "binary_sensor.master_bathroom_motion_occupancy",
+                "Master Bathroom SenseGuard PIR Motion",
+                "strong",
+                0.90,
+                0.05,
+            )
+        ],
+        "Kitchen": [
+            (
+                "binary_sensor.kitchen_motion",
+                "binary_sensor.kitchen_motion_occupancy",
+                "Kitchen SenseGuard PIR Motion",
+                "strong",
+                0.90,
+                0.05,
+            )
+        ],
+        "Laundry Room": [
+            (
+                "binary_sensor.laundry_room_motion",
+                "binary_sensor.laundry_room_ring_motion",
+                "Laundry Room Ring PIR Motion",
+                "strong",
+                0.90,
+                0.05,
+            )
+        ],
+        "Upstairs Hallway & Stairs": [
+            (
+                "binary_sensor.upstairs_hallway_motion",
+                "binary_sensor.upstairs_hallway_motion_occupancy",
+                "Upstairs Hallway SenseGuard PIR Motion",
+                "strong",
+                0.90,
+                0.05,
+            ),
+            (
+                "binary_sensor.upstairs_stairs_motion",
+                "binary_sensor.upstairs_stairs_bottom_motion",
+                "Upstairs Stairs Bottom Step Wyze PIR (433)",
+                "strong",
+                0.90,
+                0.05,
+            ),
+        ],
+        "Front Entry": [
+            (
+                None,
+                "binary_sensor.basement_stairs_top_motion",
+                "Basement Stairs Top Step Wyze PIR (938)",
+                "moderate",
+                0.78,
+                0.08,
+            )
+        ],
+        "Basement Play Area": [
+            (
+                "binary_sensor.basement_stairs_ring_motion",
+                "binary_sensor.basement_stairs_bottom_motion",
+                "Basement Stairs Bottom Step Wyze PIR (dd9)",
+                "strong",
+                0.90,
+                0.05,
+            )
+        ],
+        "Family Room": [
+            (
+                None,
+                "binary_sensor.family_room_motion_occupancy",
+                "Family Room SenseGuard PIR Motion",
+                "moderate",
+                0.78,
+                0.08,
+            )
+        ],
+        "Living Room": [
+            (
+                None,
+                "binary_sensor.living_room_motion_occupancy",
+                "Living Room SenseGuard PIR Motion",
+                "moderate",
+                0.78,
+                0.08,
+            )
+        ],
+        "Dining Room": [
+            (
+                None,
+                "binary_sensor.dining_room_motion_occupancy",
+                "Dining Room SenseGuard PIR Motion",
+                "moderate",
+                0.78,
+                0.08,
+            )
+        ],
+        "Master Bedroom": [
+            (
+                None,
+                "binary_sensor.master_bedroom_motion_occupancy",
+                "Master Bedroom SenseGuard PIR Motion",
+                "moderate",
+                0.78,
+                0.08,
+            )
+        ],
+        "Office": [
+            (
+                None,
+                "binary_sensor.office_motion_occupancy",
+                "Office SenseGuard PIR Motion",
+                "moderate",
+                0.78,
+                0.08,
+            )
+        ],
+        "Garage": [
+            (
+                "binary_sensor.ring_motion_sensor_55812",
+                "binary_sensor.garage_ring_motion",
+                "Garage Ring PIR Motion",
+                "strong",
+                0.90,
+                0.05,
+            )
+        ],
     }
 
     for _rid, rcfg in stored.get("rooms", {}).items():
@@ -216,18 +342,40 @@ def migrate_and_backfill_store_payload(
             rcfg[CONF_NOTIFY_ON_CLEARED] = True
             dirty = True
 
+        # Purge any retired/removed sensor entity IDs from observations and triggers
+        orig_obs = list(rcfg.get("bayesian_observations") or [])
+        cleaned_obs = [
+            o
+            for o in orig_obs
+            if not (isinstance(o, dict) and str(o.get("entity_id", "")) in _REMOVED_SENSOR_IDS)
+        ]
+        if len(cleaned_obs) != len(orig_obs):
+            rcfg["bayesian_observations"] = cleaned_obs
+            dirty = True
+
+        orig_trigs = list(rcfg.get("trigger_entities") or [])
+        cleaned_trigs = [t for t in orig_trigs if str(t) not in _REMOVED_SENSOR_IDS]
+        if len(cleaned_trigs) != len(orig_trigs):
+            rcfg["trigger_entities"] = cleaned_trigs
+            dirty = True
+
         rname = str(rcfg.get("room_name", ""))
-        if rname in room_pir_backfills:
-            old_eid, new_eid, new_label = room_pir_backfills[rname]
-            orig_obs = list(rcfg.get("bayesian_observations") or [])
-            obs = [
-                o
-                for o in orig_obs
-                if not (old_eid and isinstance(o, dict) and o.get("entity_id") == old_eid)
-            ]
-            if len(obs) != len(orig_obs):
-                rcfg["bayesian_observations"] = obs
-                dirty = True
+        for old_eid, new_eid, new_label, new_preset, new_pt, new_pf in room_pir_backfills.get(rname, []):
+            obs = list(rcfg.get("bayesian_observations") or [])
+            if old_eid:
+                filtered_obs = [
+                    o
+                    for o in obs
+                    if not (isinstance(o, dict) and o.get("entity_id") == old_eid)
+                ]
+                if len(filtered_obs) != len(obs):
+                    obs = filtered_obs
+                    rcfg["bayesian_observations"] = obs
+                    dirty = True
+                trigs = list(rcfg.get("trigger_entities") or [])
+                if old_eid in trigs:
+                    rcfg["trigger_entities"] = [t for t in trigs if t != old_eid]
+                    dirty = True
             if not any(isinstance(o, dict) and o.get("entity_id") == new_eid for o in obs):
                 obs.insert(
                     0,
@@ -235,14 +383,20 @@ def migrate_and_backfill_store_payload(
                         "entity_id": new_eid,
                         "label": new_label,
                         "operator": "equals",
-                        "preset": "strong",
+                        "preset": new_preset,
                         "state": "on",
-                        "prob_given_true": 0.90,
-                        "prob_given_false": 0.05,
+                        "prob_given_true": new_pt,
+                        "prob_given_false": new_pf,
                     },
                 )
                 rcfg["bayesian_observations"] = obs
                 dirty = True
+            if new_preset == "strong":
+                trigs = list(rcfg.get("trigger_entities") or [])
+                if new_eid not in trigs:
+                    trigs.insert(0, new_eid)
+                    rcfg["trigger_entities"] = trigs
+                    dirty = True
 
     if hass and hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_entries"):
         try:
