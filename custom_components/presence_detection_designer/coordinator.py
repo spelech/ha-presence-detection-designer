@@ -38,8 +38,14 @@ from .coordinator_dispatch import (
 )
 from .coordinator_helpers import apply_coordinator_config_fields
 from .notifications import NotificationDispatcher
-from .pir_corroboration import handle_pir_validation_for_trigger, sync_coordinator_pir_corroboration
+from .pir_corroboration import (
+    handle_pir_validation_for_trigger,
+    is_condition_contradicted_by_ble,
+    sync_coordinator_pir_corroboration,
+)
 from .pir_validation import PIRValidationStateMachine
+from .sensor_reliability import classify_sensor_reliability
+from .spatial_catalog import PRIMARY_BLE_TRACKER_ENTITIES
 from .state_machine import RoomPresenceStateMachine
 
 __all__ = ["RoomPresenceCoordinator", "_safe_state_getter"]
@@ -217,6 +223,12 @@ class RoomPresenceCoordinator:
             for b_eid in store.global_settings.get("ble_trackers") or []:
                 if b_eid and b_eid not in already_tracked:
                     bayesian_only_entities.append(b_eid)
+        if any(
+            classify_sensor_reliability(eid).category == "power_monitor" for eid in cond_entities
+        ):
+            for b_eid in PRIMARY_BLE_TRACKER_ENTITIES:
+                if b_eid not in already_tracked:
+                    bayesian_only_entities.append(b_eid)
         if bayesian_only_entities:
             unsub = async_track_state_change_event(
                 self.hass,
@@ -266,6 +278,8 @@ class RoomPresenceCoordinator:
 
         self._active_triggers.clear()
         for t_eid in self.trigger_entities:
+            if not classify_sensor_reliability(t_eid).is_human_exclusive:
+                continue
             st_obj = _safe_state_getter(self.hass, t_eid)
             if st_obj is not None and not is_state_stale(st_obj, max_age_seconds=60.0):
                 if st_obj.state in ("on", "playing", "home"):
@@ -324,8 +338,8 @@ class RoomPresenceCoordinator:
         """Record a compact sensor & state snapshot into PDDStore's rolling timeline buffer."""
         record_coordinator_timeline_snapshot(self)
 
-    def _eval_conditions_and_update(self) -> None:
-        """Evaluate sustaining conditions and Bayesian/spatial observations."""
+    def _refresh_condition_descs(self) -> None:
+        """Evaluate sustaining conditions, suppressing machine-power holds contradicted by BLE."""
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
@@ -333,11 +347,21 @@ class RoomPresenceCoordinator:
             self.conditions,
             lambda eid: (
                 None
-                if self.actuation_tracker.is_entity_auto_latched(eid)
+                if (
+                    self.actuation_tracker.is_entity_auto_latched(eid)
+                    or is_condition_contradicted_by_ble(self, eid)
+                )
                 else _safe_state_getter(self.hass, eid)
             ),
         )
         self._active_condition_descs = list(descs) if any_active else []
+
+    def _eval_conditions_and_update(self) -> None:
+        """Evaluate sustaining conditions and Bayesian/spatial observations."""
+        if not self.hass or not hasattr(self.hass, "states"):
+            return
+
+        self._refresh_condition_descs()
         if not self._eval_bayesian_and_update():
             self._sync_state_machine_evidence()
 
@@ -379,7 +403,8 @@ class RoomPresenceCoordinator:
 
     @callback
     def _handle_bayesian_change(self, _event: Any) -> None:
-        """Handle state change on a Bayesian observation entity."""
+        """Handle state change on a Bayesian or BLE entity."""
+        self._refresh_condition_descs()
         self._eval_bayesian_and_update()
         self.async_update_listeners()
 

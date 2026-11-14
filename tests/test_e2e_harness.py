@@ -314,3 +314,21 @@ async def test_e2e_pir_validation_false_positive_and_corroboration() -> None:
     assert result.snapshots["Family Room"]["occupancy_state"] == OccupancyState.VACANT
     assert result.snapshots["Garage"]["occupancy_state"] == OccupancyState.VACANT
     assert result.snapshots["Laundry Room"]["occupancy_state"] == OccupancyState.VACANT
+
+
+@pytest.mark.requirement("SIGNAL-01", category="SIGNAL", req_type="FailClosedGuardrail")
+@pytest.mark.requirement("SIGNAL-03", category="SIGNAL", req_type="FailClosedGuardrail")
+@pytest.mark.asyncio
+async def test_e2e_signal_exclusivity_ups_and_leftovers() -> None:
+    """@requirement SIGNAL-03: E2E playback of leftover signals, UPS remote load, and shower warmup."""
+    scenario_path = (
+        Path(__file__).parent / "scenarios" / "signal_exclusivity_ups_and_leftovers.json"
+    )
+    spec = load_scenario_file(scenario_path)
+    result = await run_scenario(
+        spec,
+        reproduction_command="python scripts/replay_scenario.py --scenario tests/scenarios/signal_exclusivity_ups_and_leftovers.json",
+    )
+    assert result.snapshots["Office"]["occupancy_state"] == OccupancyState.VACANT
+    assert result.snapshots["Family Room"]["occupancy_state"] == OccupancyState.VACANT
+    assert result.snapshots["Master Bathroom"]["occupancy_state"] == OccupancyState.VACANT

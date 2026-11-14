@@ -24,6 +24,7 @@ from .pir_corroboration import (
     build_pir_corroboration_context,
     handle_pir_validation_for_trigger,
 )
+from .sensor_reliability import classify_sensor_reliability
 from .trajectory_validator import (
     async_send_coordinator_test_notification,
     check_coordinator_trajectory,
@@ -321,32 +322,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
             }
         )
 
-    virtual_manual_eid = "__manual_actuation_context__"
-    has_manual_boost = False
     tracker = getattr(coord, "actuation_tracker", None)
-    cond_eids = {
-        str(c.get("entity_id"))
-        for c in (getattr(coord, "conditions", None) or [])
-        if isinstance(c, dict)
-    }
-    if (
-        tracker is not None
-        and getattr(tracker, "manual_intent", "auto") == "manual_on"
-        and getattr(tracker, "last_manual_entity", None) not in cond_eids
-        and tracker.last_manual_ts is not None
-        and (time.time() - tracker.last_manual_ts)
-        <= float(getattr(coord.state_machine, "inactivity_timeout", 300))
-    ):
-        has_manual_boost = True
-        obs_to_eval.append(
-            {
-                "entity_id": virtual_manual_eid,
-                "prob_given_true": 0.95,
-                "prob_given_false": 0.02,
-                "target_state": "on",
-                "label": (f"Manual {tracker.last_manual_actor} ({tracker.last_manual_entity})"),
-            }
-        )
 
     suppressed_eids = set(shade_excluded_eids)
     if tracker is not None:
@@ -365,8 +341,6 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     def _bayesian_state_getter(eid: str) -> Any:
         if eid == virtual_neg_eid and has_neg_boost:
             return _VirtualState()
-        if eid == virtual_manual_eid and has_manual_boost:
-            return _VirtualState()
         if eid in suppressed_eids:
             return _SuppressedState()
         st = _safe_state_getter(coord.hass, eid)
@@ -381,7 +355,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         threshold=coord.bayesian_threshold,
     )
     coord.last_bayesian_eval = evaluation
-    should_trigger_sm = coord.has_explicit_bayesian or has_manual_boost
+    should_trigger_sm = coord.has_explicit_bayesian
     if (
         evaluation.is_occupied
         and not coord.state_machine.is_present
@@ -424,6 +398,10 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     suppressed = set(sp_est.get("shade_sunlight_excluded_entities") or []) | set(
         sp_est.get("pet_excluded_entities") or []
     )
+    if not classify_sensor_reliability(str(entity_id)).is_human_exclusive:
+        coord._active_triggers.discard(str(entity_id))
+        return
+
     is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
 
     traj: Any | None = None
@@ -462,6 +440,8 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
         coord._active_triggers.discard(str(entity_id))
         handle_pir_validation_for_trigger(coord, str(entity_id), False, now_ts=now)
 
+    if hasattr(coord, "_refresh_condition_descs"):
+        coord._refresh_condition_descs()
     sync_coordinator_evidence(coord, now_ts=now)
     if is_active and coord.state_machine.is_present:
         coord._notify_connected_rooms_if_active()

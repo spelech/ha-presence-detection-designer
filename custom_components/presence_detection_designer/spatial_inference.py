@@ -189,13 +189,6 @@ def evaluate_spatial_frame(
             )
             prev_ble_states[ble_eid] = raw_area
 
-    try:
-        ups_watts = float(get_state("sensor.office_ups_used_watts_filtered") or 0.0)
-        if ups_watts > 190.0:
-            steve_pinned_rooms.add("Office")
-    except (ValueError, TypeError):
-        pass
-
     for sun_rule in SUNLIT_STATIC_SUBZONES.values():
         for corr_eid in sun_rule.get("corroborating_entities", ()):
             c_st = str(get_state(corr_eid) or "off").strip().lower()

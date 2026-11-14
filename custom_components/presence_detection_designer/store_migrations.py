@@ -18,7 +18,7 @@ from .const import (
     DEFAULT_NOTIFY_SLACK,
     DOMAIN,
 )
-from .sensor_reliability import apply_cooldown_weight, classify_sensor_reliability
+from .sensor_reliability import temper_observation_dict_reliability
 from .spatial_topology import get_default_floorplan
 
 _LOGGER = logging.getLogger(__name__)
@@ -371,24 +371,7 @@ def migrate_and_backfill_store_payload(
             dirty = True
 
         for obs_item in rcfg.get("bayesian_observations") or []:
-            if not isinstance(obs_item, dict):
-                continue
-            obs_eid = str(obs_item.get("entity_id", ""))
-            prof = classify_sensor_reliability(obs_eid)
-            if (
-                prof.is_slow
-                and prof.reliability_weight < 0.999
-                and obs_item.get("cooldown_sec") != prof.cooldown_sec
-            ):
-                base_pt = float(obs_item.get("prob_given_true") or 0.72)
-                base_pf = float(obs_item.get("prob_given_false") or 0.12)
-                pt_w, pf_w = apply_cooldown_weight(
-                    base_pt, base_pf, prof.cooldown_sec, battery_powered=prof.battery_powered
-                )
-                obs_item["preset"] = "supporting"
-                obs_item["prob_given_true"] = pt_w
-                obs_item["prob_given_false"] = pf_w
-                obs_item["cooldown_sec"] = prof.cooldown_sec
+            if isinstance(obs_item, dict) and temper_observation_dict_reliability(obs_item):
                 dirty = True
 
         rname = str(rcfg.get("room_name", ""))

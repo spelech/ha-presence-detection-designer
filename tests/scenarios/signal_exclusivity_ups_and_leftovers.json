@@ -1,0 +1,273 @@
+{
+  "name": "signal_exclusivity_ups_and_leftovers",
+  "assumptions": [
+    "Non-human-exclusive signals (UPS, left-on lights, music/TV, dhumidity) never solo-trigger vacant rooms",
+    "Contradictory primary BLE drops Office UPS remote-control holds to occupied_cooling -> vacant",
+    "Shower warmup + early exit in Master Bathroom transitions cleanly to vacant even while fan & dhumidity linger"
+  ],
+  "global_settings": {
+    "ble_trackers": [
+      "sensor.steve_s_s25_ble_area"
+    ]
+  },
+  "rooms": [
+    {
+      "room_name": "Office",
+      "mode": "open",
+      "inactivity_timeout": 20,
+      "max_hold_timeout": 120,
+      "pir_validation_enabled": true,
+      "trigger_entities": [
+        "binary_sensor.office_motion_occupancy"
+      ],
+      "connected_rooms": [
+        "Family Room"
+      ],
+      "sustaining_conditions": [
+        {
+          "entity_id": "sensor.office_ups_used_watts_filtered",
+          "operator": "greater_than",
+          "state": "140",
+          "label": "Workstation Load"
+        }
+      ],
+      "bayesian_prior": 0.2,
+      "bayesian_threshold": 0.75,
+      "bayesian_observations": [
+        {
+          "entity_id": "binary_sensor.office_motion_occupancy",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "sensor.office_ups_used_watts_filtered",
+          "operator": "greater_than",
+          "state": "140",
+          "preset": "supporting"
+        }
+      ]
+    },
+    {
+      "room_name": "Family Room",
+      "mode": "open",
+      "inactivity_timeout": 20,
+      "pir_validation_enabled": true,
+      "trigger_entities": [
+        "binary_sensor.family_room_motion_occupancy"
+      ],
+      "connected_rooms": [
+        "Office"
+      ],
+      "bayesian_prior": 0.2,
+      "bayesian_threshold": 0.75,
+      "bayesian_observations": [
+        {
+          "entity_id": "binary_sensor.family_room_motion_occupancy",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "media_player.family_room_tv",
+          "state": "playing",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "light.family_room_lamps",
+          "state": "on",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "binary_sensor.basement_media_playing",
+          "state": "on",
+          "preset": "strong"
+        }
+      ]
+    },
+    {
+      "room_name": "Master Bathroom",
+      "mode": "open",
+      "inactivity_timeout": 20,
+      "max_hold_timeout": 40,
+      "pir_validation_enabled": true,
+      "trigger_entities": [
+        "binary_sensor.master_bathroom_motion_occupancy"
+      ],
+      "sustaining_conditions": [
+        {
+          "entity_id": "sensor.master_bathroom_dhumidity",
+          "operator": "greater_than",
+          "state": "0.3",
+          "label": "Shower Humidity Derivative"
+        }
+      ],
+      "bayesian_prior": 0.2,
+      "bayesian_threshold": 0.75,
+      "bayesian_observations": [
+        {
+          "entity_id": "binary_sensor.master_bathroom_motion_occupancy",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "sensor.master_bathroom_dhumidity",
+          "operator": "greater_than",
+          "state": "0.3",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "fan.master_bathroom_exhaust",
+          "state": "on",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "light.master_bathroom_vanity",
+          "state": "on",
+          "preset": "moderate"
+        }
+      ]
+    }
+  ],
+  "initial_states": {
+    "sensor.steve_s_s25_ble_area": "Away",
+    "binary_sensor.office_motion_occupancy": "off",
+    "sensor.office_ups_used_watts_filtered": "220",
+    "binary_sensor.family_room_motion_occupancy": "off",
+    "media_player.family_room_tv": "playing",
+    "light.family_room_lamps": "on",
+    "binary_sensor.basement_media_playing": "on",
+    "binary_sensor.master_bathroom_motion_occupancy": "off",
+    "sensor.master_bathroom_dhumidity": "0.0",
+    "fan.master_bathroom_exhaust": "off",
+    "light.master_bathroom_vanity": "off"
+  },
+  "steps": [
+    {
+      "at": 5,
+      "expect": {
+        "Office": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        },
+        "Family Room": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        },
+        "Master Bathroom": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        }
+      }
+    },
+    {
+      "at": 10,
+      "set": {
+        "sensor.steve_s_s25_ble_area": "Office",
+        "binary_sensor.office_motion_occupancy": "on"
+      }
+    },
+    {
+      "at": 11,
+      "expect": {
+        "Office": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "at": 20,
+      "set": {
+        "binary_sensor.office_motion_occupancy": "off"
+      }
+    },
+    {
+      "at": 21,
+      "expect": {
+        "Office": {
+          "occupancy_state": "occupied_holding",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "at": 30,
+      "set": {
+        "sensor.steve_s_s25_ble_area": "Kitchen"
+      }
+    },
+    {
+      "at": 31,
+      "expect": {
+        "Office": {
+          "occupancy_state": "occupied_cooling",
+          "is_on": true
+        },
+        "Family Room": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        }
+      }
+    },
+    {
+      "at": 52,
+      "expect": {
+        "Office": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        }
+      }
+    },
+    {
+      "at": 60,
+      "set": {
+        "binary_sensor.family_room_motion_occupancy": "off",
+        "sensor.steve_s_s25_ble_area": "Master Bathroom",
+        "binary_sensor.master_bathroom_motion_occupancy": "on",
+        "fan.master_bathroom_exhaust": "on",
+        "light.master_bathroom_vanity": "on",
+        "sensor.master_bathroom_dhumidity": "0.8"
+      }
+    },
+    {
+      "at": 61,
+      "expect": {
+        "Master Bathroom": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "at": 70,
+      "set": {
+        "binary_sensor.master_bathroom_motion_occupancy": "off",
+        "sensor.steve_s_s25_ble_area": "Master Bedroom"
+      }
+    },
+    {
+      "at": 71,
+      "expect": {
+        "Master Bathroom": {
+          "occupancy_state": "occupied_holding",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "advance": 65
+    },
+    {
+      "expect": {
+        "Master Bathroom": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        },
+        "Family Room": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        },
+        "Office": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        }
+      }
+    }
+  ]
+}
