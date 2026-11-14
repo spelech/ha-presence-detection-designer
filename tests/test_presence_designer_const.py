@@ -54,8 +54,11 @@ def test_constants_defined():
 
 def test_manifest_valid():
     """Verify manifest.json is well formed and declares transitions dependency."""
-    manifest_path = Path(
-        "/home/steve/Repos/ha-presence-detection-designer/custom_components/presence_detection_designer/manifest.json"
+    manifest_path = (
+        Path(__file__).resolve().parent.parent
+        / "custom_components"
+        / "presence_detection_designer"
+        / "manifest.json"
     )
     assert manifest_path.exists(), "manifest.json must exist"
     data = json.loads(manifest_path.read_text())
@@ -64,3 +67,6 @@ def test_manifest_valid():
     assert "version" in data
     assert "config_flow" in data and data["config_flow"] is True
     assert any("transitions" in req for req in data.get("requirements", []))
+    keys = list(data.keys())
+    assert keys[:2] == ["domain", "name"]
+    assert keys[2:] == sorted(keys[2:])
