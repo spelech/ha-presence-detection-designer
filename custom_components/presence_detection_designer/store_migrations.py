@@ -18,6 +18,7 @@ from .const import (
     DEFAULT_NOTIFY_SLACK,
     DOMAIN,
 )
+from .sensor_reliability import apply_cooldown_weight, classify_sensor_reliability
 from .spatial_topology import get_default_floorplan
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ _REMOVED_SENSOR_IDS: frozenset[str] = frozenset(
         "binary_sensor.master_bathroom_motion",
         "binary_sensor.upstairs_hallway_motion",
         "binary_sensor.upstairs_stairs_motion",
+        "binary_sensor.keypad_v2_motion_detection",
     }
 )
 
@@ -63,6 +65,7 @@ _BACKFILL_SENSOR_IDS: tuple[str, ...] = (
     "binary_sensor.basement_stairs_bottom_motion",
     "binary_sensor.upstairs_stairs_bottom_motion",
     "binary_sensor.garage_ring_motion",
+    "binary_sensor.garage_keypad_motion",
     "binary_sensor.basement_ecobee_motion",
     "binary_sensor.laundry_room_door",
 )
@@ -325,7 +328,15 @@ def migrate_and_backfill_store_payload(
                 "strong",
                 0.90,
                 0.05,
-            )
+            ),
+            (
+                "binary_sensor.keypad_v2_motion_detection",
+                "binary_sensor.garage_keypad_motion",
+                "Garage Keypad Proximity Motion",
+                "strong",
+                0.88,
+                0.05,
+            ),
         ],
     }
 
@@ -358,6 +369,27 @@ def migrate_and_backfill_store_payload(
         if len(cleaned_trigs) != len(orig_trigs):
             rcfg["trigger_entities"] = cleaned_trigs
             dirty = True
+
+        for obs_item in rcfg.get("bayesian_observations") or []:
+            if not isinstance(obs_item, dict):
+                continue
+            obs_eid = str(obs_item.get("entity_id", ""))
+            prof = classify_sensor_reliability(obs_eid)
+            if (
+                prof.is_slow
+                and prof.reliability_weight < 0.999
+                and obs_item.get("cooldown_sec") != prof.cooldown_sec
+            ):
+                base_pt = float(obs_item.get("prob_given_true") or 0.72)
+                base_pf = float(obs_item.get("prob_given_false") or 0.12)
+                pt_w, pf_w = apply_cooldown_weight(
+                    base_pt, base_pf, prof.cooldown_sec, battery_powered=prof.battery_powered
+                )
+                obs_item["preset"] = "supporting"
+                obs_item["prob_given_true"] = pt_w
+                obs_item["prob_given_false"] = pf_w
+                obs_item["cooldown_sec"] = prof.cooldown_sec
+                dirty = True
 
         rname = str(rcfg.get("room_name", ""))
         for old_eid, new_eid, new_label, new_preset, new_pt, new_pf in room_pir_backfills.get(

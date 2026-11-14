@@ -14,7 +14,8 @@
       ],
       "connected_rooms": [
         "Living Room"
-      ]
+      ],
+      "pir_validation_enabled": false
     },
     {
       "room_name": "Living Room",
@@ -35,7 +36,8 @@
       ],
       "connected_rooms": [
         "Hallway"
-      ]
+      ],
+      "pir_validation_enabled": false
     }
   ],
   "initial_states": {

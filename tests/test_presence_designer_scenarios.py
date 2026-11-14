@@ -10,6 +10,7 @@ from custom_components.presence_detection_designer.const import (
     CONF_INACTIVITY_TIMEOUT,
     CONF_LLM_ENABLED,
     CONF_MODE,
+    CONF_PIR_VALIDATION_ENABLED,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
@@ -37,6 +38,7 @@ async def test_scenario_a_stationary_tv_watcher(mock_hass):
         CONF_ROOM_NAME: "Living Room",
         CONF_MODE: Mode.OPEN,
         CONF_TRIGGER_ENTITIES: ["binary_sensor.lr_pir"],
+        CONF_PIR_VALIDATION_ENABLED: False,
         CONF_SUSTAINING_CONDITIONS: [
             {"entity_id": "media_player.living_room_tv", "operator": "equals", "state": "playing"}
         ],
@@ -177,6 +179,7 @@ async def test_scenario_d_llm_extension_resets_cooling(mock_hass):
         CONF_ROOM_NAME: "Living Room",
         CONF_MODE: Mode.OPEN,
         CONF_TRIGGER_ENTITIES: ["binary_sensor.lr_pir"],
+        CONF_PIR_VALIDATION_ENABLED: False,
         CONF_INACTIVITY_TIMEOUT: 5,
         CONF_EXTEND_TIMEOUT: 300,
         CONF_LLM_ENABLED: True,

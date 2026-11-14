@@ -376,6 +376,8 @@ class VirtualHAHarness:
 
         self.clock._now = target
         for coord in self.coordinators.values():
+            if getattr(coord, "pir_validator", None) is not None:
+                coord.pir_validator.advance_time(0.0, now_ts=target)
             sm = coord.state_machine
             sm.advance_time(0.0, now_ts=target)
 
@@ -393,6 +395,8 @@ class VirtualHAHarness:
             "cooling_remaining_sec": attrs["cooling_remaining_sec"],
             "state_reason": attrs["state_reason"],
             "verified_by": attrs["verified_by"],
+            "pir_validation_state": attrs.get("pir_validation_state"),
+            "pir_corroboration_source": attrs.get("pir_corroboration_source"),
             "probability_pct": ps.native_value,
             "human_present": attrs["human_present"],
             "pet_present": attrs["pet_present"],

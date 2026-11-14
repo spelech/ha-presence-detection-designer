@@ -101,6 +101,11 @@ class PresenceBinarySensor(PresenceDesignerEntityMixin, BinarySensorEntity):
             "cooling_remaining_sec": sm.cooling_remaining_sec,
             "state_reason": sm.state_reason,
             "verified_by": sm.verified_by,
+            "pir_validation_state": str(pv.state)
+            if (pv := getattr(self.coordinator, "pir_validator", None)) is not None
+            else "disabled",
+            "pir_corroboration_source": pv.last_corroboration_source if pv is not None else None,
+            "pir_candidate_remaining_sec": pv.candidate_remaining_sec if pv is not None else 0,
             "transition_history": sm.transition_history[-10:],
             "active_conditions": sm.active_conditions,
             "last_trigger_entity": sm.last_trigger_entity,

@@ -1,0 +1,177 @@
+{
+  "name": "pir_corroboration_and_false_positive",
+  "assumptions": [
+    "All rooms use default Phase-2 PIRValidationStateMachine (10s candidate window)",
+    "Garage connects to Laundry Room; Family Room has solo fast PIR + slow battery Ring PIR"
+  ],
+  "global_settings": {
+    "ble_trackers": [
+      "sensor.steve_s_s25_ble_area"
+    ]
+  },
+  "rooms": [
+    {
+      "room_name": "Family Room",
+      "mode": "open",
+      "inactivity_timeout": 30,
+      "pir_validation_enabled": true,
+      "pir_candidate_window": 10,
+      "trigger_entities": [
+        "binary_sensor.family_room_motion_occupancy",
+        "binary_sensor.family_room_ring_motion"
+      ]
+    },
+    {
+      "room_name": "Garage",
+      "mode": "open",
+      "inactivity_timeout": 30,
+      "pir_validation_enabled": true,
+      "pir_candidate_window": 10,
+      "trigger_entities": [
+        "binary_sensor.garage_keypad_motion",
+        "binary_sensor.garage_ring_motion"
+      ],
+      "connected_rooms": [
+        "Laundry Room"
+      ]
+    },
+    {
+      "room_name": "Laundry Room",
+      "mode": "open",
+      "inactivity_timeout": 30,
+      "pir_validation_enabled": true,
+      "pir_candidate_window": 10,
+      "trigger_entities": [
+        "binary_sensor.laundry_room_ring_motion"
+      ],
+      "connected_rooms": [
+        "Garage"
+      ]
+    }
+  ],
+  "initial_states": {
+    "binary_sensor.family_room_motion_occupancy": "off",
+    "binary_sensor.family_room_ring_motion": "off",
+    "binary_sensor.garage_keypad_motion": "off",
+    "binary_sensor.garage_ring_motion": "off",
+    "binary_sensor.laundry_room_ring_motion": "off",
+    "sensor.steve_s_s25_ble_area": "Away"
+  },
+  "steps": [
+    {
+      "at": 10,
+      "set": {
+        "binary_sensor.family_room_motion_occupancy": "on"
+      }
+    },
+    {
+      "at": 11,
+      "expect": {
+        "Family Room": {
+          "occupancy_state": "vacant",
+          "is_on": false,
+          "pir_validation_state": "candidate"
+        }
+      }
+    },
+    {
+      "at": 12,
+      "set": {
+        "binary_sensor.family_room_motion_occupancy": "off"
+      }
+    },
+    {
+      "at": 15,
+      "expect": {
+        "Family Room": {
+          "occupancy_state": "vacant",
+          "is_on": false,
+          "pir_validation_state": "candidate"
+        }
+      }
+    },
+    {
+      "at": 21,
+      "expect": {
+        "Family Room": {
+          "occupancy_state": "vacant",
+          "is_on": false,
+          "pir_validation_state": "idle"
+        }
+      }
+    },
+    {
+      "at": 30,
+      "set": {
+        "binary_sensor.garage_keypad_motion": "on"
+      }
+    },
+    {
+      "at": 31,
+      "expect": {
+        "Garage": {
+          "occupancy_state": "vacant",
+          "is_on": false,
+          "pir_validation_state": "candidate"
+        }
+      }
+    },
+    {
+      "at": 33,
+      "set": {
+        "binary_sensor.garage_ring_motion": "on"
+      }
+    },
+    {
+      "at": 34,
+      "expect": {
+        "Garage": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true,
+          "pir_validation_state": "confirmed",
+          "pir_corroboration_source": "time_history"
+        }
+      }
+    },
+    {
+      "at": 40,
+      "set": {
+        "binary_sensor.laundry_room_ring_motion": "on"
+      }
+    },
+    {
+      "at": 41,
+      "expect": {
+        "Laundry Room": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true,
+          "pir_validation_state": "confirmed",
+          "pir_corroboration_source": "trajectory"
+        }
+      }
+    },
+    {
+      "at": 45,
+      "set": {
+        "binary_sensor.garage_keypad_motion": "off",
+        "binary_sensor.garage_ring_motion": "off",
+        "binary_sensor.laundry_room_ring_motion": "off"
+      }
+    },
+    {
+      "advance": 35
+    },
+    {
+      "expect": {
+        "Garage": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        },
+        "Laundry Room": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        }
+      }
+    }
+  ]
+}
