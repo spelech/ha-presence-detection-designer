@@ -168,6 +168,68 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     return this._getDefaultFloorplan();
   }
 
+  _fitSvgLabel(text, maxWidthPx, fontSize = 12) {
+    const str = String(text || "");
+    if (!str || maxWidthPx < 20) return "";
+    const charW = fontSize * 0.65;
+    const maxChars = Math.floor(maxWidthPx / charW);
+    if (maxChars < 2) return "";
+    if (str.length <= maxChars) return str;
+    if (maxChars >= 4) return `${str.slice(0, maxChars - 1)}…`;
+    return str.slice(0, maxChars);
+  }
+
+  _roomLabelAnchor(box) {
+    const rx = Number(box.x || 0);
+    const ry = Number(box.y || 0);
+    const rw = Number(box.width ?? box.w ?? 200);
+    const rh = Number(box.height ?? box.h ?? 150);
+    const svgPath = box.svg_path;
+    if (!svgPath || typeof svgPath !== "string") {
+      return { x: rx, y: ry, w: rw, h: rh };
+    }
+    const pts = [];
+    const re = /[ML]\s*(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/gi;
+    let m;
+    while ((m = re.exec(svgPath)) !== null) {
+      pts.push([Number(m[1]), Number(m[2])]);
+    }
+    if (pts.length < 3) {
+      return { x: rx, y: ry, w: rw, h: rh };
+    }
+    const bestSpanAt = (scanY) => {
+      const xs = [];
+      for (let i = 0; i < pts.length; i++) {
+        const [x1, y1] = pts[i];
+        const [x2, y2] = pts[(i + 1) % pts.length];
+        if ((y1 <= scanY && y2 > scanY) || (y2 <= scanY && y1 > scanY)) {
+          xs.push(x1 + ((scanY - y1) * (x2 - x1)) / (y2 - y1));
+        }
+      }
+      xs.sort((a, b) => a - b);
+      let best = null;
+      for (let i = 0; i + 1 < xs.length; i += 2) {
+        const spanW = xs[i + 1] - xs[i];
+        if (!best || spanW > best.w) {
+          best = { x: xs[i], w: spanW };
+        }
+      }
+      return best;
+    };
+    const topSpan = bestSpanAt(ry + Math.min(20, rh * 0.25));
+    const midSpan = bestSpanAt(ry + rh * 0.55);
+    if (topSpan && topSpan.w >= 70) {
+      return { x: topSpan.x, y: ry, w: topSpan.w, h: rh };
+    }
+    if (midSpan && (!topSpan || midSpan.w > topSpan.w)) {
+      return { x: midSpan.x, y: ry + Math.max(0, rh * 0.55 - 24), w: midSpan.w, h: rh };
+    }
+    if (topSpan) {
+      return { x: topSpan.x, y: ry, w: topSpan.w, h: rh };
+    }
+    return { x: rx, y: ry, w: rw, h: rh };
+  }
+
   _snapValue(val, step = 10) {
     return Math.round(val / step) * step;
   }
@@ -1492,6 +1554,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           gap: 4px;
         }
         .nav-tab {
+          flex-shrink: 0;
           background: none;
           border: none;
           border-bottom: 2px solid transparent;
@@ -1641,7 +1704,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           margin-top: 8px;
         }
         .seg-btn {
-          flex: 1;
+          flex: 1 0 auto;
           border: none;
           background: transparent;
           color: var(--ha-muted);
@@ -1750,10 +1813,19 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         }
         .card-head {
           display: flex;
+          flex-wrap: wrap;
           align-items: flex-start;
           justify-content: space-between;
           gap: 12px;
           margin-bottom: 16px;
+        }
+        .card-head > div:first-child {
+          min-width: 0;
+        }
+        .card-desc code,
+        .setting-help code {
+          overflow-wrap: anywhere;
+          word-break: break-word;
         }
         .card-title {
           font-size: 16px;
@@ -1974,8 +2046,180 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border-radius: 12px;
           width: 480px;
           max-width: 92%;
+          max-height: 90vh;
+          overflow-y: auto;
           padding: 20px;
           box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+        }
+
+        .add-obs-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) auto;
+          gap: 10px;
+          margin-top: 14px;
+          padding-top: 14px;
+          border-top: 1px solid var(--ha-divider);
+          align-items: center;
+        }
+        .cond-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1.4fr) minmax(90px, 120px) minmax(90px, 120px) auto;
+          gap: 10px;
+          align-items: center;
+          padding: 10px 0;
+          border-bottom: 1px solid var(--ha-divider);
+        }
+        .timeline-split-grid {
+          display: grid;
+          grid-template-columns: 1.65fr 1fr;
+          gap: 14px;
+          align-items: start;
+        }
+        .swimlane-row {
+          display: grid;
+          grid-template-columns: 220px 1fr 80px;
+          gap: 12px;
+          align-items: center;
+          padding: 8px 0;
+          border-bottom: 1px solid var(--ha-divider);
+          font-size: 13px;
+        }
+        .replay-controls-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+          gap: 12px;
+          margin-bottom: 16px;
+          align-items: end;
+        }
+        .fp-fields-5 {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+          gap: 8px;
+        }
+        .fp-fields-4 {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+          gap: 8px;
+          margin-bottom: 10px;
+        }
+        .fp-door-row {
+          display: grid;
+          grid-template-columns: 80px 1fr 1fr 1fr auto;
+          gap: 6px;
+          align-items: center;
+          background: var(--ha-subtle);
+          padding: 4px 8px;
+          border-radius: 6px;
+          font-size: 12px;
+        }
+        .bayesian-table {
+          width: 100%;
+          min-width: 920px;
+          border-collapse: collapse;
+          font-size: 12.5px;
+        }
+        .bayesian-table th:first-child,
+        .bayesian-table td:first-child {
+          min-width: 240px;
+        }
+        .obs-field { min-width: 110px; }
+        .obs-preset { min-width: 110px; }
+        .obs-prob { min-width: 72px; }
+
+        @media (max-width: 1100px) {
+          .app-header {
+            height: auto;
+            flex-wrap: wrap;
+            padding: 10px 14px;
+            gap: 8px;
+          }
+          .header-left {
+            flex: 1 1 auto;
+            gap: 8px;
+          }
+          .nav-tabs {
+            order: 3;
+            width: 100%;
+            height: auto;
+            overflow-x: auto;
+            border-top: 1px solid var(--ha-divider);
+            padding-top: 4px;
+          }
+          .nav-tab {
+            padding: 8px 12px;
+          }
+          .header-actions {
+            flex-wrap: wrap;
+            gap: 6px;
+          }
+          .timeline-split-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 720px) {
+          .workspace {
+            padding: 12px 12px 32px;
+            gap: 14px;
+          }
+          .ha-card {
+            padding: 14px;
+          }
+          .header-summary {
+            display: none;
+          }
+          .header-actions {
+            width: 100%;
+          }
+          .seg-group {
+            flex-wrap: wrap;
+            max-width: 100%;
+          }
+          .seg-btn {
+            flex: 1 1 auto;
+            white-space: normal;
+          }
+          .setting-row {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+          }
+          .setting-row > div:last-child {
+            width: 100% !important;
+            min-width: 0 !important;
+            justify-content: flex-start;
+          }
+          .setting-row input[type="number"] {
+            min-width: 96px;
+            max-width: 130px;
+            flex: 0 0 96px;
+          }
+          .add-obs-grid {
+            grid-template-columns: 1fr;
+          }
+          .cond-row {
+            grid-template-columns: 1fr 1fr;
+          }
+          .cond-row > :first-child {
+            grid-column: 1 / -1;
+          }
+          .cond-row > :last-child {
+            grid-column: 1 / -1;
+            justify-self: end;
+          }
+          .swimlane-row {
+            grid-template-columns: 1fr auto;
+          }
+          .swimlane-row > :nth-child(2) {
+            grid-column: 1 / -1;
+            order: 3;
+          }
+          .fp-door-row {
+            grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+          }
+          #fp-svg-canvas {
+            min-height: 220px !important;
+          }
         }
       </style>
 
@@ -2466,7 +2710,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           </div>
         </div>
 
-        <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <button class="btn" id="btn-room-override">
             ${selRoom.override ? "Release Manual Hold" : "Hold Occupied"}
           </button>
@@ -2794,7 +3038,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             }
           </div>
 
-          <div style="display:grid;grid-template-columns:minmax(0, 1.3fr) minmax(0, 1.2fr) auto;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--ha-divider);align-items:center;">
+          <div class="add-obs-grid">
             <input
               type="text"
               class="input"
@@ -2829,7 +3073,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 : conditions
                     .map(
                       (c, idx) => `
-                    <div style="display:grid;grid-template-columns:minmax(0, 1.4fr) minmax(90px, 120px) minmax(90px, 120px) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--ha-divider);">
+                    <div class="cond-row">
                       <input
                         type="text"
                         class="input cond-field"
@@ -3012,7 +3256,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             <h3 class="card-title">Live Transitions State Diagram</h3>
             <div class="card-desc">Fixed <code>transitions.extensions.HierarchicalGraphMachine</code> runtime topology and last fired transition.</div>
           </div>
-          <div style="display:flex;gap:8px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-sm" id="btn-refresh-state-graph">Refresh Graph</button>
             <button class="btn btn-sm" id="btn-copy-mermaid">Copy Mermaid</button>
           </div>
@@ -3110,7 +3354,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           reversedHistory.length === 0
             ? `<div style="font-size:13px;color:var(--ha-muted);">No transition events recorded yet.</div>`
             : `<div style="overflow-x:auto;">
-                <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+                <table class="bayesian-table">
                   <thead>
                     <tr style="border-bottom:1px solid var(--ha-divider);text-align:left;color:var(--ha-muted);">
                       <th style="padding:8px 6px;">Status</th>
@@ -3335,14 +3579,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               <div class="setting-label">Detailed Sensor Probabilities — Current Score: ${livePct}%</div>
               <div style="font-size:12px;color:var(--ha-muted);">Bayesians score confidence and hold existing occupancy (BAYES-01); camera &amp; PIR off remain neutral (BAYES-04).</div>
             </div>
-            <div style="display:flex;gap:8px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-sm" id="btn-add-ble">+ Add Household BLE</button>
               <button class="btn btn-sm" id="btn-sync-triggers">Sync Human Triggers</button>
             </div>
           </div>
 
           <div style="overflow:auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+            <table class="bayesian-table">
               <thead>
                 <tr style="border-bottom:1px solid var(--ha-divider);text-align:left;color:var(--ha-muted);">
                   <th style="padding:8px 6px;">Entity ID &amp; Label</th>
@@ -3449,7 +3693,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                           </select>
                           <input type="text" class="input obs-field" data-idx="${idx}" data-key="state" value="${this._escape(
                       obs.state ?? "on"
-                    )}" style="width:80px;" />
+                    )}" style="width:80px;min-width:72px;" />
                         </div>
                       </td>
                       <td style="padding:8px 6px;text-align:right;">
@@ -3592,7 +3836,7 @@ action:
               })()
             : this._advTab === "yaml"
             ? `
-          <div style="display:flex;gap:6px;margin-bottom:10px;">
+          <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">
             <button class="btn btn-sm ${this._rightTab === "yaml" ? "btn-primary" : ""}" data-rtab="yaml">Room YAML</button>
             <button class="btn btn-sm ${this._rightTab === "ha_yaml" ? "btn-primary" : ""}" data-rtab="ha_yaml">Native HA Bayesian YAML</button>
             <button class="btn btn-sm ${this._rightTab === "nl" ? "btn-primary" : ""}" data-rtab="nl">Plain-English AI Builder</button>
@@ -3614,7 +3858,7 @@ action:
             <textarea class="code-area" id="nl-prompt-input" style="min-height:90px;" placeholder="Describe how this room should behave in plain English...">${this._escape(
               this._nlPrompt
             )}</textarea>
-            <div style="display:flex;gap:8px;margin-top:8px;">
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
               <button class="btn btn-primary btn-sm" id="btn-nl-to-yaml">Generate Rules</button>
               <button class="btn btn-sm" id="btn-yaml-to-nl">Explain Current Rules</button>
             </div>
@@ -3854,6 +4098,7 @@ action:
 
         return `
           <g class="fp-cam-group" data-cam-entity="${this._escape(camId)}" style="${isCamMode ? "" : "opacity:0.4;"}">
+            <title>${this._escape(camLabel)}</title>
             <path
               d="${pathD}"
               fill="${hasSpill ? "rgba(217, 119, 6, 0.15)" : "rgba(2, 132, 199, 0.13)"}"
@@ -3874,15 +4119,6 @@ action:
               style="${isCamMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
             />
             ${camHandlesSvg}
-            <text
-              x="${labelX.toFixed(1)}"
-              y="${labelY.toFixed(1)}"
-              text-anchor="middle"
-              fill="${coneColor}"
-              font-size="11"
-              font-weight="600"
-              style="pointer-events:none;user-select:none;"
-            >${this._escape(camLabel)}</text>
           </g>
         `;
       })
@@ -4042,27 +4278,48 @@ action:
               style="${isRoomMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
             />`;
 
+        const anchor = this._roomLabelAnchor(box);
+        const padX = anchor.w < 100 ? 8 : 12;
+        const titleFs = anchor.w < 100 ? 11 : 13;
+        const availW = Math.max(0, anchor.w - padX * 2);
+        const roomTitle = this._fitSvgLabel(rName, availW, titleFs);
+        const rawSub = isTransit ? "Shared walkway / stairs" : statusSummary.label;
+        const roomSub = rh >= 48 ? this._fitSvgLabel(rawSub, availW, 11) : "";
+        const blindText =
+          hasBlindSpot && rh >= 74 && anchor.w >= 95
+            ? this._fitSvgLabel("No camera cone (uses motion / BLE)", availW, 10)
+            : "";
+
         return `
           <g class="fp-room-box" data-room-name="${this._escape(rName)}" style="${isRoomMode ? "" : "pointer-events:none;"}">
+            <title>${this._escape(rName)} — ${this._escape(rawSub)}</title>
             ${roomShapeSvg}
-            <text
-              x="${rx + 14}"
-              y="${ry + 24}"
+            ${
+              roomTitle
+                ? `<text
+              x="${(anchor.x + padX).toFixed(1)}"
+              y="${(anchor.y + 22).toFixed(1)}"
               fill="#1e293b"
-              font-size="13.5"
+              font-size="${titleFs}"
               font-weight="600"
               style="pointer-events:none;user-select:none;"
-            >${this._escape(rName)}</text>
-            <text
-              x="${rx + 14}"
-              y="${ry + 44}"
-              fill="${isOcc ? "#16a34a" : "#64748b"}"
-              font-size="11.5"
-              style="pointer-events:none;user-select:none;"
-            >${isTransit ? "Shared walkway / stairs" : this._escape(statusSummary.label)}</text>
+            >${this._escape(roomTitle)}</text>`
+                : ""
+            }
             ${
-              hasBlindSpot
-                ? `<text x="${rx + 14}" y="${ry + rh - 12}" fill="#d97706" font-size="10.5" font-weight="500" style="pointer-events:none;">No camera cone (uses motion / BLE)</text>`
+              roomSub
+                ? `<text
+              x="${(anchor.x + padX).toFixed(1)}"
+              y="${(anchor.y + 40).toFixed(1)}"
+              fill="${isOcc ? "#16a34a" : "#64748b"}"
+              font-size="11"
+              style="pointer-events:none;user-select:none;"
+            >${this._escape(roomSub)}</text>`
+                : ""
+            }
+            ${
+              blindText
+                ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(ry + rh - 10).toFixed(1)}" fill="#d97706" font-size="10" font-weight="500" style="pointer-events:none;">${this._escape(blindText)}</text>`
                 : ""
             }
             ${entrywaysSvg}
@@ -4137,8 +4394,10 @@ action:
             const sw = Math.max(24, Number(sz.width || 60));
             const sh = Math.max(24, Number(sz.height || 60));
             const isSelSz = this._selectedSubZoneId === sz.id && isCamMode;
+            const szLabelFit = this._fitSvgLabel(sz.label || sz.id, sw - 8, 9.5);
             return `
               <g class="fp-subzone-group" data-cam-id="${this._escape(camId)}" data-subzone-id="${this._escape(sz.id)}" style="${isCamMode ? "opacity:0.95;" : "opacity:0.55;pointer-events:none;"}">
+                <title>${this._escape(sz.label || sz.id)}</title>
                 <rect
                   class="fp-subzone-rect"
                   data-cam-id="${this._escape(camId)}"
@@ -4154,7 +4413,9 @@ action:
                   stroke-dasharray="3,2"
                   style="${isCamMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
                 />
-                <text
+                ${
+                  szLabelFit
+                    ? `<text
                   x="${(sx + sw / 2).toFixed(1)}"
                   y="${(sy + sh / 2 + 3).toFixed(1)}"
                   text-anchor="middle"
@@ -4162,7 +4423,9 @@ action:
                   font-size="9.5"
                   font-weight="600"
                   style="pointer-events:none;user-select:none;"
-                >${this._escape(sz.label || sz.id)}</text>
+                >${this._escape(szLabelFit)}</text>`
+                    : ""
+                }
               </g>
             `;
           })
@@ -4178,6 +4441,7 @@ action:
         const rad = Number(proxy.radius_px || 230);
         return `
           <g class="fp-ble-group" data-proxy-id="${this._escape(proxy.id)}" style="${isSensorMode ? "opacity:0.95;" : "opacity:0.45;pointer-events:none;"}">
+            <title>🔊 ${this._escape(proxy.name || proxy.id)}</title>
             <path
               d="M ${(px - rad).toFixed(1)} ${py.toFixed(1)} a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 ${(rad * 2).toFixed(1)} 0 a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 -${(rad * 2).toFixed(1)} 0"
               fill="rgba(13, 148, 136, 0.04)"
@@ -4197,15 +4461,6 @@ action:
               stroke-width="2"
               style="${isSensorMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
             />
-            <text
-              x="${px.toFixed(1)}"
-              y="${(py - 10).toFixed(1)}"
-              text-anchor="middle"
-              fill="#0f766e"
-              font-size="10"
-              font-weight="600"
-              style="pointer-events:none;user-select:none;"
-            >🔊 ${this._escape((proxy.name || proxy.id).replace(" BLE Proxy", ""))}</text>
           </g>
         `;
       })
@@ -4219,6 +4474,7 @@ action:
         if (s.sensor_type === "door_contact") {
           return `
             <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:1;" : "opacity:0.75;pointer-events:none;"}">
+              <title>🚪 ${this._escape(s.name || s.id)}</title>
               <rect
                 class="fp-sensor-origin"
                 data-sensor-id="${this._escape(s.id)}"
@@ -4232,15 +4488,6 @@ action:
                 stroke-width="${isSelSens ? "2.5" : "1.5"}"
                 style="${isSensorMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
               />
-              <text
-                x="${sx.toFixed(1)}"
-                y="${(sy - 11).toFixed(1)}"
-                text-anchor="middle"
-                fill="#c2410c"
-                font-size="9.5"
-                font-weight="600"
-                style="pointer-events:none;user-select:none;"
-              >🚪 ${this._escape(s.name || s.id)}</text>
             </g>
           `;
         }
@@ -4250,6 +4497,7 @@ action:
         const aimY = sy + Math.sin(rad) * 38;
         return `
           <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:0.95;" : "opacity:0.42;pointer-events:none;"}">
+            <title>📡 ${this._escape(s.name || s.id)}</title>
             <path
               d="${conePath}"
               fill="rgba(147, 51, 234, 0.12)"
@@ -4275,15 +4523,6 @@ action:
                    <circle class="fp-sensor-handle" data-sensor-id="${this._escape(s.id)}" data-handle="heading" cx="${aimX.toFixed(1)}" cy="${aimY.toFixed(1)}" r="6" fill="#ffffff" stroke="#9333ea" stroke-width="2.2" style="cursor:crosshair;pointer-events:all;" />`
                 : ""
             }
-            <text
-              x="${sx.toFixed(1)}"
-              y="${(sy - 10).toFixed(1)}"
-              text-anchor="middle"
-              fill="#7e22ce"
-              font-size="9.5"
-              font-weight="600"
-              style="pointer-events:none;user-select:none;"
-            >📡 ${this._escape((s.name || s.id).replace(" PIR", ""))}</text>
           </g>
         `;
       })
@@ -4419,7 +4658,7 @@ action:
                       .join("")}
                   </select>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;">
+                <div class="fp-fields-5">
                   <div><small>X</small><input type="number" class="input fp-cam-field" data-key="x" value="${Number(
                     selCam.x
                   )}" /></div>
@@ -4479,7 +4718,7 @@ action:
                 !selBox
                   ? ""
                   : `
-                <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:10px;">
+                <div class="fp-fields-4">
                   <div><small>X</small><input type="number" class="input fp-box-field" data-room="${this._escape(
                     selBoxName
                   )}" data-key="x" value="${Number(selBox.x)}" /></div>
@@ -4498,7 +4737,7 @@ action:
                 <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--ha-divider);">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                     <div style="font-size:12.5px;font-weight:600;">Perimeter Doorways (${selBoxEntryways.length})</div>
-                    <div style="display:flex;gap:6px;">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
                       <select class="select" id="fp-new-door-wall" style="font-size:12px;padding:3px 6px;width:auto;">
                         <option value="right">Right Wall</option>
                         <option value="left">Left Wall</option>
@@ -4513,11 +4752,11 @@ action:
                     selBoxEntryways.length === 0
                       ? `<div style="font-size:12px;color:var(--ha-muted);">No doorways on this room yet. Add one so cameras can see in/out.</div>`
                       : `
-                    <div style="display:flex;flex-direction:column;gap:6px;max-height:140px;overflow:auto;">
+                    <div style="display:flex;flex-direction:column;gap:6px;">
                       ${selBoxEntryways
                         .map(
                           (ew) => `
-                        <div style="display:grid;grid-template-columns:80px 1fr 1fr 1fr auto;gap:6px;align-items:center;background:var(--ha-subtle);padding:4px 8px;border-radius:6px;font-size:12px;">
+                        <div class="fp-door-row">
                           <div style="font-weight:500;text-transform:capitalize;">${this._escape(
                             ew.wall
                           )}</div>
@@ -4632,7 +4871,7 @@ action:
                       .join("")}
                   </select>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;">
+                <div class="fp-fields-5">
                   <div><small>X</small><input type="number" class="input fp-sensor-field" data-key="x" value="${Number(
                     selSensor.x || 0
                   )}" /></div>
@@ -4808,18 +5047,21 @@ action:
         const rw = Number(box.width ?? 200);
         const rh = Number(box.height ?? 150);
         const locLabel = est.subregion || est.inferred_location || (isOcc ? "Occupied" : "Clear");
-        const maxTitleChars = Math.max(8, Math.floor((rw - 20) / 7.2));
-        const maxLocChars = Math.max(10, Math.floor((rw - 20) / 6.2));
+        const anchor = this._roomLabelAnchor(box);
+        const padX = anchor.w < 95 ? 8 : 12;
+        const titleFontSize = anchor.w < 95 ? 10.5 : 12.5;
+        const availW = Math.max(0, anchor.w - padX * 2);
+        const titleText = this._fitSvgLabel(rName, availW, titleFontSize);
+        const locText = rh >= 48 ? this._fitSvgLabel(locLabel, availW, 10.5) : "";
         const pbShape = box.svg_path
           ? `<path d="${this._escape(box.svg_path)}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc ? "2.5" : "1.5"}" />`
           : `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="6" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc ? "2.5" : "1.5"}" />`;
         return `
           <g>
+            <title>${this._escape(rName)} — ${this._escape(locLabel)}</title>
             ${pbShape}
-            <text x="${rx + 12}" y="${ry + 22}" fill="#0f172a" font-size="12.5" font-weight="600">${this._escape(rName.slice(0, maxTitleChars))}</text>
-            <text x="${rx + 12}" y="${ry + 38}" fill="${isNegLocalized ? "#6d28d9" : isOcc ? "#15803d" : "#64748b"}" font-size="10.5" font-weight="${isOcc ? "600" : "400"}">
-              ${this._escape(locLabel.slice(0, maxLocChars))}
-            </text>
+            ${titleText ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 22).toFixed(1)}" fill="#0f172a" font-size="${titleFontSize}" font-weight="600">${this._escape(titleText)}</text>` : ""}
+            ${locText ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 38).toFixed(1)}" fill="${isNegLocalized ? "#6d28d9" : isOcc ? "#15803d" : "#64748b"}" font-size="10.5" font-weight="${isOcc ? "600" : "400"}">${this._escape(locText)}</text>` : ""}
           </g>`;
       })
       .join("");
@@ -4989,7 +5231,7 @@ action:
         </div>
 
         <!-- Split 2D Floorplan Playback + Movement Transitions Log -->
-        <div style="display:grid;grid-template-columns:1.65fr 1fr;gap:14px;align-items:start;">
+        <div class="timeline-split-grid">
           <div style="background:#f8fafc;color:#0f172a;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;">
             <svg viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:360px;display:block;">
               ${
@@ -5135,7 +5377,7 @@ action:
                 )
                 .join("");
               return `
-                <div style="display:grid;grid-template-columns:220px 1fr 80px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--ha-divider);font-size:13px;">
+                <div class="swimlane-row">
                   <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this._escape(
                     lane.label
                   )}</div>
@@ -5192,7 +5434,7 @@ action:
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:12px;margin-bottom:16px;align-items:end;">
+        <div class="replay-controls-grid">
           <div>
             <div class="setting-label" style="font-size:12.5px;">Candidate Prior: ${candPriorPct}%</div>
             <input type="range" min="5" max="50" step="1" id="rep-prior-slider" value="${candPriorPct}" style="width:100%;" />
