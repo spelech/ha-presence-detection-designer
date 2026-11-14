@@ -426,6 +426,7 @@ class PDDStateGraphView(HomeAssistantView):
                     "cooldown_sec": prof.cooldown_sec,
                     "reliability_weight": prof.reliability_weight,
                     "requires_pir_validation": prof.requires_pir_validation,
+                    "human_exclusive": prof.is_human_exclusive,
                 }
                 for obs in (coord.bayesian_observations or [])
                 if isinstance(obs, dict) and obs.get("entity_id")

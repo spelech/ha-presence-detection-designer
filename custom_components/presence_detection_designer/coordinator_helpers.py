@@ -56,7 +56,7 @@ from .const import (
 from .evidence_snapshot import RoomEvidenceSnapshot
 from .llm_verifier import LLMVerifier
 from .pir_validation import PIRValidationStateMachine
-from .sensor_reliability import classify_sensor_reliability
+from .sensor_reliability import classify_sensor_reliability, is_human_exclusive_initiator
 from .state_machine import RoomPresenceStateMachine
 
 _LOGGER = logging.getLogger(__name__)
@@ -280,32 +280,49 @@ def build_coordinator_evidence_snapshot(
     pv = getattr(coord, "pir_validator", None)
     pir_gate_active = bool(getattr(coord, "pir_validation_enabled", False) and pv is not None)
     sm_present = bool(getattr(getattr(coord, "state_machine", None), "is_present", False))
+    pir_confirmed = bool(pv is not None and pv.pir_confirmed)
 
-    if pir_gate_active and not sm_present and not pv.pir_confirmed:
-        effective_triggers = frozenset(
-            t for t in raw_triggers if not classify_sensor_reliability(t).requires_pir_validation
+    # SIGNAL-01: Only person-coupled sensors (Vision, validated PIR, BLE) may initiate or drive triggers.
+    effective_triggers = frozenset(
+        t
+        for t in raw_triggers
+        if is_human_exclusive_initiator(
+            t,
+            pir_confirmed=pir_confirmed,
+            pir_gate_active=pir_gate_active and not sm_present,
         )
+    )
+    if pir_gate_active and not sm_present and not pir_confirmed:
         if human_present and not camera_confirmed:
-            human_present = False
-        if eval_obj and eval_obj.is_occupied and should_trigger_bayes and not camera_confirmed:
-            active_non_pir = any(
-                not classify_sensor_reliability(
-                    str(obs.get("entity_id", ""))
-                ).requires_pir_validation
-                for obs in (eval_obj.active_observations or [])
-                if isinstance(obs, dict)
+            has_human_driver = any(
+                is_human_exclusive_initiator(str(drv), pir_confirmed=False, pir_gate_active=True)
+                for drv in drivers
             )
-            if not active_non_pir:
-                should_trigger_bayes = False
+            if not has_human_driver:
+                human_present = False
     else:
-        effective_triggers = frozenset(raw_triggers)
-        if pir_gate_active and pv.pir_confirmed and not effective_triggers:
+        if pir_gate_active and pir_confirmed and not effective_triggers:
             human_present = True
 
+    if eval_obj and eval_obj.is_occupied and should_trigger_bayes and not camera_confirmed:
+        has_human_obs = any(
+            is_human_exclusive_initiator(
+                str(obs.get("entity_id", "")),
+                pir_confirmed=pir_confirmed,
+                pir_gate_active=pir_gate_active and not sm_present,
+            )
+            for obs in (eval_obj.active_observations or [])
+            if isinstance(obs, dict)
+        )
+        if not has_human_obs:
+            should_trigger_bayes = False
+
     last_trig = getattr(coord, "_last_trigger_entity", None)
+    if last_trig and not classify_sensor_reliability(str(last_trig)).is_human_exclusive:
+        last_trig = None
     if not last_trig and pv is not None and pv.pir_confirmed and pv.candidate_pir_sensors:
         last_trig = sorted(pv.candidate_pir_sensors)[0]
-    if not last_trig and eval_obj and eval_obj.active_observations:
+    if not last_trig and should_trigger_bayes and eval_obj and eval_obj.active_observations:
         last_trig = eval_obj.active_observations[0].get("entity_id")
 
     return RoomEvidenceSnapshot(

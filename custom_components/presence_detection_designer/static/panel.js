@@ -2996,6 +2996,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                       <th style="padding:6px;">Category</th>
                       <th style="padding:6px;">Cooldown</th>
                       <th style="padding:6px;">Weight</th>
+                      <th style="padding:6px;">Signal</th>
                       <th style="padding:6px;">PIR Gate</th>
                     </tr>
                   </thead>
@@ -3008,6 +3009,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                             <td style="padding:6px;">${this._escape(sw.category || "")}</td>
                             <td style="padding:6px;">${Number(sw.cooldown_sec || 0)}s</td>
                             <td style="padding:6px;">${Number(sw.reliability_weight ?? 1).toFixed(2)}</td>
+                            <td style="padding:6px;"><span style="padding:2px 6px;border-radius:999px;font-size:11px;font-weight:600;background:${sw.human_exclusive !== false ? "rgba(16,185,129,0.16)" : "rgba(148,163,184,0.18)"};color:${sw.human_exclusive !== false ? "#34d399" : "#cbd5e1"};">${sw.human_exclusive !== false ? "Person" : "Supporting"}</span></td>
                             <td style="padding:6px;">${sw.requires_pir_validation ? "Required" : "Bypass"}</td>
                           </tr>
                         `

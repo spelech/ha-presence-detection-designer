@@ -22,7 +22,11 @@ from .const import (
     BayesianWeightPreset,
     ConditionOperator,
 )
-from .sensor_reliability import apply_cooldown_weight, classify_sensor_reliability
+from .sensor_reliability import (
+    apply_cooldown_weight,
+    apply_signal_weight,
+    classify_sensor_reliability,
+)
 
 __all__ = [
     "BayesianEvaluation",
@@ -100,7 +104,7 @@ def resolve_observation_weights(obs: dict[str, Any]) -> tuple[str, float, float]
         preset_name = str(BayesianWeightPreset.STRONG)
 
     raw_cd = obs.get("cooldown_sec")
-    if raw_cd is not None or obs.get("auto_cooldown_weight"):
+    if raw_cd is not None or obs.get("auto_cooldown_weight") or obs.get("auto_signal_weight"):
         eid = str(obs.get("entity_id", ""))
         prof = classify_sensor_reliability(
             eid,
@@ -108,12 +112,15 @@ def resolve_observation_weights(obs: dict[str, Any]) -> tuple[str, float, float]
             battery_powered=obs.get("battery_powered"),
         )
         if prof.reliability_weight < 0.999:
-            pt, pf = apply_cooldown_weight(
-                pt,
-                pf,
-                prof.cooldown_sec,
-                battery_powered=prof.battery_powered,
-            )
+            if prof.is_pir:
+                pt, pf = apply_cooldown_weight(
+                    pt,
+                    pf,
+                    prof.cooldown_sec,
+                    battery_powered=prof.battery_powered,
+                )
+            else:
+                pt, pf = apply_signal_weight(pt, pf, prof.reliability_weight)
             preset_name = infer_preset_from_weights(pt, pf)
 
     return preset_name, pt, pf

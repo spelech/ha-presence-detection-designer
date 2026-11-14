@@ -255,15 +255,23 @@ def process_coordinator_actuator_event(coord: Any, event: Any) -> None:
     if not entity_id or not new_state:
         return
 
+    from .sensor_reliability import classify_sensor_reliability
+
+    sm = getattr(coord, "state_machine", None)
+    now_ts = sm._now() if sm is not None and hasattr(sm, "_now") else None
     res = coord.actuation_tracker.handle_actuator_event(
         entity_id=str(entity_id),
         old_state=old_state,
         new_state=new_state,
-        room_is_occupied=coord.state_machine.is_present,
+        room_is_occupied=bool(sm.is_present) if sm is not None else False,
+        now_ts=now_ts,
     )
     if res.get("is_manual"):
         if res.get("action") == "on":
-            if str(entity_id) in (getattr(coord, "trigger_entities", None) or ()):
+            if (
+                str(entity_id) in (getattr(coord, "trigger_entities", None) or ())
+                and classify_sensor_reliability(str(entity_id)).is_human_exclusive
+            ):
                 coord._active_triggers.add(str(entity_id))
                 coord._last_trigger_entity = str(entity_id)
             coord._eval_conditions_and_update()

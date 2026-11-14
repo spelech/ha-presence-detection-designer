@@ -8,7 +8,11 @@ from typing import Any
 from .const import DATA_STORE, DOMAIN, PIRValidationState
 from .pir_validation import PIRCorroborationContext
 from .sensor_reliability import classify_sensor_reliability, is_camera_entity
-from .spatial_catalog import _normalize_ble_area_to_room
+from .spatial_catalog import (
+    PRIMARY_BLE_TRACKER_ENTITIES,
+    SECONDARY_BLE_TRACKER_ENTITIES,
+    _normalize_ble_area_to_room,
+)
 
 
 def _safe_get_state(hass: Any, entity_id: str) -> Any:
@@ -223,3 +227,55 @@ def handle_pir_validation_for_trigger(
     if prof.requires_pir_validation:
         pv.on_pir_cleared(str(entity_id), now_ts=now)
     return False
+
+
+def is_condition_contradicted_by_ble(coord: Any, entity_id: str) -> bool:
+    """Return True when a power-monitor hold is contradicted by primary resident BLE telemetry (SIGNAL-03)."""
+    prof = classify_sensor_reliability(entity_id)
+    if prof.category != "power_monitor":
+        return False
+    if getattr(coord, "_active_triggers", None):
+        return False
+    if callable(getattr(coord, "_is_guest_mode_active", None)) and coord._is_guest_mode_active():
+        return False
+
+    hass = getattr(coord, "hass", None)
+    if not hass or not hasattr(hass, "states"):
+        return False
+
+    store = (
+        hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if isinstance(getattr(hass, "data", None), dict)
+        else None
+    )
+    trackers: list[str] = []
+    if store is not None and isinstance(getattr(store, "global_settings", None), dict):
+        trackers = [
+            str(t)
+            for t in (store.global_settings.get("ble_trackers") or [])
+            if t and str(t) not in SECONDARY_BLE_TRACKER_ENTITIES
+        ]
+    if not trackers:
+        trackers = list(PRIMARY_BLE_TRACKER_ENTITIES)
+
+    room_low = str(getattr(coord, "room_name", "")).strip().lower()
+    in_this_room = False
+    contradicted = False
+    for tracker_eid in trackers:
+        st = _safe_get_state(hass, tracker_eid)
+        if st is None:
+            continue
+        raw = str(st.state).strip()
+        low = raw.lower().replace("_", " ")
+        if low in ("unknown", "unavailable", "none", ""):
+            continue
+        if low in ("away", "not home", "not_home"):
+            contradicted = True
+            continue
+        norm = (_normalize_ble_area_to_room(raw) or raw).strip().lower()
+        if norm == room_low:
+            in_this_room = True
+        else:
+            contradicted = True
+
+    return contradicted and not in_this_room

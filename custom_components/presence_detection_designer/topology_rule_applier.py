@@ -16,7 +16,7 @@ from .const import (
     BayesianWeightPreset,
     Mode,
 )
-from .sensor_reliability import apply_cooldown_weight, classify_sensor_reliability
+from .sensor_reliability import temper_observation_dict_reliability
 
 _STALE_ENTITY_IDS: frozenset[str] = frozenset(
     {
@@ -275,21 +275,7 @@ def apply_compiled_topology_to_config(
             item["prob_given_true"] = 0.45
             item["prob_given_false"] = 0.25
         else:
-            prof = classify_sensor_reliability(eid)
-            if (
-                prof.is_slow
-                and prof.reliability_weight < 0.999
-                and item.get("cooldown_sec") != prof.cooldown_sec
-            ):
-                base_pt = float(item.get("prob_given_true") or 0.72)
-                base_pf = float(item.get("prob_given_false") or 0.12)
-                pt_w, pf_w = apply_cooldown_weight(
-                    base_pt, base_pf, prof.cooldown_sec, battery_powered=prof.battery_powered
-                )
-                item["preset"] = str(BayesianWeightPreset.SUPPORTING)
-                item["prob_given_true"] = pt_w
-                item["prob_given_false"] = pf_w
-                item["cooldown_sec"] = prof.cooldown_sec
+            temper_observation_dict_reliability(item)
         new_obs.append(item)
     updated[CONF_BAYESIAN_OBSERVATIONS] = new_obs
 
