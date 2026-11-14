@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from .bayesian_engine import (
+    apply_contextual_bayesian_penalties,
     build_effective_observations,
     config_to_yaml_representations,
     evaluate_bayesian,
@@ -24,7 +25,6 @@ from .const import (
 )
 from .coordinator import RoomPresenceCoordinator, _safe_state_getter
 from .llm_verifier import LLMVerifier
-from .sensor_reliability import classify_sensor_reliability
 from .spatial_inference import evaluate_spatial_frame
 from .spatial_topology import compile_floorplan_topology
 from .store import async_get_store
@@ -35,6 +35,7 @@ from .view_serializers import (
     build_presets_metadata,
     collect_ha_areas_and_entities,
     serialize_room_coordinator,
+    serialize_sensor_weights,
 )
 from .views_analytics import (
     PDDReplayView,
@@ -260,9 +261,20 @@ class PDDPreviewBayesianView(HomeAssistantView):
         observations = normalized.get(CONF_BAYESIAN_OBSERVATIONS) or build_effective_observations(
             normalized
         )
+        room_name = str(normalized.get("room_name") or body.get("room_name") or "").strip()
+        store = await async_get_store(hass)
+        spatial_frame = getattr(store, "_last_spatial_frame", None)
+        guest_mode = bool(getattr(store, "global_settings", {}).get("guest_mode_enabled", False))
+        contextual_obs = apply_contextual_bayesian_penalties(
+            observations,
+            room_name=room_name,
+            spatial_frame=spatial_frame,
+            hass=hass,
+            guest_mode_enabled=guest_mode,
+        )
 
         evaluation = evaluate_bayesian(
-            observations=observations,
+            observations=contextual_obs,
             state_getter=lambda eid: _safe_state_getter(hass, eid),
             prior=prior,
             threshold=threshold,
@@ -286,6 +298,7 @@ class PDDPreviewBayesianView(HomeAssistantView):
                 "inactive_observations": evaluation.inactive_observations,
                 "natural_language_summary": evaluation.natural_language_summary,
                 "combinatorics": combinatorics,
+                "sensor_weights": serialize_sensor_weights(observations),
                 "rule_guide": guide,
                 "ha_bayesian_yaml": yamls.get("ha_bayesian_yaml", ""),
                 "designer_yaml": yamls.get("designer_yaml", ""),
@@ -418,19 +431,7 @@ class PDDStateGraphView(HomeAssistantView):
                 continue
             sm = coord.state_machine
             pv = getattr(coord, "pir_validator", None)
-            sensor_weights = [
-                {
-                    "entity_id": obs["entity_id"],
-                    "label": obs.get("label") or obs["entity_id"],
-                    "category": (prof := classify_sensor_reliability(obs["entity_id"])).category,
-                    "cooldown_sec": prof.cooldown_sec,
-                    "reliability_weight": prof.reliability_weight,
-                    "requires_pir_validation": prof.requires_pir_validation,
-                    "human_exclusive": prof.is_human_exclusive,
-                }
-                for obs in (coord.bayesian_observations or [])
-                if isinstance(obs, dict) and obs.get("entity_id")
-            ]
+            sensor_weights = serialize_sensor_weights(coord.bayesian_observations)
             rooms.append(
                 {
                     "entry_id": coord.entry_id,
@@ -445,6 +446,9 @@ class PDDStateGraphView(HomeAssistantView):
                     "mermaid_diagram": sm.get_mermaid_diagram(),
                     "transition_history": sm.transition_history,
                     "pir_validation_enabled": getattr(coord, "pir_validation_enabled", True),
+                    "pir_candidate_window": getattr(
+                        pv, "candidate_window_sec", getattr(coord, "pir_candidate_window", 15.0)
+                    ),
                     "pir_validation_state": str(pv.state) if pv is not None else "disabled",
                     "pir_corroboration_source": pv.last_corroboration_source
                     if pv is not None

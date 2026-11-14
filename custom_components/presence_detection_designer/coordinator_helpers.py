@@ -128,17 +128,30 @@ def apply_coordinator_config_fields(
         )
 
     raw_pir_en = config.get(CONF_PIR_VALIDATION_ENABLED)
-    if raw_pir_en is None and coord.hass and isinstance(getattr(coord.hass, "data", None), dict):
+    raw_pir_win = config.get(CONF_PIR_CANDIDATE_WINDOW)
+    if (
+        (raw_pir_en is None or raw_pir_win is None)
+        and coord.hass
+        and isinstance(getattr(coord.hass, "data", None), dict)
+    ):
         st = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
         if st is not None and isinstance(getattr(st, "global_settings", None), dict):
-            raw_pir_en = st.global_settings.get(CONF_PIR_VALIDATION_ENABLED)
+            if raw_pir_en is None:
+                raw_pir_en = st.global_settings.get(CONF_PIR_VALIDATION_ENABLED)
+            if raw_pir_win is None:
+                raw_pir_win = st.global_settings.get(CONF_PIR_CANDIDATE_WINDOW)
     coord.pir_validation_enabled = (
         DEFAULT_PIR_VALIDATION_ENABLED if raw_pir_en is None else bool(raw_pir_en)
     )
-    pir_cand_win = float(
-        config.get(CONF_PIR_CANDIDATE_WINDOW, DEFAULT_PIR_CANDIDATE_WINDOW)
-        or DEFAULT_PIR_CANDIDATE_WINDOW
+    pir_cand_win = max(
+        1.0,
+        float(
+            DEFAULT_PIR_CANDIDATE_WINDOW
+            if raw_pir_win is None
+            else (raw_pir_win or DEFAULT_PIR_CANDIDATE_WINDOW)
+        ),
     )
+    coord.pir_candidate_window = pir_cand_win
     if preserve_state and getattr(coord, "pir_validator", None) is not None:
         coord.pir_validator.room_name = coord.room_name
         coord.pir_validator.candidate_window_sec = max(1.0, pir_cand_win)

@@ -486,3 +486,194 @@ async def test_state_graph_view_returns_mermaid_and_history(mock_hass):
     assert "stateDiagram" in room["mermaid_diagram"]
     assert isinstance(room["transition_history"], list)
     assert len(room["transition_history"]) >= 1
+
+
+@pytest.mark.requirement("UI-01", category="UI", req_type="PositiveFeature")
+@pytest.mark.anyio
+async def test_serialize_room_coordinator_includes_pir_gate_and_sensor_weights(mock_hass):
+    """@requirement UI-01: Room serializer exposes PIR Gate telemetry and sensor reliability weights."""
+    from custom_components.presence_detection_designer.view_serializers import (
+        serialize_room_coordinator,
+    )
+
+    mock_hass.states.get = MagicMock(return_value=MagicMock(state="off", attributes={}))
+    coord = RoomPresenceCoordinator(
+        mock_hass,
+        "entry_ser",
+        {
+            CONF_ROOM_NAME: "Bedroom",
+            CONF_MODE: str(Mode.OPEN),
+            CONF_TRIGGER_ENTITIES: ["binary_sensor.bedroom_pir_motion"],
+            CONF_BAYESIAN_OBSERVATIONS: [
+                {
+                    "entity_id": "binary_sensor.bedroom_pir_motion",
+                    "label": "Bedroom PIR",
+                    "preset": "strong",
+                    "operator": "equals",
+                    "state": "on",
+                },
+                {
+                    "entity_id": "sensor.office_ups_used_watts_filtered",
+                    "label": "Office UPS",
+                    "preset": "supporting",
+                    "operator": "greater_than",
+                    "state": "140",
+                },
+            ],
+            "max_hold_timeout": 2400,
+            "pir_validation_enabled": True,
+            "pir_candidate_window": 20.0,
+        },
+    )
+    await coord.async_setup()
+
+    payload = serialize_room_coordinator(coord)
+    assert payload["max_hold_timeout"] == 2400
+    assert payload["pir_validation_enabled"] is True
+    assert payload["pir_candidate_window"] == 20.0
+    assert "pir_validation_state" in payload
+    assert "stateDiagram" in payload["pir_mermaid_diagram"]
+    assert isinstance(payload["pir_transition_history"], list)
+
+    weights = {w["entity_id"]: w for w in payload["sensor_weights"]}
+    assert weights["binary_sensor.bedroom_pir_motion"]["human_exclusive"] is True
+    assert weights["binary_sensor.bedroom_pir_motion"]["requires_pir_validation"] is True
+    assert weights["sensor.office_ups_used_watts_filtered"]["human_exclusive"] is False
+
+
+@pytest.mark.requirement("UI-01", category="UI", req_type="PositiveFeature")
+@pytest.mark.anyio
+async def test_preview_bayesian_view_applies_contextual_ble_penalties_and_neutral_camera(mock_hass):
+    """@requirement UI-01: Bayesian preview penalizes confirmed other-room BLE while keeping camera/PIR off neutral."""
+
+    def _state_getter(entity_id: str):
+        states = {
+            "sensor.steve_s_s25_ble_area": MagicMock(state="Living Room", attributes={}),
+            "binary_sensor.living_room_person_occupancy": MagicMock(state="on", attributes={}),
+            "binary_sensor.office_person_occupancy": MagicMock(state="off", attributes={}),
+            "binary_sensor.office_motion_occupancy": MagicMock(state="off", attributes={}),
+        }
+        return states.get(entity_id)
+
+    mock_hass.states.get = MagicMock(side_effect=_state_getter)
+    lr_coord = RoomPresenceCoordinator(
+        mock_hass,
+        "entry_lr",
+        {
+            CONF_ROOM_NAME: "Living Room",
+            CONF_MODE: str(Mode.OPEN),
+            CONF_TRIGGER_ENTITIES: ["binary_sensor.living_room_person_occupancy"],
+        },
+    )
+    await lr_coord.async_setup()
+    mock_hass.data.setdefault(DOMAIN, {})["entry_lr"] = lr_coord
+
+    preview = PDDPreviewBayesianView()
+    req = _make_request(
+        mock_hass,
+        {
+            "config": {
+                "room_name": "Office",
+                "bayesian_prior": 0.2,
+                "bayesian_threshold": 0.75,
+                "bayesian_observations": [
+                    {
+                        "entity_id": "sensor.steve_s_s25_ble_area",
+                        "label": "Steve BLE",
+                        "preset": "moderate",
+                        "operator": "equals",
+                        "state": "Office",
+                    },
+                    {
+                        "entity_id": "binary_sensor.office_person_occupancy",
+                        "label": "Office Camera Person",
+                        "preset": "decisive",
+                        "operator": "equals",
+                        "state": "on",
+                    },
+                    {
+                        "entity_id": "binary_sensor.office_motion_occupancy",
+                        "label": "Office PIR",
+                        "preset": "strong",
+                        "operator": "equals",
+                        "state": "on",
+                    },
+                ],
+            }
+        },
+    )
+
+    status, res = _unpack(await preview.post(req))
+    assert status == 200
+    assert res["probability"] == 0.0
+    inactive = {o["entity_id"]: o for o in res["inactive_observations"]}
+    assert inactive["sensor.steve_s_s25_ble_area"]["likelihood_ratio"] < 0.99
+    assert inactive["binary_sensor.office_person_occupancy"]["likelihood_ratio"] == 1.0
+    assert inactive["binary_sensor.office_motion_occupancy"]["likelihood_ratio"] == 1.0
+    assert len(res["sensor_weights"]) == 3
+
+
+@pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
+def test_blueprints_consume_occupancy_state_without_box_state():
+    """@requirement UI-02: PDD automation blueprints use occupancy_state cleanly without legacy box_state."""
+    from pathlib import Path
+
+    import yaml
+
+    class _HALoader(yaml.SafeLoader):
+        pass
+
+    _HALoader.add_constructor(
+        "!input", lambda loader, node: f"!input:{loader.construct_scalar(node)}"
+    )
+
+    repo_root = Path(__file__).resolve().parent.parent
+    bp_dir = repo_root / "blueprints" / "automation" / "spelech"
+    pdd_blueprints = sorted(bp_dir.glob("pdd_*.yaml"))
+    assert len(pdd_blueprints) >= 3
+
+    for bp_path in pdd_blueprints:
+        raw = bp_path.read_text(encoding="utf-8")
+        for stale in ("box_state", "timer_active", "occupied_sealed", "occupied_unsealed"):
+            assert stale not in raw, f"Stale attribute/state {stale!r} in {bp_path.name}"
+        parsed = yaml.load(raw, Loader=_HALoader)
+        assert parsed["blueprint"]["domain"] == "automation"
+
+    lighting_raw = (bp_dir / "pdd_presence_lighting.yaml").read_text(encoding="utf-8")
+    for required_tok in (
+        "attribute: occupancy_state",
+        "occupied_cooling",
+        "occupied_confirmed",
+        "occupied_holding",
+        "override",
+    ):
+        assert required_tok in lighting_raw
+
+
+@pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
+def test_panel_js_ui_contracts():
+    """@requirement UI-02: panel.js exposes PIR Gate, max_hold_timeout, Automations tab, and valid presets."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    panel_js = (
+        repo_root / "custom_components" / "presence_detection_designer" / "static" / "panel.js"
+    ).read_text(encoding="utf-8")
+
+    for stale in ("box_state", "timer_active", "occupied_sealed", "occupied_unsealed"):
+        assert stale not in panel_js, f"Found legacy token {stale!r} in panel.js"
+
+    assert "prob_given_true ?? 0.25" not in panel_js
+    assert "this._api(" not in panel_js
+    for required_id in (
+        "cfg-max-hold-timeout",
+        "cfg-pir-validation-enabled",
+        "cfg-pir-candidate-window",
+        "gl-pir-validation-enabled",
+        "gl-pir-candidate-window",
+        "PIR Validation Gate",
+        "Automations &amp; Blueprints",
+        "pdd_presence_lighting.yaml",
+        "Solo sensors crossing score/hold threshold",
+    ):
+        assert required_id in panel_js, f"Missing UI contract token {required_id!r} in panel.js"
