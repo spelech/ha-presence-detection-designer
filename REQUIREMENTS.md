@@ -19,7 +19,7 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 | Category Code | Domain Scope | Proof Types |
 | :--- | :--- | :--- |
 | **`SPATIAL`** | Floorplan geometry, wall/doorway raycasting, camera cones, human vs. pet localization | `PositiveFeature` / `FailClosedGuardrail` |
-| **`STATE`** | `transitions` (`HierarchicalAsyncGraphMachine`) room lifecycle, event-driven timers, Mermaid export, audit log | `PositiveFeature` / `FailClosedGuardrail` |
+| **`STATE`** | `transitions` (`HierarchicalGraphMachine`) room lifecycle, event-driven timers, Mermaid export, audit log | `PositiveFeature` / `FailClosedGuardrail` |
 | **`GUARD`** | Bounded liveness (no stuck rooms), pet exclusion, override isolation, decoupled headcount | `FailClosedGuardrail` |
 | **`PIR`** | *(Phase 2)* PIR false-positive gating (`candidate` state), camera & time-history corroboration | `PositiveFeature` / `FailClosedGuardrail` |
 | **`ENTITY`** | Home Assistant `binary_sensor` occupancy output, automation attributes, switches/buttons/services | `PositiveFeature` / `FailClosedGuardrail` |
@@ -35,10 +35,10 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`SPATIAL-01`** | `SPATIAL` | `PositiveFeature` | **Wall & Doorway Occluded Raycasting** | Solid walls block camera/PIR cones; doorway apertures pass sightlines into adjacent rooms. | `tests/test_spatial_topology.py` |
 | **`SPATIAL-02`** | `SPATIAL` | `PositiveFeature` | **Spatial Localization & Human/Pet Classification** | Computes per-room `human_present`, `pet_present`, `occupant_type`, `inferred_subregion`, and blind-pocket coverage. | `tests/test_spatial_inference.py` |
-| **`STATE-01`** | `STATE` | `PositiveFeature` | **Hierarchical `transitions` Room Lifecycle** | Each room uses a fixed `HierarchicalAsyncGraphMachine` (`vacant`, `occupied.{confirmed,holding,cooling,verifying}`, `override`); no external module mutates internal state flags. | `tests/test_transitions_state_machine.py::test_nominal_occupancy_lifecycle` |
+| **`STATE-01`** | `STATE` | `PositiveFeature` | **Hierarchical `transitions` Room Lifecycle** | Each room uses a fixed `HierarchicalGraphMachine` (`vacant`, `occupied.{confirmed,holding,cooling,verifying}`, `override`); no external module mutates internal state flags. | `tests/test_transitions_state_machine.py::test_nominal_occupancy_lifecycle` |
 | **`STATE-02`** | `STATE` | `PositiveFeature` | **Event-Driven Entry/Exit Timers** | Timed states (`holding`, `cooling`, `verifying`) schedule a single timeout on enter and cancel it on any exit; virtual clock stepping works identically for replay. | `tests/test_transitions_state_machine.py::test_timer_lifecycle_and_retrigger_cancellation` |
 | **`STATE-03`** | `STATE` | `PositiveFeature` | **Transition Audit Log & Guard Attribution** | Every attempted trigger appends a structured `TransitionRecord` (`timestamp`, `trigger`, `source`, `dest`, `accepted`, `reason`, `guards`) to a bounded ring buffer. | `tests/test_transitions_state_machine.py::test_audit_log_records_accepted_and_blocked_transitions` |
-| **`STATE-04`** | `STATE` | `PositiveFeature` | **Live Mermaid Diagram Generation** | `get_mermaid_diagram()` returns a valid `stateDiagram-v2` string directly from `HierarchicalAsyncGraphMachine.get_graph().draw(None)`. | `tests/test_transitions_state_machine.py::test_mermaid_diagram_generation` |
+| **`STATE-04`** | `STATE` | `PositiveFeature` | **Live Mermaid Diagram Generation** | `get_mermaid_diagram()` returns a valid `stateDiagram-v2` string directly from `HierarchicalGraphMachine.get_graph().draw(None)`. | `tests/test_transitions_state_machine.py::test_mermaid_diagram_generation` |
 | **`STATE-05`** | `STATE` | `PositiveFeature` | **Normalized Evidence Snapshot Adapter** | State machine evaluates transitions exclusively from a typed `RoomEvidenceSnapshot`, decoupling Bayesian/condition tuning from transition logic. | `tests/test_transitions_state_machine.py::test_evidence_snapshot_drives_transitions` |
 | **`STATE-06`** | `STATE` | `PositiveFeature` | **Adjacent Room Handoff During Cooling** | When an adjacent connected room enters `occupied` and this room is `occupied_cooling` (or has no active evidence), it clears cleanly to `vacant` with handoff attribution. | `tests/test_transitions_state_machine.py::test_adjacent_handoff_clears_cooling_room` |
 | **`GUARD-01`** | `GUARD` | `FailClosedGuardrail` | **Bounded Liveness (No Stuck Occupied Rooms)** | Every `occupied` sub-state has a finite timeout path toward `vacant` (`holding` -> `cooling` on `max_hold_timeout`, `cooling` -> `vacant`/`verifying`, `verifying` -> `vacant` on `verify_timeout`). | `tests/test_transitions_guardrails.py::test_bounded_liveness_prevents_stuck_occupied` |
@@ -70,7 +70,7 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 
 ### `STATE-01`: Hierarchical `transitions` Room Lifecycle
 - **Category**: `STATE` (`PositiveFeature`)
-- **Description**: Replace the ad-hoc `RoomStateMachine` flag bag with a fixed, non-user-modifiable `HierarchicalAsyncGraphMachine` per room containing states `vacant`, `occupied` (`confirmed`, `holding`, `cooling`, `verifying`), and `override`.
+- **Description**: Replace the ad-hoc `RoomStateMachine` flag bag with a fixed, non-user-modifiable `HierarchicalGraphMachine` per room containing states `vacant`, `occupied` (`confirmed`, `holding`, `cooling`, `verifying`), and `override`.
 - **Verification**: Real `transitions` state machine lifecycle tests asserting state names, `is_present`, and valid/invalid transitions.
 
 ### `STATE-02`: Event-Driven Entry/Exit Timers
@@ -85,7 +85,7 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 
 ### `STATE-04`: Live Mermaid Diagram Generation
 - **Category**: `STATE` (`PositiveFeature`)
-- **Description**: Generate a live Mermaid `stateDiagram-v2` definition directly from the `HierarchicalAsyncGraphMachine` (`graph_engine="mermaid"`) so UI diagrams never drift from Python logic.
+- **Description**: Generate a live Mermaid `stateDiagram-v2` definition directly from the `HierarchicalGraphMachine` (`graph_engine="mermaid"`) so UI diagrams never drift from Python logic.
 - **Verification**: Unit test validating generated Mermaid syntax contains all declared states and transitions.
 
 ### `STATE-05`: Normalized Evidence Snapshot Adapter

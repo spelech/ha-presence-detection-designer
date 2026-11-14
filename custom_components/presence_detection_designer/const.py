@@ -57,6 +57,8 @@ DEFAULT_BLE_DECIDER_ENABLED = False
 DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
 DEFAULT_GRACE_TIMEOUT = 60  # 1 minute after door open/close
 DEFAULT_EXTEND_TIMEOUT = 300  # 5 minutes if LLM detects occupant
+DEFAULT_MAX_HOLD_TIMEOUT = 1800  # 30 minutes finite cap on holding states
+DEFAULT_VERIFY_TIMEOUT = 30  # 30 seconds fail-safe cap on LLM verification
 DEFAULT_BAYESIAN_PRIOR = 0.20  # 20% baseline prior probability
 DEFAULT_BAYESIAN_THRESHOLD = 0.75  # 75% posterior threshold to declare occupied
 DEFAULT_LLM_PROMPT = (
@@ -65,15 +67,14 @@ DEFAULT_LLM_PROMPT = (
 )
 
 
-class BoxState(StrEnum):
-    """Wasp-in-a-Box states."""
+class OccupancyState(StrEnum):
+    """Hierarchical transitions occupancy states."""
 
-    IDLE_CLEAR = "idle_clear"
-    OCCUPIED = "occupied"
-    OCCUPIED_SEALED = "occupied_sealed"
-    OCCUPIED_UNSEALED = "occupied_unsealed"
-    TIMER_ACTIVE = "timer_active"
-    LLM_VERIFYING = "llm_verifying"
+    VACANT = "vacant"
+    OCCUPIED_CONFIRMED = "occupied_confirmed"
+    OCCUPIED_HOLDING = "occupied_holding"
+    OCCUPIED_COOLING = "occupied_cooling"
+    OCCUPIED_VERIFYING = "occupied_verifying"
     OVERRIDE = "override"
 
 

@@ -95,12 +95,15 @@ class PresenceBinarySensor(PresenceDesignerEntityMixin, BinarySensorEntity):
         sm = self.coordinator.state_machine
         is_present = bool(sm.is_present)
         attrs: dict[str, Any] = {
-            "mode": sm.mode,
-            "box_state": sm.box_state,
-            "perimeter_sealed": sm.is_perimeter_sealed,
+            "mode": str(self.coordinator.mode),
+            "occupancy_state": str(sm.state),
+            "is_cooling_down": sm.is_cooling_down,
+            "cooling_remaining_sec": sm.cooling_remaining_sec,
+            "state_reason": sm.state_reason,
+            "verified_by": sm.verified_by,
+            "transition_history": sm.transition_history[-10:],
             "active_conditions": sm.active_conditions,
             "last_trigger_entity": sm.last_trigger_entity,
-            "vacating_countdown": sm.vacating_countdown,
             "last_llm_check": sm.last_llm_result,
             "override": sm.override,
             "bayesian_probability": sm.bayesian_probability,

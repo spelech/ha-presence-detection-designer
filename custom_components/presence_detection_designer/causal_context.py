@@ -263,8 +263,10 @@ def process_coordinator_actuator_event(coord: Any, event: Any) -> None:
     )
     if res.get("is_manual"):
         if res.get("action") == "on":
+            coord._active_triggers.add(str(entity_id))
+            coord._last_trigger_entity = str(entity_id)
             coord._eval_bayesian_and_update()
-            coord.state_machine.handle_trigger(str(entity_id), True)
+            coord._sync_state_machine_evidence()
             coord._notify_connected_rooms_if_active()
         coord.async_update_listeners()
     elif res.get("actor") == "automation":

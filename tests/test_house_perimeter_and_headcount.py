@@ -25,10 +25,11 @@ from custom_components.presence_detection_designer.const import (
     DATA_STORE,
     DEFAULT_PERIMETER_DOORS,
     DOMAIN,
-    BoxState,
     Mode,
+    OccupancyState,
 )
 from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
+from custom_components.presence_detection_designer.evidence_snapshot import RoomEvidenceSnapshot
 from custom_components.presence_detection_designer.house_perimeter import (
     HousePerimeterTracker,
     get_house_perimeter_tracker,
@@ -57,7 +58,6 @@ def _make_mock_coord(
     }
     coord = RoomPresenceCoordinator(hass, entry_id, config)
     coord.state_machine.inactivity_timeout = 180
-    coord.state_machine.grace_timeout = 60
     return coord
 
 
@@ -123,7 +123,13 @@ def test_egress_transition_with_prior_interior_motion(mock_hass):
 
     now = time.time()
     # Occupant moves in Front Entry
-    front_entry_coord.state_machine.handle_trigger("binary_sensor.front_entry_pir", True)
+    front_entry_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.front_entry_pir"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.front_entry_pir",
+        )
+    )
     assert front_entry_coord.state_machine.is_present is True
 
     # Door opens
@@ -138,8 +144,9 @@ def test_egress_transition_with_prior_interior_motion(mock_hass):
     assert tracker.state.mode == "vacant"
 
 
-def test_conservation_law_vacant_clears_all_rooms(mock_hass):
-    """When house headcount becomes 0, all occupied rooms are vacated immediately."""
+@pytest.mark.requirement("GUARD-03", category="GUARD", req_type="FailClosedGuardrail")
+def test_headcount_zero_and_conservation_law_decoupled_from_rooms(mock_hass):
+    """@requirement GUARD-03: Whole-house headcount changes and enforce_conservation_law never clear rooms."""
     office_coord = _make_mock_coord(mock_hass, "Office")
     living_coord = _make_mock_coord(mock_hass, "Living Room")
 
@@ -148,76 +155,27 @@ def test_conservation_law_vacant_clears_all_rooms(mock_hass):
         living_coord.entry_id: living_coord,
     }
 
-    # Simulate both rooms occupied, then motion ceased (in countdown timer)
-    office_coord.state_machine.handle_trigger("binary_sensor.office_motion", True)
-    living_coord.state_machine.handle_trigger("binary_sensor.living_room_motion", True)
-    office_coord.state_machine.handle_trigger("binary_sensor.office_motion", False)
-    living_coord.state_machine.handle_trigger("binary_sensor.living_room_motion", False)
-    assert office_coord.state_machine.is_present is True
-    assert living_coord.state_machine.is_present is True
+    office_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.office_motion"}), human_present=True
+        )
+    )
+    living_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.living_room_motion"}), human_present=True
+        )
+    )
+    living_coord.state_machine.apply_evidence(RoomEvidenceSnapshot())
+    assert office_coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
+    assert living_coord.state_machine.state == OccupancyState.OCCUPIED_COOLING
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(0)
+    cleared = tracker.enforce_conservation_law(newly_occupied_room="Kitchen")
 
-    # Both rooms without active triggers must be forcefully cleared
-    assert office_coord.state_machine.is_present is False
-    assert office_coord.state_machine.box_state == BoxState.IDLE_CLEAR
-    assert living_coord.state_machine.is_present is False
-    assert living_coord.state_machine.box_state == BoxState.IDLE_CLEAR
-
-
-def test_conservation_law_single_occupant_clears_prior_room(mock_hass):
-    """When headcount == 1, only 1 room can be occupied; activating new room clears the prior room."""
-    office_coord = _make_mock_coord(mock_hass, "Office")
-    kitchen_coord = _make_mock_coord(mock_hass, "Kitchen")
-
-    mock_hass.data[DOMAIN] = {
-        office_coord.entry_id: office_coord,
-        kitchen_coord.entry_id: kitchen_coord,
-    }
-
-    tracker = HousePerimeterTracker(mock_hass)
-    tracker.set_headcount(1)
-
-    # Steve was in Office
-    office_coord.state_machine.handle_trigger("binary_sensor.office_motion", True)
-    office_coord.state_machine.handle_trigger("binary_sensor.office_motion", False)
+    assert cleared == []
     assert office_coord.state_machine.is_present is True
-    assert office_coord.state_machine.box_state == BoxState.TIMER_ACTIVE
-
-    # Steve walks into Kitchen
-    kitchen_coord.state_machine.handle_trigger("binary_sensor.kitchen_motion", True)
-    tracker.enforce_conservation_law(newly_occupied_room="Kitchen")
-
-    assert kitchen_coord.state_machine.is_present is True
-    # Office was vacated immediately by conservation law
-    assert office_coord.state_machine.is_present is False
-    assert office_coord.state_machine.box_state == BoxState.IDLE_CLEAR
-    assert "Conservation Law" in office_coord._last_adjacent_arrival
-
-
-def test_conservation_law_multi_occupant_allows_multiple_rooms(mock_hass):
-    """When headcount >= 2, multiple rooms can remain concurrently occupied without vacating."""
-    office_coord = _make_mock_coord(mock_hass, "Office")
-    kitchen_coord = _make_mock_coord(mock_hass, "Kitchen")
-
-    mock_hass.data[DOMAIN] = {
-        office_coord.entry_id: office_coord,
-        kitchen_coord.entry_id: kitchen_coord,
-    }
-
-    tracker = HousePerimeterTracker(mock_hass)
-    tracker.set_headcount(2)
-    assert tracker.state.mode == "multi_occupant"
-
-    office_coord.state_machine.handle_trigger("binary_sensor.office_motion", True)
-    kitchen_coord.state_machine.handle_trigger("binary_sensor.kitchen_motion", True)
-
-    tracker.enforce_conservation_law(newly_occupied_room="Kitchen")
-
-    # Both rooms remain occupied
-    assert office_coord.state_machine.is_present is True
-    assert kitchen_coord.state_machine.is_present is True
+    assert living_coord.state_machine.is_present is True
 
 
 def test_house_headcount_sensor_attributes_and_updates(mock_hass):
@@ -226,7 +184,13 @@ def test_house_headcount_sensor_attributes_and_updates(mock_hass):
     # is physically plausible and should increment the count.
     living = _make_mock_coord(mock_hass, "Living Room")
     mock_hass.data[DOMAIN] = {living.entry_id: living}
-    living.state_machine.handle_trigger("binary_sensor.living_room_motion", True)
+    living.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.living_room_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.living_room_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(1)
@@ -371,7 +335,13 @@ def test_duplicate_same_direction_transit_suppressed(mock_hass):
     living = _make_mock_coord(mock_hass, "Living Room")
     _install_global_settings(mock_hass, **{CONF_DOOR_DUPLICATE_WINDOW: 45.0})
     mock_hass.data[DOMAIN][living.entry_id] = living
-    living.state_machine.handle_trigger("binary_sensor.living_room_motion", True)
+    living.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.living_room_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.living_room_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(0)
@@ -426,7 +396,13 @@ def test_ingress_while_others_home_requires_plausible_count(mock_hass):
         kitchen.entry_id: kitchen,
         DATA_STORE: MagicMock(global_settings={}),
     }
-    living.state_machine.handle_trigger("binary_sensor.living_room_motion", True)
+    living.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.living_room_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.living_room_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(2)
@@ -437,7 +413,13 @@ def test_ingress_while_others_home_requires_plausible_count(mock_hass):
     assert rec is not None and rec.vector == "ambiguous"
     assert tracker.state.count == 2
 
-    kitchen.state_machine.handle_trigger("binary_sensor.kitchen_motion", True)
+    kitchen.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.kitchen_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.kitchen_motion",
+        )
+    )
     tracker.handle_door_state_change("binary_sensor.front_door", True, now_ts=now + 10.0)
     rec2 = tracker.handle_door_state_change("binary_sensor.front_door", False, now_ts=now + 14.0)
 
@@ -450,7 +432,13 @@ def test_side_door_exit_held_pending_without_exterior_motion(mock_hass):
     garage = _make_mock_coord(mock_hass, "Garage")
     mock_hass.data.setdefault(DOMAIN, {})
     mock_hass.data[DOMAIN][garage.entry_id] = garage
-    garage.state_machine.handle_trigger("binary_sensor.garage_motion", True)
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.garage_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(1)
@@ -475,7 +463,13 @@ def test_side_door_exit_immediately_corroborated_by_driveway_motion(mock_hass):
     garage = _make_mock_coord(mock_hass, "Garage")
     mock_hass.data.setdefault(DOMAIN, {})
     mock_hass.data[DOMAIN][garage.entry_id] = garage
-    garage.state_machine.handle_trigger("binary_sensor.garage_motion", True)
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.garage_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(1)
@@ -502,7 +496,13 @@ def test_side_door_exit_delayed_corroboration_by_backyard_motion(mock_hass):
     garage = _make_mock_coord(mock_hass, "Garage")
     mock_hass.data.setdefault(DOMAIN, {})
     mock_hass.data[DOMAIN][garage.entry_id] = garage
-    garage.state_machine.handle_trigger("binary_sensor.garage_motion", True)
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.garage_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(2)
@@ -534,7 +534,13 @@ def test_side_door_exit_corroboration_window_expires_as_ambiguous(mock_hass):
     garage = _make_mock_coord(mock_hass, "Garage")
     mock_hass.data.setdefault(DOMAIN, {})
     mock_hass.data[DOMAIN][garage.entry_id] = garage
-    garage.state_machine.handle_trigger("binary_sensor.garage_motion", True)
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.garage_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(2)
@@ -568,7 +574,13 @@ def test_custom_exit_corroborators_and_window_config(mock_hass):
     kitchen = _make_mock_coord(mock_hass, "Kitchen")
     mock_hass.data.setdefault(DOMAIN, {})
     mock_hass.data[DOMAIN][kitchen.entry_id] = kitchen
-    kitchen.state_machine.handle_trigger("binary_sensor.kitchen_motion", True)
+    kitchen.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.kitchen_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.kitchen_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(1)
@@ -601,7 +613,13 @@ def test_unconfigured_door_does_not_require_exterior_corroboration(mock_hass):
     entry = _make_mock_coord(mock_hass, "Front Entry")
     mock_hass.data.setdefault(DOMAIN, {})
     mock_hass.data[DOMAIN][entry.entry_id] = entry
-    entry.state_machine.handle_trigger("binary_sensor.front_entry_motion", True)
+    entry.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.front_entry_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.front_entry_motion",
+        )
+    )
 
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(1)

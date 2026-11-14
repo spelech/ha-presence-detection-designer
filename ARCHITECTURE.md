@@ -18,7 +18,7 @@ flowchart TD
     end
 
     subgraph Core["transitions State Machine Engine (Per Room)"]
-        SM["RoomPresenceStateMachine<br/>(HierarchicalAsyncGraphMachine)"]
+        SM["RoomPresenceStateMachine<br/>(HierarchicalGraphMachine)"]
         Timer["Entry/Exit Timer & Virtual Clock"]
         Audit["Transition Audit Ring Buffer"]
         Mermaid["Live Mermaid Diagram Exporter"]
@@ -47,7 +47,7 @@ flowchart TD
 
 ---
 
-## Room State Machine Flow (`HierarchicalAsyncGraphMachine`)
+## Room State Machine Flow (`HierarchicalGraphMachine`)
 
 ```mermaid
 stateDiagram-v2
@@ -91,7 +91,7 @@ stateDiagram-v2
 
 ```text
 custom_components/presence_detection_designer/
-├── state_machine.py          # HierarchicalAsyncGraphMachine model, TransitionRecord, Mermaid export
+├── state_machine.py          # HierarchicalGraphMachine model, TransitionRecord, Mermaid export
 ├── evidence_snapshot.py      # RoomEvidenceSnapshot normalization (spatial + triggers + optional Bayesian/conditions)
 ├── coordinator.py            # HA event subscriptions, timer scheduling, coordinator lifecycle
 ├── coordinator_dispatch.py   # Transition event bus, Slack attribution, adjacent handoff dispatch

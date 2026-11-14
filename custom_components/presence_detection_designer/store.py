@@ -245,7 +245,7 @@ class PDDStore:
             "ts": float(event.get("ts") or now_dt.timestamp()),
             "iso": str(event.get("iso") or now_dt.isoformat()),
             "is_present": bool(event.get("is_present", False)),
-            "box_state": str(event.get("box_state", "idle_clear")),
+            "occupancy_state": str(event.get("occupancy_state", "vacant")),
             "probability_pct": float(event.get("probability_pct", 0.0)),
             "entity_states": dict(event.get("entity_states") or {}),
         }
@@ -253,7 +253,7 @@ class PDDStore:
             last = events[-1]
             if (
                 last.get("is_present") == payload["is_present"]
-                and last.get("box_state") == payload["box_state"]
+                and last.get("occupancy_state") == payload["occupancy_state"]
                 and last.get("probability_pct") == payload["probability_pct"]
                 and last.get("entity_states") == payload["entity_states"]
                 and (payload["ts"] - float(last.get("ts", 0.0))) < 60.0

@@ -46,6 +46,7 @@ def _unpack(resp: Any) -> tuple[int, dict[str, Any]]:
     return status, json.loads(str(raw_body))
 
 
+@pytest.mark.requirement("REPLAY-01", category="REPLAY", req_type="PositiveFeature")
 def test_simulate_config_and_replay_comparison_eliminates_false_positives():
     """Verify historical simulation and What-If Replay accurately detect and eliminate false positives."""
     start_ts = 1_700_000_000.0

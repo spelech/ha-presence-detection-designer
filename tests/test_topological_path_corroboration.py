@@ -14,10 +14,10 @@ from custom_components.presence_detection_designer.const import (
     CONF_ROOM_NAME,
     CONF_TRIGGER_ENTITIES,
     DOMAIN,
-    BoxState,
     Mode,
 )
 from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
+from custom_components.presence_detection_designer.evidence_snapshot import RoomEvidenceSnapshot
 from custom_components.presence_detection_designer.floorplan_presets import get_default_floorplan
 from custom_components.presence_detection_designer.trajectory_validator import (
     build_topology_graph,
@@ -47,7 +47,6 @@ def _make_mock_coord(
     }
     coord = RoomPresenceCoordinator(hass, entry_id, config)
     coord.state_machine.inactivity_timeout = 180
-    coord.state_machine.grace_timeout = 60
     return coord
 
 
@@ -101,7 +100,14 @@ def test_high_confidence_source_preservation_blocks_impossible_jump(mock_hass):
     }
 
     # Master Bedroom has high-confidence visual presence via Frigate camera
-    mbr_coord.state_machine.handle_trigger("binary_sensor.master_bedroom_camera_person", True)
+    mbr_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.master_bedroom_camera_person"}),
+            human_present=True,
+            camera_confirmed=True,
+            last_trigger_entity="binary_sensor.master_bedroom_camera_person",
+        )
+    )
     mbr_coord.last_spatial_estimate = {
         "human_present": True,
         "occupant_type": "human",
@@ -149,7 +155,14 @@ def test_corroborated_path_transition_success(mock_hass):
         lr_coord.entry_id: lr_coord,
     }
 
-    mbr_coord.state_machine.handle_trigger("binary_sensor.mbr_person", True)
+    mbr_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.mbr_person"}),
+            human_present=True,
+            camera_confirmed=True,
+            last_trigger_entity="binary_sensor.mbr_person",
+        )
+    )
     mbr_coord.last_spatial_estimate = {
         "human_present": True,
         "occupant_type": "human",
@@ -192,7 +205,14 @@ def test_branching_path_corroboration(mock_hass):
         lr_coord.entry_id: lr_coord,
     }
 
-    kitchen_coord.state_machine.handle_trigger("binary_sensor.kitchen_person", True)
+    kitchen_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.kitchen_person"}),
+            human_present=True,
+            camera_confirmed=True,
+            last_trigger_entity="binary_sensor.kitchen_person",
+        )
+    )
     kitchen_coord.last_spatial_estimate = {
         "human_present": True,
         "occupant_type": "human",
@@ -231,8 +251,8 @@ def test_branching_path_corroboration(mock_hass):
     assert traj_entry.corroborated_path == ["Kitchen", "Front Entry", "Living Room"]
 
 
-def test_sealed_perimeter_blocks_transit_without_boundary_open(mock_hass):
-    """Verify that an occupant sealed inside a room cannot transition without opening the door."""
+def test_adjacent_transit_not_blocked_by_wasp_in_box_seal(mock_hass):
+    """Verify legacy WIB perimeter seal never blocks adjacent room trajectory transitions."""
     mbr_coord = _make_mock_coord(
         mock_hass,
         "Master Bedroom",
@@ -249,35 +269,19 @@ def test_sealed_perimeter_blocks_transit_without_boundary_open(mock_hass):
         hall_coord.entry_id: hall_coord,
     }
 
-    # Door closes with person inside -> OCCUPIED_SEALED
-    mbr_coord.state_machine.handle_trigger("binary_sensor.mbr_person", True)
-    mbr_coord.state_machine.handle_boundary("binary_sensor.master_bedroom_door", is_open=False)
-    assert mbr_coord.state_machine.box_state == BoxState.OCCUPIED_SEALED
-    assert mbr_coord.state_machine.is_perimeter_sealed is True
-
+    mbr_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.mbr_person"}), human_present=True
+        )
+    )
     now = time.time()
-    # Hallway triggers, but bedroom door was never opened
     traj = corroborate_transition_trajectory(
         candidate_room="Upstairs Hallway & Stairs",
         all_coordinators=[mbr_coord, hall_coord],
         recent_activity_ts={"Master Bedroom": now},
         now_ts=now,
     )
-    assert traj.is_valid is False
-    assert "sealed_perimeter" in traj.reason
-
-    # Now open bedroom door
-    mbr_coord.state_machine.handle_boundary("binary_sensor.master_bedroom_door", is_open=True)
-    traj_after_open = corroborate_transition_trajectory(
-        candidate_room="Upstairs Hallway & Stairs",
-        all_coordinators=[mbr_coord, hall_coord],
-        recent_activity_ts={
-            "Master Bedroom": now,
-            "binary_sensor.master_bedroom_door": now,
-        },
-        now_ts=now,
-    )
-    assert traj_after_open.is_valid is True
+    assert traj.is_valid is True
 
 
 def test_vacant_house_initial_entry(mock_hass):
@@ -312,7 +316,13 @@ def test_candidate_settling_and_debounce(mock_hass):
     }
 
     # Office is occupied
-    office_coord.state_machine.handle_trigger("binary_sensor.office_pir", True)
+    office_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.office_pir"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.office_pir",
+        )
+    )
     assert office_coord.state_machine.is_present is True
 
     # Hallway and Entry had corroborating activity
@@ -374,7 +384,13 @@ def test_high_confidence_trigger_settles_immediately(mock_hass):
         living_coord.entry_id: living_coord,
     }
 
-    office_coord.state_machine.handle_trigger("binary_sensor.office_pir", True)
+    office_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.office_pir"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.office_pir",
+        )
+    )
 
     now = time.time()
     mock_hass.data[DOMAIN]["_store"] = MagicMock()

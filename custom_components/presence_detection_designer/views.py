@@ -58,6 +58,7 @@ __all__ = [
     "PDDRoomActionView",
     "PDDRoomConfigView",
     "PDDRoomRollbackView",
+    "PDDStateGraphView",
     "PDDStatisticsView",
     "PDDTimelineReconstructionView",
     "PDDTranslateView",
@@ -394,6 +395,46 @@ class PDDTranslateView(HomeAssistantView):
         return self.json(result)
 
 
+class PDDStateGraphView(HomeAssistantView):
+    """Return live transitions Mermaid diagram, active state, and audit feed per room."""
+
+    url = "/api/presence_detection_designer/state_graph"
+    name = "api:presence_detection_designer:state_graph"
+    requires_auth = True
+
+    async def get(self, request: Any) -> Any:
+        """Handle GET /api/presence_detection_designer/state_graph."""
+        hass = request.app["hass"]
+        entry_filter = None
+        if hasattr(request, "query") and request.query:
+            entry_filter = request.query.get("entry_id")
+
+        rooms: list[dict[str, Any]] = []
+        for eid, coord in hass.data.get(DOMAIN, {}).items():
+            if not isinstance(coord, RoomPresenceCoordinator):
+                continue
+            if entry_filter and eid != entry_filter:
+                continue
+            sm = coord.state_machine
+            rooms.append(
+                {
+                    "entry_id": coord.entry_id,
+                    "room_name": coord.room_name,
+                    "occupancy_state": str(sm.state),
+                    "is_present": sm.is_present,
+                    "is_cooling_down": sm.is_cooling_down,
+                    "cooling_remaining_sec": sm.cooling_remaining_sec,
+                    "state_reason": sm.state_reason,
+                    "verified_by": sm.verified_by,
+                    "override": sm.override,
+                    "mermaid_diagram": sm.get_mermaid_diagram(),
+                    "transition_history": sm.transition_history,
+                }
+            )
+        rooms.sort(key=lambda r: str(r.get("room_name", "")).lower())
+        return self.json({"rooms": rooms})
+
+
 def async_register_views(hass: Any) -> None:
     """Register all HTTP API views for Presence Detection Designer once."""
     if not hass or not hasattr(hass, "http") or not hasattr(hass.http, "register_view"):
@@ -406,6 +447,7 @@ def async_register_views(hass: Any) -> None:
         PDDPreviewBayesianView,
         PDDGlobalSettingsView,
         PDDTranslateView,
+        PDDStateGraphView,
         PDDStatisticsView,
         PDDReplayView,
         PDDFloorplanView,

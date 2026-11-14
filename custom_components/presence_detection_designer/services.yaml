@@ -147,7 +147,7 @@ clear_manual_intent:
 
 set_house_occupant_count:
   name: Set House Occupant Count
-  description: Manually set the whole-house occupant headcount and trigger physical wasp-box conservation law enforcement.
+  description: Manually set the whole-house occupant headcount metadata.
   fields:
     count:
       name: Headcount

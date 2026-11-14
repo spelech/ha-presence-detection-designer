@@ -18,20 +18,19 @@ from .const import (
     CONF_BAYESIAN_THRESHOLD,
     CONF_BOUNDARY_ENTITIES,
     CONF_EXTEND_TIMEOUT,
-    CONF_GRACE_TIMEOUT,
     CONF_INACTIVITY_TIMEOUT,
-    CONF_MODE,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
     DEFAULT_BAYESIAN_PRIOR,
     DEFAULT_BAYESIAN_THRESHOLD,
     DEFAULT_EXTEND_TIMEOUT,
-    DEFAULT_GRACE_TIMEOUT,
     DEFAULT_INACTIVITY_TIMEOUT,
-    BoxState,
-    Mode,
+    DEFAULT_MAX_HOLD_TIMEOUT,
+    DEFAULT_VERIFY_TIMEOUT,
+    OccupancyState,
 )
+from .evidence_snapshot import RoomEvidenceSnapshot
 from .history_collector import (
     _advance_state_machine_over_interval,
     _build_sensor_swimlanes,
@@ -40,7 +39,7 @@ from .history_collector import (
     async_fetch_room_history,
     collect_room_tracked_entities,
 )
-from .state_machine import RoomStateMachine
+from .state_machine import RoomPresenceStateMachine
 
 __all__ = [
     "_SimStateObj",
@@ -60,16 +59,16 @@ def simulate_config_on_timelines(
     start_ts: float,
     end_ts: float,
 ) -> dict[str, Any]:
-    """Run deterministic Bayesian + Wasp-in-a-Box simulation across historical entity timelines."""
+    """Run deterministic Bayesian + transitions simulation across historical entity timelines."""
     config = parse_yaml_or_dict_to_config(raw_config)
     window_sec = max(1.0, float(end_ts - start_ts))
 
-    mode = Mode(config.get(CONF_MODE, Mode.OPEN))
     prior = float(config.get(CONF_BAYESIAN_PRIOR, DEFAULT_BAYESIAN_PRIOR))
     threshold = float(config.get(CONF_BAYESIAN_THRESHOLD, DEFAULT_BAYESIAN_THRESHOLD))
     inactivity_timeout = int(config.get(CONF_INACTIVITY_TIMEOUT, DEFAULT_INACTIVITY_TIMEOUT))
-    grace_timeout = int(config.get(CONF_GRACE_TIMEOUT, DEFAULT_GRACE_TIMEOUT))
     extend_timeout = int(config.get(CONF_EXTEND_TIMEOUT, DEFAULT_EXTEND_TIMEOUT))
+    max_hold_timeout = int(config.get("max_hold_timeout", DEFAULT_MAX_HOLD_TIMEOUT))
+    verify_timeout = int(config.get("verify_timeout", DEFAULT_VERIFY_TIMEOUT))
     bayesian_enabled = bool(config.get(CONF_BAYESIAN_ENABLED, True))
 
     boundaries: list[str] = [
@@ -96,12 +95,12 @@ def simulate_config_on_timelines(
     ]
     conditions: list[dict[str, Any]] = list(config.get(CONF_SUSTAINING_CONDITIONS, []) or [])
 
-    sm = RoomStateMachine(
+    sm = RoomPresenceStateMachine(
         name=str(config.get(CONF_ROOM_NAME, "Room")),
-        mode=mode,
         inactivity_timeout=inactivity_timeout,
-        grace_timeout=grace_timeout,
         extend_timeout=extend_timeout,
+        max_hold_timeout=max_hold_timeout,
+        verify_timeout=verify_timeout,
         llm_enabled=False,
         bayesian_prior=prior,
         bayesian_threshold=threshold,
@@ -134,7 +133,7 @@ def simulate_config_on_timelines(
     def _evaluate_at(ts: float, changed_eids: set[str]) -> None:
         nonlocal prev_spatial_frame
         r_est: dict[str, Any] | None = None
-        shade_excluded_eids: set[str] = set()
+        excluded_eids: set[str] = set()
         if neg_space_enabled:
             from .spatial_inference import evaluate_spatial_frame
 
@@ -148,31 +147,32 @@ def simulate_config_on_timelines(
             )
             r_est = prev_spatial_frame.get("room_estimates", {}).get(room_name_str)
             if isinstance(r_est, dict):
-                shade_excluded_eids = set(r_est.get("shade_sunlight_excluded_entities", []) or [])
+                excluded_eids = set(r_est.get("shade_sunlight_excluded_entities", []) or []) | set(
+                    r_est.get("pet_excluded_entities", []) or []
+                )
 
-        for b_eid in boundaries:
-            st_obj = current_states.get(b_eid)
-            if st_obj is not None:
-                is_open = st_obj.state in ("on", "open")
-                sm.handle_boundary(b_eid, is_open)
-
+        active_triggers: set[str] = set()
+        last_trig: str | None = None
         for t_eid in triggers:
             st_obj = current_states.get(t_eid)
-            if st_obj is not None:
-                is_active = (
-                    st_obj.state in ("on", "playing", "home") and t_eid not in shade_excluded_eids
-                )
-                if is_active or t_eid in changed_eids:
-                    sm.handle_trigger(t_eid, is_active)
+            if (
+                st_obj is not None
+                and st_obj.state in ("on", "playing", "home")
+                and t_eid not in excluded_eids
+            ):
+                active_triggers.add(t_eid)
+                if t_eid in changed_eids or last_trig is None:
+                    last_trig = t_eid
 
         any_cond, cond_descs = evaluate_all(
             conditions,
             lambda eid: current_states.get(eid),
         )
-        sm.handle_conditions(any_cond, cond_descs)
 
         active_labels: list[str] = []
         active_eids: list[str] = []
+        evaluation = None
+        should_trigger_bayes = False
         if bayesian_enabled:
             obs_to_eval = list(observations)
             virtual_neg_eid = "__spatial_negative_space__"
@@ -197,7 +197,7 @@ def simulate_config_on_timelines(
             def _sim_state_getter(eid: str) -> Any:
                 if eid == virtual_neg_eid and has_neg_boost:
                     return _SimStateObj(entity_id=virtual_neg_eid, state="on", attributes={})
-                if eid in shade_excluded_eids:
+                if eid in excluded_eids:
                     return _SimStateObj(entity_id=eid, state="off", attributes={})
                 return current_states.get(eid)
 
@@ -207,19 +207,43 @@ def simulate_config_on_timelines(
                 prior=prior,
                 threshold=threshold,
             )
-            sm.handle_bayesian(
-                probability=evaluation.probability,
-                probability_pct=evaluation.probability_pct,
-                is_occupied=evaluation.is_occupied,
-                summary=evaluation.natural_language_summary,
-                active_observations=evaluation.active_observations,
-                inactive_observations=evaluation.inactive_observations,
-                trigger_state_machine=has_explicit_bayesian or has_neg_boost,
-            )
+            should_trigger_bayes = bool(has_explicit_bayesian or has_neg_boost)
             active_labels = [
                 str(o.get("label", o.get("entity_id"))) for o in evaluation.active_observations
             ]
             active_eids = [str(o.get("entity_id")) for o in evaluation.active_observations]
+
+        human_present = (
+            bool(r_est.get("human_present", False)) if isinstance(r_est, dict) else False
+        )
+        pet_present = bool(r_est.get("pet_present", False)) if isinstance(r_est, dict) else False
+        drivers = (r_est.get("positive_drivers") or []) if isinstance(r_est, dict) else []
+        camera_confirmed = bool(
+            human_present
+            and any(
+                k in str(d).lower()
+                for d in drivers
+                for k in ("camera", "person", "subzone", "zone")
+            )
+        )
+        snapshot = RoomEvidenceSnapshot(
+            active_triggers=frozenset(active_triggers),
+            active_conditions=tuple(cond_descs if any_cond else ()),
+            bayesian_occupied=bool(evaluation and evaluation.is_occupied and should_trigger_bayes),
+            bayesian_probability=evaluation.probability if evaluation else 0.0,
+            bayesian_probability_pct=evaluation.probability_pct if evaluation else 0.0,
+            bayesian_summary=evaluation.natural_language_summary if evaluation else "",
+            active_observations=tuple(evaluation.active_observations) if evaluation else (),
+            inactive_observations=tuple(evaluation.inactive_observations) if evaluation else (),
+            human_present=human_present,
+            pet_present=pet_present,
+            spatial_blind_pocket_hold=bool(r_est.get("should_hold", False) and human_present)
+            if isinstance(r_est, dict)
+            else False,
+            camera_confirmed=camera_confirmed,
+            last_trigger_entity=last_trig,
+        )
+        sm.apply_evidence(snapshot, now_ts=ts)
 
         offset_pct = round(((ts - start_ts) / window_sec) * 100.0, 3)
         pt_record = {
@@ -228,7 +252,7 @@ def simulate_config_on_timelines(
             "offset_pct": max(0.0, min(100.0, offset_pct)),
             "probability_pct": sm.bayesian_probability_pct,
             "is_present": sm.is_present,
-            "box_state": str(sm.box_state),
+            "occupancy_state": str(sm.state),
             "active_labels": active_labels,
             "active_entities": active_eids,
         }
@@ -259,7 +283,7 @@ def simulate_config_on_timelines(
         prev_ts = ts
 
     occupied_sec = 0.0
-    sealed_hold_sec = 0.0
+    holding_sec = 0.0
     weighted_occ_prob = 0.0
     peak_prob_pct = 0.0
     transition_count = 0
@@ -279,8 +303,11 @@ def simulate_config_on_timelines(
         if cur["is_present"]:
             occupied_sec += dur
             weighted_occ_prob += prob_pct * dur
-            if cur["box_state"] == str(BoxState.OCCUPIED_SEALED) and not cur["active_entities"]:
-                sealed_hold_sec += dur
+            if (
+                cur["occupancy_state"] == str(OccupancyState.OCCUPIED_HOLDING)
+                and not cur["active_entities"]
+            ):
+                holding_sec += dur
             if i == 0 or not series[i - 1]["is_present"]:
                 transition_count += 1
         elif cur["active_entities"] and prob_pct < round(threshold * 100.0, 1):
@@ -314,7 +341,7 @@ def simulate_config_on_timelines(
             "window_hours": round(window_sec / 3600.0, 2),
             "occupied_pct": occupied_pct,
             "occupied_minutes": round(occupied_sec / 60.0, 1),
-            "sealed_hold_minutes": round(sealed_hold_sec / 60.0, 1),
+            "holding_minutes": round(holding_sec / 60.0, 1),
             "transition_count": transition_count,
             "sub_threshold_deflections": sub_threshold_deflections,
             "avg_occupied_probability_pct": avg_occ_prob_pct,
@@ -402,13 +429,13 @@ def simulate_replay_comparison(
             if div_type == "false_positive_eliminated":
                 explanation = (
                     f"Eliminated occupancy trigger ({sensors_str}): "
-                    f"Baseline reached {b_prob}% (threshold {b_thresh}%, state={b_pt['box_state']}), "
+                    f"Baseline reached {b_prob}% (threshold {b_thresh}%, state={b_pt['occupancy_state']}), "
                     f"whereas Tuned Candidate stayed Vacant at {c_prob}% (threshold {c_thresh}%)."
                 )
             else:
                 explanation = (
                     f"Gained/held occupancy ({sensors_str}): "
-                    f"Tuned Candidate reached {c_prob}% (threshold {c_thresh}%, state={c_pt['box_state']}), "
+                    f"Tuned Candidate reached {c_prob}% (threshold {c_thresh}%, state={c_pt['occupancy_state']}), "
                     f"whereas Baseline was Vacant at {b_prob}% (threshold {b_thresh}%)."
                 )
 

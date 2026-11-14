@@ -1229,40 +1229,50 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   }
 
   _roomStatusSummary(r) {
-    if (!r) return { dotClass: "clear", label: "Clear", detail: "No activity detected" };
-    const state = String(r.box_state || "idle_clear");
-    const countdown = Number(r.vacating_countdown || 0);
+    if (!r) return { dotClass: "clear", label: "Vacant", detail: "No activity detected" };
+    const state = String(r.occupancy_state || "vacant");
+    const countdown = Number(r.cooling_remaining_sec || 0);
+    const reason = r.state_reason || r.last_transition_reason || "";
     if (r.is_present) {
-      if (state === "timer_active" && countdown > 0) {
-        return {
-          dotClass: "clearing",
-          label: `Clearing (${this._formatDuration(countdown)})`,
-          detail: `Clearing in ${this._formatDuration(countdown)} unless motion resumes`,
-        };
-      }
-      const hasDoorSeal =
-        (r.mode || r.config?.mode) === "bounded" &&
-        Array.isArray(r.config?.boundary_entities) &&
-        r.config.boundary_entities.length > 0;
-      if (state === "occupied_sealed" && hasDoorSeal) {
+      if (state === "override") {
         return {
           dotClass: "occupied",
-          label: "Occupied (Doors closed)",
-          detail: "Occupied and held while room doors remain closed",
+          label: "Override Lock",
+          detail: reason || "Manual presence override active",
+        };
+      }
+      if (state === "occupied_cooling") {
+        const durLabel = countdown > 0 ? ` (${this._formatDuration(countdown)})` : "";
+        return {
+          dotClass: "clearing",
+          label: `Cooling${durLabel}`,
+          detail: reason || `Cooling down toward vacancy${durLabel}`,
+        };
+      }
+      if (state === "occupied_verifying") {
+        return {
+          dotClass: "clearing",
+          label: "Verifying (Vision AI)",
+          detail: reason || "Running bounded Vision/LLM occupancy check",
+        };
+      }
+      if (state === "occupied_holding") {
+        return {
+          dotClass: "occupied",
+          label: "Occupied (Holding)",
+          detail: reason || "Held by secondary condition or blind-pocket rule",
         };
       }
       return {
         dotClass: "occupied",
         label: "Occupied",
-        detail: r.last_triggered_by
-          ? `Triggered by ${r.last_triggered_by}`
-          : "Active sensor detection in room",
+        detail: reason || (r.last_trigger_entity ? `Triggered by ${r.last_trigger_entity}` : "Confirmed human presence"),
       };
     }
     return {
       dotClass: "clear",
-      label: "Clear",
-      detail: r.last_cleared_by ? `Last cleared by ${r.last_cleared_by}` : "Room is currently unoccupied",
+      label: "Vacant",
+      detail: reason || "Room is currently unoccupied",
     };
   }
 
@@ -2361,6 +2371,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         <button class="editor-tab-btn ${editorTab === "rules" ? "active" : ""}" data-editor-tab="rules">
           ⚡ Sensors &amp; Rules
         </button>
+        <button class="editor-tab-btn ${editorTab === "state_machine" ? "active" : ""}" data-editor-tab="state_machine">
+          🔀 State Machine
+        </button>
         <button class="editor-tab-btn ${editorTab === "diagnostics" ? "active" : ""}" data-editor-tab="diagnostics">
           🔬 Advanced &amp; Diagnostics
         </button>
@@ -2494,9 +2507,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   style="width:16px;height:16px;"
                 />
                 <div>
-                  <div class="setting-label">Closed doors trap occupancy in this room (Wasp-in-a-Box)</div>
+                  <div class="setting-label">Bounded room perimeter (door contact sensors)</div>
                   <div class="setting-help">
-                    Keep the room latched occupied when doors are closed. Enable only if every physical exit has a door contact sensor.
+                    Track door contact sensors for room boundary topology and corridor validation. Occupancy always uses bounded cooling timeouts rather than indefinite latching.
                   </div>
                 </div>
               </label>
@@ -2715,8 +2728,231 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           </div>
         </div>
       `
+          : editorTab === "state_machine"
+          ? this._renderStateMachinePane(selRoom)
           : this._renderAdvancedDrawer(selRoom, cfg, prev, areas, presets, activeMap)
       }
+    `;
+  }
+
+  async _refreshStateGraph(entryId) {
+    if (!entryId) return;
+    try {
+      const res = await this._api("GET", `/api/presence_detection_designer/state_graph?entry_id=${encodeURIComponent(entryId)}`);
+      const fresh = (res && res.rooms && res.rooms[0]) || null;
+      if (fresh && this._overview && Array.isArray(this._overview.rooms)) {
+        const idx = this._overview.rooms.findIndex((r) => r.entry_id === entryId);
+        if (idx !== -1) {
+          this._overview.rooms[idx] = { ...this._overview.rooms[idx], ...fresh };
+        }
+        this.render();
+      }
+    } catch (err) {
+      this.showToast(`Failed to refresh state graph: ${err.message}`, "error");
+    }
+  }
+
+  _renderStateMachinePane(selRoom) {
+    const state = String(selRoom.occupancy_state || "vacant");
+    const history = Array.isArray(selRoom.transition_history) ? selRoom.transition_history : [];
+    const reversedHistory = [...history].reverse();
+    const lastAccepted = reversedHistory.find((h) => h.accepted) || null;
+    const lastAttempt = reversedHistory[0] || null;
+    const coolingSec = Number(selRoom.cooling_remaining_sec || 0);
+    const verifiedBy = selRoom.verified_by || "none";
+    const reason = selRoom.state_reason || selRoom.last_transition_reason || "Initialized vacant";
+    const mermaidSrc = selRoom.mermaid_diagram || "";
+
+    const nodeStyle = (id) => {
+      const active = state === id;
+      if (active) {
+        if (id === "vacant") {
+          return { fill: "rgba(148,163,184,0.22)", stroke: "#94a3b8", text: "#f1f5f9", width: 2.5 };
+        }
+        if (id === "override") {
+          return { fill: "rgba(168,85,247,0.25)", stroke: "#c084fc", text: "#f3e8ff", width: 2.5 };
+        }
+        if (id === "occupied_cooling" || id === "occupied_verifying") {
+          return { fill: "rgba(245,158,11,0.25)", stroke: "#fbbf24", text: "#fef3c7", width: 2.5 };
+        }
+        return { fill: "rgba(16,185,129,0.25)", stroke: "#34d399", text: "#d1fae5", width: 2.5 };
+      }
+      return { fill: "rgba(15,23,42,0.7)", stroke: "rgba(148,163,184,0.35)", text: "#94a3b8", width: 1.2 };
+    };
+
+    const edgeColor = (src, dst) => {
+      if (lastAccepted && lastAccepted.source === src && lastAccepted.dest === dst) {
+        return "#22d3ee";
+      }
+      return "rgba(148,163,184,0.4)";
+    };
+    const edgeWidth = (src, dst) =>
+      lastAccepted && lastAccepted.source === src && lastAccepted.dest === dst ? "2.8" : "1.4";
+
+    const nodes = [
+      { id: "vacant", label: "vacant", sub: "is_present=false", x: 35, y: 125, w: 145, h: 64 },
+      { id: "occupied_confirmed", label: "occupied_confirmed", sub: "Human active", x: 255, y: 55, w: 185, h: 60 },
+      { id: "occupied_holding", label: "occupied_holding", sub: "Bounded hold", x: 495, y: 55, w: 175, h: 60 },
+      { id: "occupied_cooling", label: "occupied_cooling", sub: coolingSec > 0 ? `Cooling (${coolingSec}s)` : "Countdown", x: 255, y: 195, w: 185, h: 60 },
+      { id: "occupied_verifying", label: "occupied_verifying", sub: "Vision / LLM", x: 495, y: 195, w: 175, h: 60 },
+      { id: "override", label: "override", sub: "Manual lock", x: 35, y: 270, w: 145, h: 56 },
+    ];
+
+    const edges = [
+      { s: "vacant", d: "occupied_confirmed", x1: 180, y1: 142, x2: 255, y2: 92, lx: 196, ly: 105, lbl: "evidence_detected" },
+      { s: "occupied_confirmed", d: "occupied_holding", x1: 440, y1: 75, x2: 495, y2: 75, lx: 468, ly: 66, lbl: "hold_only" },
+      { s: "occupied_holding", d: "occupied_confirmed", x1: 495, y1: 98, x2: 440, y2: 98, lx: 468, ly: 112, lbl: "resumed" },
+      { s: "occupied_confirmed", d: "occupied_cooling", x1: 347, y1: 115, x2: 347, y2: 195, lx: 354, ly: 158, lbl: "evidence_cleared" },
+      { s: "occupied_holding", d: "occupied_cooling", x1: 540, y1: 115, x2: 425, y2: 195, lx: 495, ly: 158, lbl: "hold_cleared/timeout" },
+      { s: "occupied_cooling", d: "occupied_verifying", x1: 440, y1: 215, x2: 495, y2: 215, lx: 468, ly: 206, lbl: "llm_enabled" },
+      { s: "occupied_verifying", d: "occupied_cooling", x1: 495, y1: 240, x2: 440, y2: 240, lx: 468, ly: 254, lbl: "person_detected" },
+      { s: "occupied_cooling", d: "vacant", x1: 255, y1: 215, x2: 180, y2: 170, lx: 194, ly: 208, lbl: "expired / handoff" },
+      { s: "vacant", d: "override", x1: 108, y1: 189, x2: 108, y2: 270, lx: 114, ly: 234, lbl: "override" },
+    ];
+
+    return `
+      <div class="ha-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">Live Transitions State Diagram</h3>
+            <div class="card-desc">Fixed <code>transitions.extensions.HierarchicalGraphMachine</code> runtime topology and last fired transition.</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm" id="btn-refresh-state-graph">Refresh Graph</button>
+            <button class="btn btn-sm" id="btn-copy-mermaid">Copy Mermaid</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;">
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">Active State</div>
+            <div style="font-size:14px;font-weight:600;margin-top:2px;"><code>${this._escape(state)}</code></div>
+          </div>
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">Verified By</div>
+            <div style="font-size:14px;font-weight:600;margin-top:2px;"><code>${this._escape(verifiedBy)}</code></div>
+          </div>
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">Cooling Countdown</div>
+            <div style="font-size:14px;font-weight:600;margin-top:2px;">${coolingSec > 0 ? `${coolingSec}s` : "Inactive"}</div>
+          </div>
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">Last Reason</div>
+            <div style="font-size:12.5px;font-weight:500;margin-top:2px;">${this._escape(reason)}</div>
+          </div>
+        </div>
+
+        ${
+          lastAccepted
+            ? `<div style="margin-bottom:12px;padding:8px 12px;border-radius:8px;background:rgba(34,211,238,0.1);border:1px solid rgba(34,211,238,0.35);font-size:12.5px;">
+                <strong>Last Fired:</strong> <code>${this._escape(lastAccepted.trigger)}</code>
+                (<code>${this._escape(lastAccepted.source)}</code> &rarr; <code>${this._escape(lastAccepted.dest)}</code>)
+                — ${this._escape(lastAccepted.reason || "")}
+              </div>`
+            : ""
+        }
+        ${
+          lastAttempt && !lastAttempt.accepted
+            ? `<div style="margin-bottom:12px;padding:8px 12px;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);font-size:12.5px;">
+                <strong>Guard Blocked:</strong> <code>${this._escape(lastAttempt.trigger)}</code> in <code>${this._escape(lastAttempt.source)}</code>
+                — ${this._escape(lastAttempt.reason || "")}
+              </div>`
+            : ""
+        }
+
+        <div style="width:100%;overflow-x:auto;background:rgba(2,6,23,0.45);border:1px solid var(--ha-divider);border-radius:12px;padding:10px;">
+          <svg viewBox="0 0 710 345" style="width:100%;max-width:760px;height:auto;display:block;margin:0 auto;">
+            <defs>
+              <marker id="sm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="rgba(148,163,184,0.75)"></path>
+              </marker>
+              <marker id="sm-arrow-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#22d3ee"></path>
+              </marker>
+            </defs>
+            <rect x="235" y="20" width="455" height="270" rx="14" fill="rgba(16,185,129,0.04)" stroke="rgba(16,185,129,0.28)" stroke-dasharray="5,4" stroke-width="1.2"></rect>
+            <text x="250" y="39" fill="#6ee7b7" font-size="11" font-weight="600">occupied (hierarchical super-state)</text>
+            ${edges
+              .map((e) => {
+                const isHot = lastAccepted && lastAccepted.source === e.s && lastAccepted.dest === e.d;
+                return `
+                  <line x1="${e.x1}" y1="${e.y1}" x2="${e.x2}" y2="${e.y2}"
+                        stroke="${edgeColor(e.s, e.d)}" stroke-width="${edgeWidth(e.s, e.d)}"
+                        marker-end="url(#${isHot ? "sm-arrow-active" : "sm-arrow"})" />
+                  <text x="${e.lx}" y="${e.ly}" fill="${isHot ? "#22d3ee" : "#94a3b8"}"
+                        font-size="9.5" text-anchor="middle">${this._escape(e.lbl)}</text>
+                `;
+              })
+              .join("")}
+            ${nodes
+              .map((n) => {
+                const st = nodeStyle(n.id);
+                const isActive = state === n.id;
+                return `
+                  <g>
+                    <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10"
+                          fill="${st.fill}" stroke="${st.stroke}" stroke-width="${st.width}"></rect>
+                    <text x="${n.x + n.w / 2}" y="${n.y + 24}" fill="${st.text}"
+                          font-size="12" font-weight="600" text-anchor="middle">${this._escape(n.label)}</text>
+                    <text x="${n.x + n.w / 2}" y="${n.y + 43}" fill="${isActive ? st.text : "#94a3b8"}"
+                          font-size="10.5" text-anchor="middle">${this._escape(isActive ? `ACTIVE • ${n.sub}` : n.sub)}</text>
+                  </g>
+                `;
+              })
+              .join("")}
+          </svg>
+        </div>
+      </div>
+
+      <div class="ha-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">Transition &amp; Guard Audit Log (${reversedHistory.length})</h3>
+            <div class="card-desc">Bounded chronological ring buffer of accepted transitions and guard-blocked trigger attempts.</div>
+          </div>
+        </div>
+        ${
+          reversedHistory.length === 0
+            ? `<div style="font-size:13px;color:var(--ha-muted);">No transition events recorded yet.</div>`
+            : `<div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+                  <thead>
+                    <tr style="border-bottom:1px solid var(--ha-divider);text-align:left;color:var(--ha-muted);">
+                      <th style="padding:8px 6px;">Status</th>
+                      <th style="padding:8px 6px;">Trigger</th>
+                      <th style="padding:8px 6px;">Transition</th>
+                      <th style="padding:8px 6px;">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${reversedHistory
+                      .slice(0, 20)
+                      .map((ev) => {
+                        const badgeBg = ev.accepted ? "rgba(16,185,129,0.16)" : "rgba(245,158,11,0.18)";
+                        const badgeFg = ev.accepted ? "#34d399" : "#fbbf24";
+                        return `
+                          <tr style="border-bottom:1px solid var(--ha-divider);">
+                            <td style="padding:8px 6px;">
+                              <span style="padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:${badgeBg};color:${badgeFg};">
+                                ${ev.accepted ? "ACCEPTED" : "BLOCKED"}
+                              </span>
+                            </td>
+                            <td style="padding:8px 6px;"><code>${this._escape(ev.trigger || "")}</code></td>
+                            <td style="padding:8px 6px;"><code>${this._escape(ev.source || "")}</code> &rarr; <code>${this._escape(ev.dest || "")}</code></td>
+                            <td style="padding:8px 6px;color:var(--ha-muted);">${this._escape(ev.reason || "")}</td>
+                          </tr>
+                        `;
+                      })
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+        }
+        <details style="margin-top:14px;">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--ha-muted);">Raw Live Mermaid Definition (from Python transitions)</summary>
+          <textarea class="code-area" readonly style="margin-top:8px;min-height:140px;">${this._escape(mermaidSrc)}</textarea>
+        </details>
+      </div>
     `;
   }
 
@@ -5828,6 +6064,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     root.querySelector("#btn-room-override")?.addEventListener("click", () =>
       this.runRoomAction("set_override")
     );
+    root.querySelector("#btn-refresh-state-graph")?.addEventListener("click", () =>
+      this._refreshStateGraph(this._selectedRoomId)
+    );
+    root.querySelector("#btn-copy-mermaid")?.addEventListener("click", () => {
+      const sel = (this._overview?.rooms || []).find((r) => r.entry_id === this._selectedRoomId);
+      const src = sel?.mermaid_diagram || "";
+      if (src && navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(src);
+        this.showToast("Copied live Mermaid diagram to clipboard", "success");
+      }
+    });
 
     root.querySelector("#cfg-area-id")?.addEventListener("change", (e) => {
       this._draftConfig.area_id = e.target.value || null;

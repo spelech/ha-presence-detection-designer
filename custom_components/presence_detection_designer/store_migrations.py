@@ -360,13 +360,13 @@ def migrate_and_backfill_store_payload(
             dirty = True
 
         rname = str(rcfg.get("room_name", ""))
-        for old_eid, new_eid, new_label, new_preset, new_pt, new_pf in room_pir_backfills.get(rname, []):
+        for old_eid, new_eid, new_label, new_preset, new_pt, new_pf in room_pir_backfills.get(
+            rname, []
+        ):
             obs = list(rcfg.get("bayesian_observations") or [])
             if old_eid:
                 filtered_obs = [
-                    o
-                    for o in obs
-                    if not (isinstance(o, dict) and o.get("entity_id") == old_eid)
+                    o for o in obs if not (isinstance(o, dict) and o.get("entity_id") == old_eid)
                 ]
                 if len(filtered_obs) != len(obs):
                     obs = filtered_obs

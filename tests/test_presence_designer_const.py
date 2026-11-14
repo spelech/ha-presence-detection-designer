@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from custom_components.presence_detection_designer.const import (
     CONF_BOUNDARY_ENTITIES,
     CONF_CAMERA_ENTITY,
@@ -13,16 +15,18 @@ from custom_components.presence_detection_designer.const import (
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
-    DEFAULT_GRACE_TIMEOUT,
     DEFAULT_INACTIVITY_TIMEOUT,
+    DEFAULT_MAX_HOLD_TIMEOUT,
+    DEFAULT_VERIFY_TIMEOUT,
     DOMAIN,
-    BoxState,
     Mode,
+    OccupancyState,
 )
 
 
+@pytest.mark.requirement("STATE-01", category="STATE", req_type="PositiveFeature")
 def test_constants_defined():
-    """Verify essential constants are set properly."""
+    """Verify essential constants and OccupancyState enum values are set properly."""
     assert DOMAIN == "presence_detection_designer"
     assert CONF_ROOM_NAME == "room_name"
     assert CONF_MODE == "mode"
@@ -34,25 +38,29 @@ def test_constants_defined():
     assert CONF_CAMERA_ENTITY == "camera_entity"
     assert CONF_LLM_PROVIDER_TYPE == "llm_provider_type"
     assert DEFAULT_INACTIVITY_TIMEOUT == 300
-    assert DEFAULT_GRACE_TIMEOUT == 60
+    assert DEFAULT_MAX_HOLD_TIMEOUT == 1800
+    assert DEFAULT_VERIFY_TIMEOUT == 30
 
-    assert BoxState.IDLE_CLEAR == "idle_clear"
-    assert BoxState.OCCUPIED_SEALED == "occupied_sealed"
-    assert BoxState.OCCUPIED_UNSEALED == "occupied_unsealed"
-    assert BoxState.TIMER_ACTIVE == "timer_active"
-    assert BoxState.LLM_VERIFYING == "llm_verifying"
-    assert BoxState.OVERRIDE == "override"
+    assert OccupancyState.VACANT == "vacant"
+    assert OccupancyState.OCCUPIED_CONFIRMED == "occupied_confirmed"
+    assert OccupancyState.OCCUPIED_HOLDING == "occupied_holding"
+    assert OccupancyState.OCCUPIED_COOLING == "occupied_cooling"
+    assert OccupancyState.OCCUPIED_VERIFYING == "occupied_verifying"
+    assert OccupancyState.OVERRIDE == "override"
 
     assert Mode.BOUNDED == "bounded"
     assert Mode.OPEN == "open"
 
 
 def test_manifest_valid():
-    """Verify manifest.json is well formed."""
-    manifest_path = Path("custom_components/presence_detection_designer/manifest.json")
+    """Verify manifest.json is well formed and declares transitions dependency."""
+    manifest_path = Path(
+        "/home/steve/Repos/ha-presence-detection-designer/custom_components/presence_detection_designer/manifest.json"
+    )
     assert manifest_path.exists(), "manifest.json must exist"
     data = json.loads(manifest_path.read_text())
     assert data["domain"] == DOMAIN
     assert data["name"] == "Presence Detection Designer"
     assert "version" in data
     assert "config_flow" in data and data["config_flow"] is True
+    assert any("transitions" in req for req in data.get("requirements", []))
