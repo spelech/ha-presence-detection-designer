@@ -423,7 +423,7 @@ _PRESET_BASE_WEIGHTS: dict[str, tuple[float, float]] = {
     "decisive": (0.95, 0.02),
     "strong": (0.88, 0.05),
     "moderate": (0.72, 0.12),
-    "supporting": (0.45, 0.20),
+    "supporting": (0.55, 0.20),
 }
 
 
@@ -435,14 +435,27 @@ def temper_observation_dict_reliability(obs_item: dict[str, Any]) -> bool:
     prof = classify_sensor_reliability(eid)
     preset = str(obs_item.get("preset") or "moderate").lower()
     def_pt, def_pf = _PRESET_BASE_WEIGHTS.get(preset, (0.72, 0.12))
-    base_pt = float(obs_item.get("prob_given_true") or def_pt)
-    base_pf = float(obs_item.get("prob_given_false") or def_pf)
+    raw_pt = obs_item.get("prob_given_true")
+    raw_pf = obs_item.get("prob_given_false")
+    base_pt = float(raw_pt if raw_pt is not None else def_pt)
+    base_pf = float(raw_pf if raw_pf is not None else def_pf)
 
-    if (
-        prof.is_slow
-        and prof.reliability_weight < 0.999
-        and obs_item.get("cooldown_sec") != prof.cooldown_sec
-    ):
+    changed = False
+    # Repair legacy broken supporting floor (< 0.50 such as 0.45/0.20)
+    if base_pt < 0.50 and base_pf < base_pt:
+        base_pt = 0.55
+        obs_item["prob_given_true"] = 0.55
+        obs_item.pop("cooldown_weighted", None)
+        obs_item.pop("signal_weighted", None)
+        changed = True
+
+    if prof.is_slow and prof.reliability_weight < 0.999:
+        if obs_item.get("cooldown_weighted") == prof.cooldown_sec:
+            return changed
+        # Legacy already-migrated slow entries had cooldown_sec written without cooldown_weighted
+        if not changed and obs_item.get("cooldown_sec") == prof.cooldown_sec and base_pt >= 0.50:
+            obs_item["cooldown_weighted"] = prof.cooldown_sec
+            return True
         pt_w, pf_w = apply_cooldown_weight(
             base_pt, base_pf, prof.cooldown_sec, battery_powered=prof.battery_powered
         )
@@ -450,13 +463,12 @@ def temper_observation_dict_reliability(obs_item: dict[str, Any]) -> bool:
         obs_item["prob_given_true"] = pt_w
         obs_item["prob_given_false"] = pf_w
         obs_item["cooldown_sec"] = prof.cooldown_sec
+        obs_item["cooldown_weighted"] = prof.cooldown_sec
         return True
 
-    if (
-        not prof.is_human_exclusive
-        and prof.reliability_weight < 0.999
-        and obs_item.get("signal_weighted") != prof.category
-    ):
+    if not prof.is_human_exclusive and prof.reliability_weight < 0.999:
+        if obs_item.get("signal_weighted") == prof.category:
+            return changed
         pt_w, pf_w = apply_signal_weight(base_pt, base_pf, prof.reliability_weight)
         obs_item["preset"] = "supporting"
         obs_item["prob_given_true"] = pt_w
@@ -464,4 +476,4 @@ def temper_observation_dict_reliability(obs_item: dict[str, Any]) -> bool:
         obs_item["signal_weighted"] = prof.category
         return True
 
-    return False
+    return changed

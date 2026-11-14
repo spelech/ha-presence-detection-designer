@@ -31,19 +31,16 @@ class RoomEvidenceSnapshot:
 
     @property
     def human_evidence_active(self) -> bool:
-        """Return True when direct non-pet human occupancy evidence is active."""
+        """Return True when direct non-pet human occupancy evidence is active (never Bayesian alone)."""
         if self.is_pet_only:
             return False
-        return bool(
-            self.active_triggers
-            or self.camera_confirmed
-            or self.bayesian_occupied
-            or self.human_present
-        )
+        return bool(self.active_triggers or self.camera_confirmed or self.human_present)
 
     @property
     def has_hold_evidence(self) -> bool:
-        """Return True when secondary non-motion evidence justifies bounded holding."""
+        """Return True when secondary or Bayesian fusion evidence justifies bounded holding."""
         if self.is_pet_only:
             return False
-        return bool(self.active_conditions or self.spatial_blind_pocket_hold)
+        return bool(
+            self.active_conditions or self.spatial_blind_pocket_hold or self.bayesian_occupied
+        )

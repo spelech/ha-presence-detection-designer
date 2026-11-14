@@ -19,18 +19,22 @@ from .const import (
     CONF_TRIGGER_ENTITIES,
     DEFAULT_BAYESIAN_PRIOR,
     DEFAULT_BAYESIAN_THRESHOLD,
+    DOMAIN,
     BayesianWeightPreset,
     ConditionOperator,
+    OccupancyState,
 )
 from .sensor_reliability import (
     apply_cooldown_weight,
     apply_signal_weight,
     classify_sensor_reliability,
 )
+from .spatial_catalog import _normalize_ble_area_to_room
 
 __all__ = [
     "BayesianEvaluation",
     "_clamp_prob",
+    "apply_contextual_bayesian_penalties",
     "build_effective_observations",
     "config_to_yaml_representations",
     "evaluate_bayesian",
@@ -103,8 +107,13 @@ def resolve_observation_weights(obs: dict[str, Any]) -> tuple[str, float, float]
         pt, pf = BAYESIAN_PRESET_WEIGHTS[BayesianWeightPreset.STRONG]
         preset_name = str(BayesianWeightPreset.STRONG)
 
+    already_weighted = (
+        obs.get("cooldown_weighted") is not None or obs.get("signal_weighted") is not None
+    )
     raw_cd = obs.get("cooldown_sec")
-    if raw_cd is not None or obs.get("auto_cooldown_weight") or obs.get("auto_signal_weight"):
+    if not already_weighted and (
+        raw_cd is not None or obs.get("auto_cooldown_weight") or obs.get("auto_signal_weight")
+    ):
         eid = str(obs.get("entity_id", ""))
         prof = classify_sensor_reliability(
             eid,
@@ -172,9 +181,9 @@ def prior_and_lrs_to_posterior(prior: float, likelihood_ratios: list[float]) -> 
 
 
 def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]:
-    """Build the complete list of Bayesian observations from room configuration."""
+    """Build the Bayesian observation list without silently injecting clutter when explicit obs exist."""
     explicit_obs = list(config.get(CONF_BAYESIAN_OBSERVATIONS, []) or [])
-    seen_keys: set[tuple[str, str, str]] = set()
+    seen_keys: set[tuple[str, str, str, str | None]] = set()
     normalized: list[dict[str, Any]] = []
 
     for obs in explicit_obs:
@@ -188,12 +197,20 @@ def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]
         eid = str(raw_eid.get("entity_id") if isinstance(raw_eid, dict) else raw_eid)
         op = str(obs.get("operator", ConditionOperator.EQUALS))
         st = str(obs.get("state", "on"))
-        seen_keys.add((eid, op, st))
+        attr = obs.get("attribute")
+        key = (eid, op, st, str(attr) if attr is not None else None)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         entry = dict(obs)
         entry["entity_id"] = eid
         entry["operator"] = op
         entry["state"] = st
         normalized.append(entry)
+
+    # BAYES-02: Respect explicit bayesian_observations without re-injecting excluded triggers/conditions.
+    if normalized:
+        return normalized
 
     subzone_keywords = (
         "couch",
@@ -209,9 +226,9 @@ def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]
     )
     for raw_trig in config.get(CONF_TRIGGER_ENTITIES, []) or []:
         trig_eid = str(raw_trig.get("entity_id") if isinstance(raw_trig, dict) else raw_trig)
-        if not trig_eid:
+        if not trig_eid or not classify_sensor_reliability(trig_eid).is_human_exclusive:
             continue
-        key = (trig_eid, str(ConditionOperator.EQUALS), "on")
+        key = (trig_eid, str(ConditionOperator.EQUALS), "on", None)
         if key in seen_keys:
             continue
         seen_keys.add(key)
@@ -239,7 +256,8 @@ def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]
         eid = str(raw_eid.get("entity_id") if isinstance(raw_eid, dict) else raw_eid)
         op = str(cond.get("operator", ConditionOperator.EQUALS))
         st = str(cond.get("state", "on"))
-        key = (eid, op, st)
+        attr = cond.get("attribute")
+        key = (eid, op, st, str(attr) if attr is not None else None)
         if key in seen_keys:
             continue
         seen_keys.add(key)
@@ -248,13 +266,98 @@ def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]
                 "entity_id": eid,
                 "operator": op,
                 "state": st,
-                "attribute": cond.get("attribute"),
+                "attribute": attr,
                 "label": cond.get("label"),
-                "preset": str(cond.get("preset", BayesianWeightPreset.STRONG)),
+                "preset": str(cond.get("preset", BayesianWeightPreset.SUPPORTING)),
+                "auto_signal_weight": True,
             }
         )
 
     return normalized
+
+
+def apply_contextual_bayesian_penalties(
+    observations: list[dict[str, Any]],
+    *,
+    room_name: str,
+    spatial_frame: dict[str, Any] | None = None,
+    hass: Any = None,
+    guest_mode_enabled: bool = False,
+) -> list[dict[str, Any]]:
+    """Enforce BAYES-04: camera/PIR off stays neutral; BLE off penalizes only when confirmed elsewhere."""
+    if not observations:
+        return []
+    frame = spatial_frame if isinstance(spatial_frame, dict) else {}
+    room_estimates = frame.get("room_estimates") or {}
+    raw_ble_positions = frame.get("raw_ble_positions") or {}
+    telemetry_ble_by_room = frame.get("telemetry_ble_by_room") or {}
+
+    confirmed_rooms: set[str] = set()
+    for r_name, est in room_estimates.items():
+        if not isinstance(est, dict) or not est.get("human_present"):
+            continue
+        drivers = est.get("positive_drivers") or []
+        if any(classify_sensor_reliability(str(d)).category != "ble_tracker" for d in drivers):
+            confirmed_rooms.add(str(r_name).strip().lower())
+
+    domain_data = (
+        hass.data.get(DOMAIN, {}) if hass and isinstance(getattr(hass, "data", None), dict) else {}
+    )
+    for peer in domain_data.values():
+        peer_sm = getattr(peer, "state_machine", None)
+        peer_name = getattr(peer, "room_name", None)
+        if peer_sm and peer_name and peer_sm.state == OccupancyState.OCCUPIED_CONFIRMED:
+            snap = getattr(peer_sm, "snapshot", None)
+            if snap and (
+                snap.camera_confirmed
+                or any(
+                    classify_sensor_reliability(t).category != "ble_tracker"
+                    for t in snap.active_triggers
+                )
+            ):
+                confirmed_rooms.add(str(peer_name).strip().lower())
+
+    room_low = room_name.strip().lower()
+    has_ble_here = bool(telemetry_ble_by_room.get(room_name))
+    if not has_ble_here:
+        for raw_area in raw_ble_positions.values():
+            norm = _normalize_ble_area_to_room(str(raw_area)) or str(raw_area).strip()
+            if norm.lower() == room_low:
+                has_ble_here = True
+                break
+
+    contextual: list[dict[str, Any]] = []
+    for obs in observations:
+        entry = dict(obs)
+        eid = str(entry.get("entity_id", ""))
+        prof = classify_sensor_reliability(eid)
+        if prof.category == "ble_tracker":
+            raw_area = raw_ble_positions.get(eid)
+            if raw_area is None and hass and hasattr(hass, "states"):
+                st_obj = hass.states.get(eid)
+                raw_area = getattr(st_obj, "state", None) if st_obj is not None else None
+            target_room = (
+                (_normalize_ble_area_to_room(str(raw_area)) or str(raw_area).strip())
+                if raw_area is not None
+                else ""
+            )
+            t_low = target_room.lower()
+            is_known_other = (
+                bool(t_low)
+                and t_low not in ("unknown", "unavailable", "none", "away", "not_home")
+                and t_low != room_low
+            )
+            entry["penalize_when_off"] = bool(
+                not guest_mode_enabled
+                and not has_ble_here
+                and is_known_other
+                and t_low in confirmed_rooms
+            )
+        else:
+            # Camera off, PIR off, and non-exclusive sensors remain strictly neutral
+            entry["penalize_when_off"] = False
+        contextual.append(entry)
+    return contextual
 
 
 def evaluate_bayesian(

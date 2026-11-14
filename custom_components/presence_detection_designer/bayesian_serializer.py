@@ -65,7 +65,7 @@ def explain_config_in_natural_language(config: dict[str, Any]) -> str:
             if mode == Mode.BOUNDED and boundaries
             else f"(Open zone with {inactivity}s inactivity countdown)"
         ),
-        f"- **Bayesian Baseline & Threshold**: Reports **0.0%** when idle; uses a **{prior_pct}%** base prior when sensors activate and declares occupancy at **{thresh_pct}%**.",
+        f"- **Bayesian Baseline & Threshold**: Reports **0.0%** when idle; uses a **{prior_pct}%** base prior when sensors activate and crosses confidence/hold threshold at **{thresh_pct}%**.",
     ]
 
     if connected:
@@ -79,7 +79,11 @@ def explain_config_in_natural_language(config: dict[str, Any]) -> str:
         for obs in observations:
             preset_name, pt, pf = resolve_observation_weights(obs)
             solo_pct = solo_posterior_pct(prior, pt, pf)
-            crosses = "triggers occupancy solo" if solo_pct >= thresh_pct else "needs corroboration"
+            crosses = (
+                "crosses threshold solo (score/hold)"
+                if solo_pct >= thresh_pct
+                else "needs corroboration"
+            )
             label = friendly_entity_label(obs)
             rule = format_condition_description(obs)
             lines.append(

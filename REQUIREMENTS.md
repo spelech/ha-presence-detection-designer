@@ -175,6 +175,26 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 - **Category**: `SIGNAL` (`FailClosedGuardrail`)
 - **Description**: While a room is already occupied (`occupied_confirmed`/`occupied_holding`), machine power thresholds (e.g., `sensor.office_ups_used_watts_filtered > 140`) may corroborate hold evidence only while no primary resident BLE tracker contradicts the room. If active triggers are clear and a primary resident BLE tracker reports a known room other than the room or `Away`, `is_condition_contradicted_by_ble()` suppresses the power hold condition and transitions the room to `occupied_cooling -> vacant` (preventing remote-control CPU workloads from holding `Office` occupied indefinitely).
 - **Verification**: `tests/test_signal_exclusivity.py` and `tests/test_e2e_harness.py`.
+### `BAYES-01`: Bayesians Never Start Occupancy (Score & Corroborated Hold Only)
+- **Category**: `BAYESIAN` (`FailClosedGuardrail`)
+- **Description**: `bayesian_occupied` alone never transitions a `vacant` room to `occupied_confirmed`. Entry from `vacant` requires direct human-coupled evidence (`active_triggers`, `camera_confirmed`, `human_present`) or manual override. Once occupied, `bayesian_occupied` contributes confidence scoring and bounded hold/corroboration (`has_hold_evidence -> occupied_holding`), never triggering adjacent handoffs while `vacant`.
+- **Verification**: `tests/test_bayesian_requirements.py` and `tests/test_e2e_harness.py`.
+
+### `BAYES-02`: Explicit-Only Bayesian Observations (No Silent Clutter Injection)
+- **Category**: `BAYESIAN` (`PositiveFeature`)
+- **Description**: When a room configures explicit `bayesian_observations`, `build_effective_observations()` evaluates only those explicit deduplicated entries without silently appending excluded `trigger_entities` or `sustaining_conditions`. Empty bootstrap configs include only human-exclusive triggers and demoted `supporting` sustaining signals.
+- **Verification**: `tests/test_bayesian_requirements.py`.
+
+### `BAYES-03`: Single-Pass Cooldown/Signal Tempering & Supporting Floor Repair
+- **Category**: `BAYESIAN` (`PositiveFeature`)
+- **Description**: Persisted tempered observations record `cooldown_weighted` / `signal_weighted` markers so `resolve_observation_weights()` never double-tempers `cooldown_sec` entities at runtime. `_PRESET_BASE_WEIGHTS["supporting"]` and topology/migration helpers align on `(0.55, 0.20)`, repair legacy inverted `< 0.50` supporting floors, and drop zero-lift (`pt == pf`) dead entries idempotently.
+- **Verification**: `tests/test_bayesian_requirements.py`.
+
+### `BAYES-04`: Asymmetric Negative Evidence (Confirmed BLE Contradiction Only; Camera & PIR Off Neutral)
+- **Category**: `BAYESIAN` (`FailClosedGuardrail`)
+- **Description**: Camera whole-frame/zone `off` and PIR `off` observations remain strictly neutral (`penalize_when_off=False`, `LR=1.0`). A `ble_tracker` observation pointing elsewhere applies negative evidence `(1-pt)/(1-pf)` only when Guest Mode is disabled, no other resident BLE tracker reports this room, and the destination room has confirmed non-BLE physical human corroboration (preventing cross-floor BLE bleed jumps from falsely penalizing rooms).
+- **Verification**: `tests/test_bayesian_requirements.py` and `tests/test_e2e_harness.py`.
+
 ### `ENTITY-01`: Presence Binary Sensor & Attributes Contract
 - **Category**: `ENTITY` (`PositiveFeature`)
 - **Description**: Expose `binary_sensor.<room>_presence` (`is_on` when in `occupied.*` or `override`) with clean automation attributes: `occupancy_state`, `is_cooling_down`, `cooling_remaining_sec`, `state_reason`, `verified_by`, `transition_history`, plus spatial/causal attributes (`human_present`, `pet_present`, `occupant_type`, `inferred_subregion`, `manual_intent`, `manual_off_suppressed`).

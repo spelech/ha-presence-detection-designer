@@ -1,0 +1,162 @@
+{
+  "name": "bayesian_score_hold_and_ble",
+  "assumptions": [
+    "Office Bayesian threshold is 75% with prior 0.35; Ecobee + UPS hold >= 75% when BLE is neutral.",
+    "Bayesian alone cannot start occupancy from vacant (BAYES-01).",
+    "BLE floor-bleed to an uncorroborated room stays neutral; confirmed Kitchen entry penalizes Office BLE (BAYES-04)."
+  ],
+  "global_settings": {
+    "ble_decider_enabled": false,
+    "guest_mode_enabled": false,
+    "negative_space_enabled": false
+  },
+  "rooms": [
+    {
+      "room_name": "Office",
+      "mode": "open",
+      "inactivity_timeout": 15,
+      "max_hold_timeout": 180,
+      "pir_validation_enabled": true,
+      "pir_candidate_window": 10,
+      "connected_rooms": [],
+      "trigger_entities": [
+        "binary_sensor.office_motion_occupancy"
+      ],
+      "bayesian_prior": 0.35,
+      "bayesian_threshold": 0.75,
+      "bayesian_observations": [
+        {
+          "entity_id": "binary_sensor.office_motion_occupancy",
+          "preset": "strong"
+        },
+        {
+          "entity_id": "sensor.steve_s_s25_ble_area",
+          "operator": "equals",
+          "state": "Office",
+          "preset": "moderate"
+        },
+        {
+          "entity_id": "binary_sensor.office_occupancy",
+          "preset": "supporting",
+          "prob_given_true": 0.62,
+          "prob_given_false": 0.28,
+          "cooldown_sec": 1800.0,
+          "cooldown_weighted": 1800.0
+        },
+        {
+          "entity_id": "sensor.office_ups_used_watts_filtered",
+          "operator": "greater_than",
+          "state": "140",
+          "preset": "supporting",
+          "prob_given_true": 0.68,
+          "prob_given_false": 0.25,
+          "signal_weighted": "power_monitor"
+        },
+        {
+          "entity_id": "binary_sensor.office_person_occupancy",
+          "preset": "supporting"
+        }
+      ]
+    },
+    {
+      "room_name": "Kitchen",
+      "mode": "open",
+      "inactivity_timeout": 15,
+      "pir_validation_enabled": false,
+      "connected_rooms": [],
+      "trigger_entities": [
+        "binary_sensor.kitchen_island_person_occupancy"
+      ],
+      "bayesian_prior": 0.2,
+      "bayesian_threshold": 0.75,
+      "bayesian_observations": [
+        {
+          "entity_id": "binary_sensor.kitchen_island_person_occupancy",
+          "preset": "decisive"
+        }
+      ]
+    }
+  ],
+  "initial_states": {
+    "binary_sensor.office_motion_occupancy": "off",
+    "sensor.steve_s_s25_ble_area": "Office",
+    "binary_sensor.office_occupancy": "on",
+    "binary_sensor.office_person_occupancy": "off",
+    "binary_sensor.kitchen_island_person_occupancy": "off",
+    "sensor.office_ups_used_watts_filtered": "220"
+  },
+  "steps": [
+    {
+      "at": 5,
+      "expect": {
+        "Office": {
+          "occupancy_state": "vacant",
+          "is_on": false,
+          "bayesian_occupied": true
+        }
+      }
+    },
+    {
+      "at": 10,
+      "set": {
+        "binary_sensor.office_motion_occupancy": "on"
+      },
+      "expect": {
+        "Office": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "at": 20,
+      "set": {
+        "binary_sensor.office_motion_occupancy": "off"
+      },
+      "expect": {
+        "Office": {
+          "occupancy_state": "occupied_holding",
+          "is_on": true,
+          "bayesian_occupied": true
+        }
+      }
+    },
+    {
+      "at": 25,
+      "set": {
+        "sensor.steve_s_s25_ble_area": "Kitchen"
+      },
+      "expect": {
+        "Office": {
+          "occupancy_state": "occupied_holding",
+          "bayesian_occupied": true
+        }
+      }
+    },
+    {
+      "at": 30,
+      "set": {
+        "binary_sensor.kitchen_island_person_occupancy": "on"
+      },
+      "expect": {
+        "Kitchen": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true
+        },
+        "Office": {
+          "occupancy_state": "occupied_cooling",
+          "bayesian_occupied": false
+        }
+      }
+    },
+    {
+      "advance": 20,
+      "expect": {
+        "Office": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        }
+      }
+    }
+  ]
+}

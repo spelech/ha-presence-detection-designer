@@ -78,7 +78,7 @@ def test_zero_percent_probability_when_idle_and_timer_decay():
     )
     assert sm.bayesian_probability_pct == 0.0
 
-    # Activate presence via Bayesian snapshot
+    # BAYES-01: Activate presence via direct trigger, then verify Bayesian score & hold
     eval_active = evaluate_bayesian(
         observations=obs,
         state_getter=lambda _eid: MagicMock(state="on", attributes={}),
@@ -88,6 +88,7 @@ def test_zero_percent_probability_when_idle_and_timer_decay():
     assert eval_active.probability_pct > 80.0
     sm.apply_evidence(
         RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.living_room_motion"}),
             bayesian_occupied=True,
             bayesian_probability=eval_active.probability,
             bayesian_probability_pct=eval_active.probability_pct,
@@ -303,7 +304,7 @@ def test_spatial_topology_compiler_and_apply():
         if o["entity_id"] == "binary_sensor.living_room_person_occupancy"
     )
     assert full_frame_obs["preset"] == "supporting"
-    assert full_frame_obs["prob_given_true"] == 0.45
+    assert full_frame_obs["prob_given_true"] == 0.55
     assert full_frame_obs["prob_given_false"] == 0.20
 
 
