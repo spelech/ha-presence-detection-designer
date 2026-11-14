@@ -41,15 +41,19 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 | **`STATE-04`** | `STATE` | `PositiveFeature` | **Live Mermaid Diagram Generation** | `get_mermaid_diagram()` returns a valid `stateDiagram-v2` string directly from `HierarchicalGraphMachine.get_graph().draw(None)`. | `tests/test_transitions_state_machine.py::test_mermaid_diagram_generation` |
 | **`STATE-05`** | `STATE` | `PositiveFeature` | **Normalized Evidence Snapshot Adapter** | State machine evaluates transitions exclusively from a typed `RoomEvidenceSnapshot`, decoupling Bayesian/condition tuning from transition logic. | `tests/test_transitions_state_machine.py::test_evidence_snapshot_drives_transitions` |
 | **`STATE-06`** | `STATE` | `PositiveFeature` | **Adjacent Room Handoff During Cooling** | When an adjacent connected room enters `occupied` and this room is `occupied_cooling` (or has no active evidence), it clears cleanly to `vacant` with handoff attribution. | `tests/test_transitions_state_machine.py::test_adjacent_handoff_clears_cooling_room` |
+| **`STATE-07`** | `STATE` | `PositiveFeature` | **Clock-Anchored Timer & Scheduler Parity** | Explicit `now_ts` calls anchor to `time.time()` so subsequent `timer_scheduler` callbacks (`_on_fire`) and 1s ticks observe elapsed clock time instead of stale `_virtual_now`. | `tests/test_transitions_state_machine.py::test_clock_anchored_scheduler_prevents_stale_virtual_now` |
 | **`GUARD-01`** | `GUARD` | `FailClosedGuardrail` | **Bounded Liveness (No Stuck Occupied Rooms)** | Every `occupied` sub-state has a finite timeout path toward `vacant` (`holding` -> `cooling` on `max_hold_timeout`, `cooling` -> `vacant`/`verifying`, `verifying` -> `vacant` on `verify_timeout`). | `tests/test_transitions_guardrails.py::test_bounded_liveness_prevents_stuck_occupied` |
 | **`GUARD-02`** | `GUARD` | `FailClosedGuardrail` | **Pet-Only Detections Never Mark Occupied** | When evidence indicates only a pet (`pet_present=True`, `human_present=False`), `RoomEvidenceSnapshot` does not activate human occupancy and `is_present` stays `False`. | `tests/test_transitions_guardrails.py::test_pet_only_never_marks_occupied` |
 | **`GUARD-03`** | `GUARD` | `FailClosedGuardrail` | **Headcount Decoupled from Room Occupancy** | Whole-house headcount changes (including `count == 0`) never `force_clear` or block room occupancy state machines. | `tests/test_transitions_guardrails.py::test_zero_headcount_does_not_clear_occupied_room` |
 | **`GUARD-04`** | `GUARD` | `FailClosedGuardrail` | **Manual Override Isolation & Recovery** | Enabling override forces `override` (`is_present=True`) and ignores sensor events; clearing override re-evaluates the live `RoomEvidenceSnapshot` immediately. | `tests/test_transitions_guardrails.py::test_override_isolation_and_live_recovery` |
 | **`GUARD-05`** | `GUARD` | `FailClosedGuardrail` | **LLM Verification Timeout Fail-Safe** | If Vision/LLM verification hangs, errors, or returns malformed data while in `occupied_verifying`, `verify_timeout` fails closed toward `vacant` instead of wedging. | `tests/test_transitions_guardrails.py::test_llm_verify_timeout_fails_to_vacant` |
+| **`GUARD-06`** | `GUARD` | `FailClosedGuardrail` | **Sustaining Actuator Boundary** | Actuators outside `trigger_entities` (e.g., `sustaining_conditions` like TVs/switches) never enter `_active_triggers`, discard cleanly on `off`, and never inject manual-entry Bayesian pulses. | `tests/test_transitions_guardrails.py::test_sustaining_actuator_never_latches_triggers_or_injects_manual_entry` |
+| **`GUARD-07`** | `GUARD` | `FailClosedGuardrail` | **Hold-Only Spatial Normalization** | `negative_space` / `blind_pocket` spatial holds with no direct `positive_drivers` normalize to `spatial_blind_pocket_hold=True` and `human_present=False`, entering `occupied_holding` with bounded `max_hold_timeout`. | `tests/test_transitions_guardrails.py::test_hold_only_spatial_estimate_maps_to_occupied_holding` |
 | **`PIR-01`** | `PIR` | `FailClosedGuardrail` | **Uncorroborated PIR Gate *(Phase 2)*** | Raw PIR triggers without camera/high-confidence/trajectory corroboration enter `candidate` (`is_present=False`) and drop back to `vacant` on verification timeout. | `tests/test_pir_validation.py` *(Phase 2)* |
 | **`PIR-02`** | `PIR` | `PositiveFeature` | **PIR Corroboration Promotion *(Phase 2)*** | A `candidate` room promotes to `occupied_confirmed` on camera confirmation, valid time-history corroboration, or adjacent-room trajectory. | `tests/test_pir_validation.py` *(Phase 2)* |
 | **`ENTITY-01`** | `ENTITY` | `PositiveFeature` | **Presence Binary Sensor & Attributes Contract** | `binary_sensor.<room>_presence` reports `is_on` (`occupied.*` or `override`) and exposes `occupancy_state`, `state_reason`, `cooling_remaining_sec`, `verified_by`, `transition_history`, and spatial/causal attributes. | `tests/test_presence_designer_entities.py` |
 | **`REPLAY-01`** | `REPLAY` | `PositiveFeature` | **Deterministic Replay & Scenario Simulation** | Replaying historical or synthetic sensor timelines through the `transitions` engine produces deterministic state durations and transition counts. | `tests/test_replay_and_statistics.py` |
+| **`REPLAY-02`** | `REPLAY` | `PositiveFeature` | **E2E Multi-Room Scenario & HA Playback Harness** | Declarative scenarios, disturbance injections (`unavailable`/`unknown`), and HA Recorder / `.storage` timelines execute real multi-room coordinators with a 6-part diagnostic envelope. | `tests/test_e2e_harness.py` |
 | **`NOTIFY-01`** | `NOTIFY` | `PositiveFeature` | **Slack Transition Driver Attribution** | Room transitions dispatch Slack notifications referencing the `transitions` trigger, source/dest state, and primary evidence driver. | `tests/test_presence_designer_coordinator_notifications.py` |
 | **`UI-01`** | `UI` | `PositiveFeature` | **Live State Diagram & Fired-Transition View** | PDD panel renders the `transitions` Mermaid state diagram per room, highlights the active state and last transition, and shows the guard audit feed. | `tests/test_views.py` + UI audit |
 | **`UI-02`** | `UI` | `PositiveFeature` | **Reworked Automations UI** | Automations UI consumes `binary_sensor.<room>_presence` and new `transitions` state attributes cleanly without legacy `box_state` coupling. | UI / Playwright layout audit |
@@ -98,6 +102,11 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 - **Description**: When an adjacent connected room transitions to `occupied` while a room has no active evidence (or is in `occupied_cooling`), clear the prior room to `vacant` and record the handoff target in `last_handoff_room`.
 - **Verification**: Multi-room coordinator/state-machine handoff tests.
 
+### `STATE-07`: Clock-Anchored Timer & Scheduler Parity
+- **Category**: `STATE` (`PositiveFeature`)
+- **Description**: Whenever `apply_evidence()` or `advance_time()` receives an explicit `now_ts`, `RoomPresenceStateMachine._now()` must anchor that timestamp to `_virtual_wall_base = time.time()`. Subsequent `timer_scheduler` callbacks (`_on_fire()`) and periodic coordinator ticks advance by `max(0.0, time.time() - _virtual_wall_base)` so a live `verify_timeout` or cooling deadline cannot prematurely expire against a stale cached `_virtual_now`.
+- **Verification**: Unit regression test in `tests/test_transitions_state_machine.py::test_clock_anchored_scheduler_prevents_stale_virtual_now` and E2E scenario execution in `tests/test_e2e_harness.py`.
+
 ### `GUARD-01`: Bounded Liveness (No Stuck Occupied Rooms)
 - **Category**: `GUARD` (`FailClosedGuardrail`)
 - **Description**: Eliminate `OCCUPIED_SEALED` and indefinite door holds. Every `occupied` sub-state must enforce a finite maximum duration (`max_hold_timeout`, `inactivity_timeout`, `verify_timeout`) that returns the room to `vacant` when no fresh human evidence arrives.
@@ -123,6 +132,16 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 - **Description**: Entering `occupied_verifying` arms a bounded `verify_timeout`; if the Vision/LLM call fails, times out, or raises an exception, the room transitions cleanly to `vacant`.
 - **Verification**: Fault-injection test simulating stalled/errored LLM verification.
 
+### `GUARD-06`: Sustaining Actuator Boundary (No Trigger Latching or Manual Entry Pulse)
+- **Category**: `GUARD` (`FailClosedGuardrail`)
+- **Description**: Monitored room actuators not listed in `trigger_entities` (including entities in `sustaining_conditions` such as `media_player.*` or `switch.*`) must never be added to `coord._active_triggers`, must cleanly discard on `off`, and must be excluded from `__manual_actuation_context__` entry pulses in `evaluate_coordinator_bayesian`. Sustaining conditions hold occupancy only via `occupied_holding` (bounded by `GUARD-01`) and transition cleanly to `occupied_cooling` when turned off.
+- **Verification**: Full-coordinator regression test in `tests/test_transitions_guardrails.py::test_sustaining_actuator_never_latches_triggers_or_injects_manual_entry`.
+
+### `GUARD-07`: Hold-Only Spatial Normalization (`negative_space` / `blind_pocket` -> `occupied_holding`)
+- **Category**: `GUARD` (`FailClosedGuardrail`)
+- **Description**: When spatial inference classifies a room via `negative_space`, `blind_pocket`, or `should_hold_occupied=True` without direct `positive_drivers`, `build_coordinator_evidence_snapshot()` must normalize `human_present=False` and `spatial_blind_pocket_hold=True`. This keeps the room in `occupied_holding` (subject to `max_hold_timeout`) instead of latching `occupied_confirmed` indefinitely.
+- **Verification**: Snapshot-normalization and bounded-hold regression test in `tests/test_transitions_guardrails.py::test_hold_only_spatial_estimate_maps_to_occupied_holding`.
+
 ### `PIR-01` & `PIR-02`: PIR False-Positive Validation *(Phase 2 — Post-Migration)*
 - **Category**: `PIR` (`FailClosedGuardrail` / `PositiveFeature`)
 - **Description**: To be detailed and implemented immediately after the `transitions` migration: introduce a `candidate` pre-occupancy state where uncorroborated PIR triggers wait for camera confirmation, time-history corroboration, or adjacent-room trajectory before setting `is_present=True`.
@@ -137,6 +156,11 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 - **Category**: `REPLAY` (`PositiveFeature`)
 - **Description**: Drive historical and synthetic timelines through `RoomPresenceStateMachine` using deterministic virtual clock steps, verifying parity with live execution.
 - **Verification**: Replay engine unit and scenario tests in `tests/test_replay_and_statistics.py`.
+
+### `REPLAY-02`: E2E Multi-Room Scenario & HA Recorder Playback Harness
+- **Category**: `REPLAY` (`PositiveFeature`)
+- **Description**: Provide a zero-sleep deterministic `VirtualHAHarness`, declarative JSON/YAML `scenario_runner`, HA Recorder SQLite / History JSON / PDD `.storage` playback loader (`ha_playback`), CLI runner (`scripts/replay_scenario.py`), and 6-part `ScenarioAssertionError` diagnostic envelope executing real multi-room coordinators and entity classes end-to-end.
+- **Verification**: Full E2E scenario, disturbance injection (`unavailable`/`unknown`), parameter sweep, and SQLite/JSON playback tests in `tests/test_e2e_harness.py`.
 
 ### `NOTIFY-01`: Slack Transition Driver Attribution
 - **Category**: `NOTIFY` (`PositiveFeature`)

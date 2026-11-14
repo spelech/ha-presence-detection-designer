@@ -21,6 +21,7 @@ from tests.harness.ha_playback import (
 from tests.harness.scenario_runner import load_scenario_file, run_scenario
 
 
+@pytest.mark.requirement("REPLAY-02", category="REPLAY", req_type="PositiveFeature")
 @pytest.mark.requirement("STATE-06", category="STATE", req_type="PositiveFeature")
 @pytest.mark.asyncio
 async def test_e2e_declarative_scenario_handoff_hold_and_llm_clear() -> None:
@@ -184,6 +185,7 @@ async def test_e2e_parameter_sweep_bounded_liveness(
     assert result.snapshots["Study"]["occupancy_state"] == OccupancyState.VACANT
 
 
+@pytest.mark.requirement("REPLAY-02", category="REPLAY", req_type="PositiveFeature")
 @pytest.mark.requirement("REPLAY-01", category="REPLAY", req_type="PositiveFeature")
 @pytest.mark.asyncio
 async def test_e2e_ha_recorder_sqlite_and_json_playback(tmp_path: Path) -> None:

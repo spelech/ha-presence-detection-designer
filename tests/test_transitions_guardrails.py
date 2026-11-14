@@ -158,3 +158,89 @@ def test_llm_verify_timeout_fails_to_vacant():
     assert action2 == "VACATED"
     assert sm.state == OccupancyState.VACANT
     assert sm.is_present is False
+
+
+@pytest.mark.requirement("GUARD-06", category="GUARD", req_type="FailClosedGuardrail")
+@pytest.mark.asyncio
+async def test_sustaining_actuator_never_latches_triggers_or_injects_manual_entry(tmp_path):
+    """@requirement GUARD-06: Sustaining actuators outside trigger_entities hold only and never latch triggers."""
+    from tests.harness.virtual_ha import VirtualHAHarness
+
+    rooms = [
+        {
+            "room_name": "Living Room",
+            "mode": "open",
+            "inactivity_timeout": 30,
+            "max_hold_timeout": 120,
+            "trigger_entities": ["binary_sensor.lr_motion"],
+            "sustaining_conditions": [
+                {"entity_id": "media_player.lr_tv", "operator": "equals", "state": "playing"}
+            ],
+        }
+    ]
+    with VirtualHAHarness(storage_dir=tmp_path) as harness:
+        await harness.async_add_rooms(rooms)
+        coord = harness.coordinators["Living Room"]
+        harness.set_state("binary_sensor.lr_motion", "off")
+        harness.set_state("media_player.lr_tv", "off")
+        harness.advance(5)
+
+        # Turning on sustaining actuator alone from vacant must NOT inject manual entry or add to _active_triggers
+        harness.set_state("media_player.lr_tv", "playing")
+        assert "media_player.lr_tv" not in coord._active_triggers
+        assert coord.state_machine.state == OccupancyState.VACANT
+
+        # Now occupy via real trigger, clear trigger -> occupied_holding, then turn TV off -> occupied_cooling -> vacant
+        harness.set_state("binary_sensor.lr_motion", "on")
+        assert coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
+        harness.set_state("binary_sensor.lr_motion", "off")
+        assert coord.state_machine.state == OccupancyState.OCCUPIED_HOLDING
+        harness.set_state("media_player.lr_tv", "off")
+        assert "media_player.lr_tv" not in coord._active_triggers
+        assert coord.state_machine.state == OccupancyState.OCCUPIED_COOLING
+        harness.advance(31)
+        assert coord.state_machine.state == OccupancyState.VACANT
+
+
+@pytest.mark.requirement("GUARD-07", category="GUARD", req_type="FailClosedGuardrail")
+def test_hold_only_spatial_estimate_maps_to_occupied_holding():
+    """@requirement GUARD-07: negative_space / blind_pocket without positive drivers holds via occupied_holding."""
+    from custom_components.presence_detection_designer.coordinator_helpers import (
+        build_coordinator_evidence_snapshot,
+    )
+
+    class _FakeCoord:
+        _active_triggers = set()
+        _active_condition_descs = []
+        _last_trigger_entity = None
+        _bayesian_drives_occupancy = False
+        last_bayesian_eval = None
+        last_spatial_estimate = {
+            "method": "negative_space",
+            "human_present": True,
+            "pet_present": False,
+            "should_hold_occupied": True,
+            "positive_drivers": [],
+        }
+
+    snap = build_coordinator_evidence_snapshot(_FakeCoord())
+    assert snap.human_present is False
+    assert snap.spatial_blind_pocket_hold is True
+    assert snap.human_evidence_active is False
+    assert snap.has_hold_evidence is True
+
+    sm = RoomPresenceStateMachine(
+        name="Master Bathroom", inactivity_timeout=30, max_hold_timeout=120
+    )
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.bath_pir"}), human_present=True
+        ),
+        now_ts=10.0,
+    )
+    sm.apply_evidence(snap, now_ts=20.0)
+    assert sm.state == OccupancyState.OCCUPIED_HOLDING
+    assert sm.advance_time(120.0, now_ts=140.0) == "HOLD_EXPIRED"
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+    assert sm.advance_time(30.0, now_ts=170.0) == "VACATED"
+    assert sm.state == OccupancyState.VACANT

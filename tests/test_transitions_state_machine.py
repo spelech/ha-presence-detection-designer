@@ -200,3 +200,55 @@ def test_adjacent_handoff_clears_cooling_room():
     assert sm.state == OccupancyState.VACANT
     assert sm.is_present is False
     assert sm.last_handoff_room == "Dining Room"
+
+
+@pytest.mark.requirement("STATE-07", category="STATE", req_type="PositiveFeature")
+def test_clock_anchored_scheduler_prevents_stale_virtual_now(monkeypatch):
+    """@requirement STATE-07: Scheduler callbacks advance from time.time() elapsed since explicit now_ts anchor."""
+    fake_wall = [1_000_000.0]
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer.state_machine.time.time",
+        lambda: fake_wall[0],
+    )
+    callbacks = []
+
+    def _schedule(delay: float, callback):
+        callbacks.append((fake_wall[0] + delay, callback))
+        return lambda: None
+
+    sm = RoomPresenceStateMachine(
+        name="Living Room",
+        inactivity_timeout=120,
+        verify_timeout=30,
+        llm_enabled=True,
+        timer_scheduler=_schedule,
+    )
+
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.lr_motion"}), human_present=True
+        ),
+        now_ts=1_000_010.0,
+    )
+    fake_wall[0] = 1_000_020.0
+    sm.apply_evidence(RoomEvidenceSnapshot(), now_ts=1_000_020.0)
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+
+    # Simulate an intervening explicit tick before countdown expires
+    fake_wall[0] = 1_000_021.0
+    assert sm.advance_time(0.0, now_ts=1_000_021.0) is None
+
+    # Fire countdown_expired at 1_000_140.0; verify_timeout (30s) must be anchored at 1_000_140.0 (deadline 1_000_170.0)
+    fake_wall[0] = 1_000_140.0
+    callbacks[-1][1]()
+    assert sm.state == OccupancyState.OCCUPIED_VERIFYING
+
+    # 1 second later (1_000_141.0), verify_timeout MUST NOT prematurely fire
+    fake_wall[0] = 1_000_141.0
+    assert sm.advance_time(0.0, now_ts=1_000_141.0) is None
+    assert sm.state == OccupancyState.OCCUPIED_VERIFYING
+
+    # Only after verify_timeout (1_000_170.0) should it vacate
+    fake_wall[0] = 1_000_170.0
+    assert sm.advance_time(0.0, now_ts=1_000_170.0) == "VACATED"
+    assert sm.state == OccupancyState.VACANT
