@@ -16,5 +16,8 @@
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/spelech/ha-presence-detection-designer/issues",
-  "version": "0.2.6"
+  "version": "0.2.6",
+  "requirements": [
+    "transitions>=0.9.2"
+  ]
 }

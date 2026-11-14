@@ -31,7 +31,13 @@ _STALE_ENTITY_IDS: frozenset[str] = frozenset(
         "binary_sensor.family_room_motion",
         "binary_sensor.motion_sensor_gen2_motion_detection",
         "binary_sensor.basement_motion",
+        "binary_sensor.basement_stairs_ring_motion",
         "binary_sensor.utility_room_door",
+        "binary_sensor.kitchen_motion",
+        "binary_sensor.laundry_room_motion",
+        "binary_sensor.master_bathroom_motion",
+        "binary_sensor.upstairs_hallway_motion",
+        "binary_sensor.upstairs_stairs_motion",
     }
 )
 
@@ -47,8 +53,8 @@ _ROOM_REQUIRED_PIRS: dict[str, list[tuple[str, str, str, float, float]]] = {
     ],
     "Master Bathroom": [
         (
-            "binary_sensor.master_bathroom_motion",
-            "Master Bathroom Wyze PIR Motion",
+            "binary_sensor.master_bathroom_motion_occupancy",
+            "Master Bathroom SenseGuard PIR Motion",
             str(BayesianWeightPreset.STRONG),
             0.90,
             0.05,
@@ -56,8 +62,17 @@ _ROOM_REQUIRED_PIRS: dict[str, list[tuple[str, str, str, float, float]]] = {
     ],
     "Kitchen": [
         (
-            "binary_sensor.kitchen_motion",
-            "Kitchen Wyze PIR Motion",
+            "binary_sensor.kitchen_motion_occupancy",
+            "Kitchen SenseGuard PIR Motion",
+            str(BayesianWeightPreset.STRONG),
+            0.90,
+            0.05,
+        )
+    ],
+    "Laundry Room": [
+        (
+            "binary_sensor.laundry_room_ring_motion",
+            "Laundry Room Ring PIR Motion",
             str(BayesianWeightPreset.STRONG),
             0.90,
             0.05,
@@ -80,21 +95,82 @@ _ROOM_REQUIRED_PIRS: dict[str, list[tuple[str, str, str, float, float]]] = {
             0.90,
             0.05,
         ),
+        (
+            "binary_sensor.basement_stairs_top_motion",
+            "Basement Stairs Top Step Wyze PIR (938)",
+            str(BayesianWeightPreset.MODERATE),
+            0.78,
+            0.08,
+        ),
+    ],
+    "Basement Play Area": [
+        (
+            "binary_sensor.basement_stairs_bottom_motion",
+            "Basement Stairs Bottom Step Wyze PIR (dd9)",
+            str(BayesianWeightPreset.STRONG),
+            0.90,
+            0.05,
+        ),
     ],
     "Upstairs Hallway & Stairs": [
         (
-            "binary_sensor.upstairs_hallway_motion",
-            "Upstairs Hallway Wyze PIR Motion",
+            "binary_sensor.upstairs_hallway_motion_occupancy",
+            "Upstairs Hallway SenseGuard PIR Motion",
             str(BayesianWeightPreset.STRONG),
             0.90,
             0.05,
         ),
         (
-            "binary_sensor.upstairs_stairs_motion",
-            "Upstairs Stairs Wyze PIR Motion",
+            "binary_sensor.upstairs_stairs_bottom_motion",
+            "Upstairs Stairs Bottom Step Wyze PIR (433)",
             str(BayesianWeightPreset.STRONG),
             0.90,
             0.05,
+        ),
+    ],
+    "Family Room": [
+        (
+            "binary_sensor.family_room_motion_occupancy",
+            "Family Room SenseGuard PIR Motion",
+            str(BayesianWeightPreset.MODERATE),
+            0.78,
+            0.08,
+        ),
+    ],
+    "Living Room": [
+        (
+            "binary_sensor.living_room_motion_occupancy",
+            "Living Room SenseGuard PIR Motion",
+            str(BayesianWeightPreset.MODERATE),
+            0.78,
+            0.08,
+        ),
+    ],
+    "Dining Room": [
+        (
+            "binary_sensor.dining_room_motion_occupancy",
+            "Dining Room SenseGuard PIR Motion",
+            str(BayesianWeightPreset.MODERATE),
+            0.78,
+            0.08,
+        ),
+    ],
+    "Master Bedroom": [
+        (
+            "binary_sensor.master_bedroom_motion_occupancy",
+            "Master Bedroom SenseGuard PIR Motion",
+            str(BayesianWeightPreset.MODERATE),
+            0.78,
+            0.08,
+        ),
+    ],
+    "Office": [
+        (
+            "binary_sensor.office_motion_occupancy",
+            "Office SenseGuard PIR Motion",
+            str(BayesianWeightPreset.MODERATE),
+            0.78,
+            0.08,
         ),
     ],
 }
