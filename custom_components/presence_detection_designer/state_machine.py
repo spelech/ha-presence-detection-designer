@@ -115,6 +115,7 @@ class RoomPresenceStateMachine:
         self.active_conditions: list[str] = []
 
         self._virtual_now: float | None = None
+        self._virtual_wall_base: float | None = None
         self._deadline_ts: float | None = None
         self._next_cooling_duration: int | None = None
         self._timer_cancel: Callable[[], None] | None = None
@@ -134,12 +135,14 @@ class RoomPresenceStateMachine:
         )
 
     def _now(self, explicit_ts: float | None = None) -> float:
+        wall_now = time.time()
         if explicit_ts is not None:
             self._virtual_now = float(explicit_ts)
+            self._virtual_wall_base = wall_now
             return self._virtual_now
-        if self._virtual_now is not None:
-            return self._virtual_now
-        return time.time()
+        if self._virtual_now is not None and self._virtual_wall_base is not None:
+            return self._virtual_now + max(0.0, wall_now - self._virtual_wall_base)
+        return wall_now
 
     @property
     def is_present(self) -> bool:
@@ -203,7 +206,6 @@ class RoomPresenceStateMachine:
         """Return chronological list of recorded transition attempts."""
         return list(self._history)
 
-    # --- Guard predicates ---
     def _guard_has_human_evidence(self, _event: Any) -> bool:
         return self.snapshot.human_evidence_active
 
@@ -225,7 +227,6 @@ class RoomPresenceStateMachine:
             OccupancyState.OCCUPIED_CONFIRMED,
         )
 
-    # --- Audit callbacks ---
     def _on_prepare_event(self, event: Any) -> None:
         event.kwargs["_source_state"] = self.state
 
@@ -261,7 +262,6 @@ class RoomPresenceStateMachine:
             }
         )
 
-    # --- Timer lifecycle callbacks ---
     def _cancel_timer(self) -> None:
         if self._timer_cancel is not None:
             try:
@@ -329,7 +329,6 @@ class RoomPresenceStateMachine:
     def on_enter_override(self, _event: Any) -> None:
         self._cancel_timer()
 
-    # --- Public control & input API ---
     def apply_evidence(self, snapshot: RoomEvidenceSnapshot, now_ts: float | None = None) -> None:
         """Update live evidence snapshot and dispatch the matching state transition."""
         now = self._now(now_ts)
@@ -448,7 +447,7 @@ class RoomPresenceStateMachine:
         if now_ts is not None:
             now = self._now(now_ts)
         else:
-            base = self._virtual_now if self._virtual_now is not None else time.time()
+            base = self._now()
             now = self._now(base + max(0.0, float(seconds)))
 
         if self.override or self._deadline_ts is None or now < self._deadline_ts:

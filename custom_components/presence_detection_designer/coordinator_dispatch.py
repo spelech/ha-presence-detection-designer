@@ -341,9 +341,15 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     virtual_manual_eid = "__manual_actuation_context__"
     has_manual_boost = False
     tracker = getattr(coord, "actuation_tracker", None)
+    cond_eids = {
+        str(c.get("entity_id"))
+        for c in (getattr(coord, "conditions", None) or [])
+        if isinstance(c, dict)
+    }
     if (
         tracker is not None
         and getattr(tracker, "manual_intent", "auto") == "manual_on"
+        and getattr(tracker, "last_manual_entity", None) not in cond_eids
         and tracker.last_manual_ts is not None
         and (time.time() - tracker.last_manual_ts)
         <= float(getattr(coord.state_machine, "inactivity_timeout", 300))
