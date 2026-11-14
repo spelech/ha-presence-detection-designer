@@ -2762,6 +2762,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const verifiedBy = selRoom.verified_by || "none";
     const reason = selRoom.state_reason || selRoom.last_transition_reason || "Initialized vacant";
     const mermaidSrc = selRoom.mermaid_diagram || "";
+    const pirState = String(selRoom.pir_validation_state || "idle");
+    const pirSource = selRoom.pir_corroboration_source || "none";
+    const pirDetail = selRoom.pir_corroboration_detail || "Awaiting PIR / corroboration";
+    const pirRemain = Number(selRoom.pir_candidate_remaining_sec || 0);
+    const pirMermaid = selRoom.pir_mermaid_diagram || "";
+    const pirHistory = Array.isArray(selRoom.pir_transition_history) ? [...selRoom.pir_transition_history].reverse() : [];
+    const sensorWeights = Array.isArray(selRoom.sensor_weights) ? selRoom.sensor_weights : [];
 
     const nodeStyle = (id) => {
       const active = state === id;
@@ -2952,6 +2959,81 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <summary style="cursor:pointer;font-size:12.5px;color:var(--ha-muted);">Raw Live Mermaid Definition (from Python transitions)</summary>
           <textarea class="code-area" readonly style="margin-top:8px;min-height:140px;">${this._escape(mermaidSrc)}</textarea>
         </details>
+      </div>
+
+      <div class="ha-card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">PIR Validation Gate &amp; Cooldown Reliability</h3>
+            <div class="card-desc">Separate <code>transitions.extensions.GraphMachine</code> gate (<code>10s</code> candidate window, any-one-of corroboration: Camera / Trajectory / BLE / Time-History).</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;">
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">PIR Gate State</div>
+            <div style="font-size:14px;font-weight:600;margin-top:2px;"><code>${this._escape(pirState)}</code></div>
+          </div>
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">Corroborator</div>
+            <div style="font-size:14px;font-weight:600;margin-top:2px;"><code>${this._escape(pirSource)}</code></div>
+          </div>
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">Candidate Window</div>
+            <div style="font-size:14px;font-weight:600;margin-top:2px;">${pirRemain > 0 ? `${pirRemain}s` : "Inactive"}</div>
+          </div>
+          <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
+            <div style="font-size:11px;color:var(--ha-muted);text-transform:uppercase;">Detail</div>
+            <div style="font-size:12.5px;font-weight:500;margin-top:2px;">${this._escape(pirDetail)}</div>
+          </div>
+        </div>
+        ${
+          sensorWeights.length > 0
+            ? `<div style="overflow-x:auto;margin-bottom:12px;">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+                  <thead>
+                    <tr style="border-bottom:1px solid var(--ha-divider);text-align:left;color:var(--ha-muted);">
+                      <th style="padding:6px;">Sensor</th>
+                      <th style="padding:6px;">Category</th>
+                      <th style="padding:6px;">Cooldown</th>
+                      <th style="padding:6px;">Weight</th>
+                      <th style="padding:6px;">PIR Gate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${sensorWeights
+                      .map(
+                        (sw) => `
+                          <tr style="border-bottom:1px solid var(--ha-divider);">
+                            <td style="padding:6px;"><code>${this._escape(sw.entity_id || "")}</code></td>
+                            <td style="padding:6px;">${this._escape(sw.category || "")}</td>
+                            <td style="padding:6px;">${Number(sw.cooldown_sec || 0)}s</td>
+                            <td style="padding:6px;">${Number(sw.reliability_weight ?? 1).toFixed(2)}</td>
+                            <td style="padding:6px;">${sw.requires_pir_validation ? "Required" : "Bypass"}</td>
+                          </tr>
+                        `
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+            : ""
+        }
+        ${
+          pirHistory.length > 0
+            ? `<div style="font-size:12px;color:var(--ha-muted);margin-bottom:8px;">Recent PIR Gate Events: ${pirHistory
+                .slice(0, 5)
+                .map((h) => `<code>${this._escape(h.trigger || "")}</code> (${this._escape(h.source || "")}&rarr;${this._escape(h.dest || "")})`)
+                .join(" · ")}</div>`
+            : ""
+        }
+        ${
+          pirMermaid
+            ? `<details>
+                <summary style="cursor:pointer;font-size:12.5px;color:var(--ha-muted);">Raw PIR Validation Mermaid Definition</summary>
+                <textarea class="code-area" readonly style="margin-top:8px;min-height:110px;">${this._escape(pirMermaid)}</textarea>
+              </details>`
+            : ""
+        }
       </div>
     `;
   }

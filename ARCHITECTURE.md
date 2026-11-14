@@ -83,7 +83,25 @@ stateDiagram-v2
     override --> vacant : disable_override [no_human_evidence]
 ```
 
-*(Phase 2 will insert the `candidate` PIR validation state between `vacant` and `occupied_confirmed` once the `transitions` foundation is verified.)*
+## PIR Validation State Machine (`PIRValidationStateMachine` — Per Room)
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> confirmed : pir_triggered [has_corroboration]
+    idle --> candidate : pir_triggered [not has_corroboration]
+    candidate --> confirmed : pir_triggered [has_corroboration]
+    candidate --> confirmed : corroborated
+    candidate --> suppressed : candidate_expired [has_active_pir]
+    candidate --> idle : candidate_expired [not has_active_pir]
+    confirmed --> idle : pir_cleared [not has_active_pir]
+    suppressed --> confirmed : corroborated [has_active_pir]
+    suppressed --> confirmed : pir_triggered [has_corroboration]
+    suppressed --> idle : pir_cleared [not has_active_pir]
+```
+
+- **Any-One-Of Corroborators (`PIR-02`)**: `camera` (Frigate person/subzone), `trajectory` (adjacent room/path/door), `ble` (Bermuda room/adjacent), `time_history` (2+ sensors or 2+ fast-PIR pulses in `60s`).
+- **Cooldown Reliability Weighting (`PIR-03`)**: `sensor_reliability.py` computes `weight_from_cooldown(cooldown_sec)` and tempers Bayesian log-odds (`odds^w`) so Ecobee (`300s`/`1800s`) and battery camera PIR (`family_room_ring_motion`) remain supporting evidence only.
 
 ---
 
@@ -92,6 +110,8 @@ stateDiagram-v2
 ```text
 custom_components/presence_detection_designer/
 ├── state_machine.py          # HierarchicalGraphMachine model, TransitionRecord, Mermaid export
+├── pir_validation.py         # Separate GraphMachine PIR candidate gate (10s window, 4 corroborators)
+├── sensor_reliability.py     # Cooldown-based Bayesian weighting & hardware reliability catalog
 ├── evidence_snapshot.py      # RoomEvidenceSnapshot normalization (spatial + triggers + optional Bayesian/conditions)
 ├── coordinator.py            # HA event subscriptions, timer scheduling, coordinator lifecycle
 ├── coordinator_dispatch.py   # Transition event bus, Slack attribution, adjacent handoff dispatch

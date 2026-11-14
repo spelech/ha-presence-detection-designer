@@ -12,11 +12,17 @@ from .const import (
     DOMAIN,
     EVENT_PRESENCE_TRANSITION,
     OccupancyState,
+    PIRValidationState,
 )
 from .coordinator_helpers import (
     _safe_state_getter,
     build_coordinator_evidence_snapshot,
+    record_coordinator_timeline_snapshot,
     sync_coordinator_evidence,
+)
+from .pir_corroboration import (
+    build_pir_corroboration_context,
+    handle_pir_validation_for_trigger,
 )
 from .trajectory_validator import (
     async_send_coordinator_test_notification,
@@ -221,43 +227,6 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
             other.notify_adjacent_occupancy(coord.room_name)
 
 
-def record_coordinator_timeline_snapshot(coord: Any) -> None:
-    """Record a compact sensor & state snapshot into PDDStore's rolling timeline buffer."""
-    if not coord.hass or not isinstance(getattr(coord.hass, "data", None), dict):
-        return
-    store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-    if store is None or not hasattr(store, "record_timeline_event"):
-        return
-
-    from .spatial_catalog import BLE_TRACKER_ENTITIES
-
-    entity_states: dict[str, str] = {}
-    tracked_eids: set[str] = (
-        set(coord.boundary_entities) | set(coord.trigger_entities) | set(BLE_TRACKER_ENTITIES)
-    )
-    for cond in coord.conditions:
-        if isinstance(cond, dict) and cond.get("entity_id"):
-            tracked_eids.add(str(cond["entity_id"]))
-    for obs in coord.bayesian_observations:
-        if isinstance(obs, dict) and obs.get("entity_id"):
-            tracked_eids.add(str(obs["entity_id"]))
-
-    for eid in sorted(tracked_eids):
-        st_obj = _safe_state_getter(coord.hass, eid)
-        if st_obj is not None:
-            entity_states[eid] = str(st_obj.state)
-
-    store.record_timeline_event(
-        coord.entry_id,
-        {
-            "is_present": coord.state_machine.is_present,
-            "occupancy_state": str(coord.state_machine.state),
-            "probability_pct": coord.state_machine.bayesian_probability_pct,
-            "entity_states": entity_states,
-        },
-    )
-
-
 def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     """Evaluate Bayesian sensor fusion across all configured observations and negative-space geometry."""
     if not coord.hass or not hasattr(coord.hass, "states") or not coord.bayesian_enabled:
@@ -285,13 +254,18 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                 if isinstance(cand_fp, dict) and cand_fp.get("rooms"):
                     fp = cand_fp
 
+    queried_states: dict[str, str | None] = {}
+
     def _raw_state_str(eid: str) -> str | None:
         st = _safe_state_getter(coord.hass, eid)
         if st is None:
-            return None
-        if eid.startswith("cover.") and getattr(st, "attributes", {}).get("is_moving"):
-            return "moving"
-        return str(st.state)
+            val: str | None = None
+        elif eid.startswith("cover.") and getattr(st, "attributes", {}).get("is_moving"):
+            val = "moving"
+        else:
+            val = str(st.state)
+        queried_states[eid] = val
+        return val
 
     now_ts = time.time()
     last_frame = (
@@ -299,10 +273,18 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         if store is not None
         else coord._last_spatial_frame
     )
+    cached_qs = last_frame.get("_queried_states") if isinstance(last_frame, dict) else None
+    cache_hit = (
+        isinstance(last_frame, dict)
+        and (now_ts - float(last_frame.get("ts", 0.0))) < 0.2
+        and isinstance(cached_qs, dict)
+        and all(_raw_state_str(k) == v for k, v in cached_qs.items())
+    )
     try:
-        if last_frame and (now_ts - float(last_frame.get("ts", 0.0))) < 0.2:
+        if cache_hit:
             frame = last_frame
         else:
+            queried_states.clear()
             frame = evaluate_spatial_frame(
                 floorplan=fp,
                 state_getter=_raw_state_str,
@@ -312,6 +294,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                 guest_mode_enabled=guest_mode_enabled,
                 ble_decider_enabled=ble_decider_enabled,
             )
+            frame["_queried_states"] = dict(queried_states)
             if store is not None:
                 store._last_spatial_frame = frame
         coord._last_spatial_frame = frame
@@ -408,10 +391,23 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         if not check_coordinator_trajectory(coord, now_ts=time.time()).is_valid:
             should_trigger_sm = False
 
+    pv = getattr(coord, "pir_validator", None)
+    pv_promoted = False
+    if (
+        pv is not None
+        and getattr(coord, "pir_validation_enabled", True)
+        and pv.state in (PIRValidationState.CANDIDATE, PIRValidationState.SUPPRESSED)
+    ):
+        ctx = build_pir_corroboration_context(coord, now_ts=now_ts)
+        pv_promoted = pv.on_corroboration_update(ctx, now_ts=now_ts)
+
     coord._bayesian_drives_occupancy = bool(should_trigger_sm)
     sync_coordinator_evidence(coord, trigger_bayesian=should_trigger_sm, now_ts=now_ts)
+    if pv_promoted and pv is not None and not pv.active_pir_sensors:
+        pv.pir_cleared(now_ts=now_ts)
+        sync_coordinator_evidence(coord, trigger_bayesian=should_trigger_sm, now_ts=now_ts)
     record_coordinator_timeline_snapshot(coord)
-    if evaluation.is_occupied and should_trigger_sm and not guest_mode_enabled:
+    if ((evaluation.is_occupied and should_trigger_sm) or pv_promoted) and not guest_mode_enabled:
         notify_connected_rooms_if_active(coord)
     return evaluation
 
@@ -430,8 +426,9 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     )
     is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
 
+    traj: Any | None = None
+    now = time.time()
     if is_active and not coord.state_machine.is_present:
-        now = time.time()
         last_cleared = getattr(coord.state_machine, "last_cleared_time", 0.0)
         cooldown = float(getattr(coord.state_machine, "retrigger_cooldown", 20.0))
         b_occupied = bool(coord.last_bayesian_eval and coord.last_bayesian_eval.is_occupied)
@@ -460,10 +457,12 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     if is_active:
         coord._active_triggers.add(str(entity_id))
         coord._last_trigger_entity = str(entity_id)
+        handle_pir_validation_for_trigger(coord, str(entity_id), True, traj=traj, now_ts=now)
     else:
         coord._active_triggers.discard(str(entity_id))
+        handle_pir_validation_for_trigger(coord, str(entity_id), False, now_ts=now)
 
-    sync_coordinator_evidence(coord)
-    if is_active:
+    sync_coordinator_evidence(coord, now_ts=now)
+    if is_active and coord.state_machine.is_present:
         coord._notify_connected_rooms_if_active()
     coord.async_update_listeners()

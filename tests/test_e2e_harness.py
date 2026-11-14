@@ -59,6 +59,7 @@ async def test_e2e_feedback_envelope_on_failure() -> None:
                 "mode": "open",
                 "inactivity_timeout": 30,
                 "trigger_entities": ["binary_sensor.kitchen_pir"],
+                "pir_validation_enabled": False,
             }
         ],
         "initial_states": {"binary_sensor.kitchen_pir": "off"},
@@ -168,6 +169,7 @@ async def test_e2e_parameter_sweep_bounded_liveness(
                 "max_hold_timeout": max_hold_timeout,
                 "bayesian_threshold": threshold,
                 "trigger_entities": ["binary_sensor.study_pir"],
+                "pir_validation_enabled": False,
                 "sustaining_conditions": [{"entity_id": "switch.study_desk", "state": "on"}],
             }
         ],
@@ -223,6 +225,7 @@ async def test_e2e_ha_recorder_sqlite_and_json_playback(tmp_path: Path) -> None:
             "mode": "open",
             "inactivity_timeout": 30,
             "trigger_entities": ["binary_sensor.kitchen_pir"],
+            "pir_validation_enabled": False,
             "connected_rooms": ["Dining Room"],
         },
         {
@@ -230,6 +233,7 @@ async def test_e2e_ha_recorder_sqlite_and_json_playback(tmp_path: Path) -> None:
             "mode": "open",
             "inactivity_timeout": 30,
             "trigger_entities": ["binary_sensor.dining_pir"],
+            "pir_validation_enabled": False,
             "connected_rooms": ["Kitchen"],
         },
     ]
@@ -292,3 +296,21 @@ async def test_e2e_ha_recorder_sqlite_and_json_playback(tmp_path: Path) -> None:
     )
     assert report_json.rooms["Kitchen"]["occupancy_state"] == OccupancyState.VACANT
     assert report_json.rooms["Dining Room"]["occupancy_state"] == OccupancyState.VACANT
+
+
+@pytest.mark.requirement("PIR-01", category="PIR", req_type="FailClosedGuardrail")
+@pytest.mark.requirement("PIR-02", category="PIR", req_type="PositiveFeature")
+@pytest.mark.asyncio
+async def test_e2e_pir_validation_false_positive_and_corroboration() -> None:
+    """@requirement PIR-02: E2E playback of PIR false-positive rejection and multi-room corroboration."""
+    scenario_path = (
+        Path(__file__).parent / "scenarios" / "pir_corroboration_and_false_positive.json"
+    )
+    spec = load_scenario_file(scenario_path)
+    result = await run_scenario(
+        spec,
+        reproduction_command="python scripts/replay_scenario.py --scenario tests/scenarios/pir_corroboration_and_false_positive.json",
+    )
+    assert result.snapshots["Family Room"]["occupancy_state"] == OccupancyState.VACANT
+    assert result.snapshots["Garage"]["occupancy_state"] == OccupancyState.VACANT
+    assert result.snapshots["Laundry Room"]["occupancy_state"] == OccupancyState.VACANT

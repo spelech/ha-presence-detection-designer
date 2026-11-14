@@ -38,6 +38,8 @@ from .coordinator_dispatch import (
 )
 from .coordinator_helpers import apply_coordinator_config_fields
 from .notifications import NotificationDispatcher
+from .pir_corroboration import handle_pir_validation_for_trigger, sync_coordinator_pir_corroboration
+from .pir_validation import PIRValidationStateMachine
 from .state_machine import RoomPresenceStateMachine
 
 __all__ = ["RoomPresenceCoordinator", "_safe_state_getter"]
@@ -78,6 +80,8 @@ class RoomPresenceCoordinator:
         self._active_condition_descs: list[str] = []
         self._last_trigger_entity: str | None = None
         self._bayesian_drives_occupancy: bool = False
+        self.pir_validation_enabled: bool = True
+        self.pir_validator: PIRValidationStateMachine = None  # type: ignore[assignment]
         self.state_machine: RoomPresenceStateMachine = None  # type: ignore[assignment]
 
         self._apply_config_fields(self.config, preserve_state=False)
@@ -148,8 +152,14 @@ class RoomPresenceCoordinator:
                     return
                 self.async_update_listeners()
 
+            def _on_pir_expired(_expired_trigger: str) -> None:
+                self.async_update_listeners()
+
             self.state_machine._timer_scheduler = _schedule
             self.state_machine._on_timer_expired = _on_expired
+            if self.pir_validator is not None:
+                self.pir_validator._timer_scheduler = _schedule
+                self.pir_validator._on_timer_expired = _on_pir_expired
         except Exception:  # noqa: BLE001
             pass
 
@@ -198,6 +208,15 @@ class RoomPresenceCoordinator:
             for obs in self.bayesian_observations
             if obs.get("entity_id") and obs["entity_id"] not in already_tracked
         ]
+        store = (
+            self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+            if isinstance(getattr(self.hass, "data", None), dict)
+            else None
+        )
+        if store is not None and isinstance(getattr(store, "global_settings", None), dict):
+            for b_eid in store.global_settings.get("ble_trackers") or []:
+                if b_eid and b_eid not in already_tracked:
+                    bayesian_only_entities.append(b_eid)
         if bayesian_only_entities:
             unsub = async_track_state_change_event(
                 self.hass,
@@ -232,6 +251,8 @@ class RoomPresenceCoordinator:
         self._unsub_trackers.clear()
         if self.state_machine is not None:
             self.state_machine._cancel_timer()
+        if self.pir_validator is not None:
+            self.pir_validator._cancel_timer()
 
     def async_unload(self) -> None:
         """Unsubscribe all entity listeners and timers."""
@@ -250,6 +271,11 @@ class RoomPresenceCoordinator:
                 if st_obj.state in ("on", "playing", "home"):
                     self._active_triggers.add(t_eid)
                     self._last_trigger_entity = t_eid
+                    handle_pir_validation_for_trigger(self, t_eid, True)
+                else:
+                    handle_pir_validation_for_trigger(self, t_eid, False)
+            else:
+                handle_pir_validation_for_trigger(self, t_eid, False)
 
         self._eval_conditions_and_update()
 
@@ -281,6 +307,8 @@ class RoomPresenceCoordinator:
         """Clear cooling timer immediately if an adjacent connected room just detected an occupant."""
         if self._is_guest_mode_active() or self._is_definitive_tracker_pinned():
             return False
+        if sync_coordinator_pir_corroboration(self):
+            self._last_adjacent_arrival = f"Entered from {from_room_name}"
         if self.state_machine.handle_adjacent_room_occupied(from_room_name):
             self._last_adjacent_arrival = f"Entered from {from_room_name}"
             self._record_timeline_snapshot()
@@ -339,6 +367,8 @@ class RoomPresenceCoordinator:
                 entity_id=entity_id,
                 is_open=is_open,
             )
+        if is_open:
+            sync_coordinator_pir_corroboration(self)
         self.async_update_listeners()
 
     @callback
@@ -360,6 +390,8 @@ class RoomPresenceCoordinator:
 
             get_house_perimeter_tracker(self.hass).reconcile_headcount()
 
+        if self.pir_validator is not None:
+            self.pir_validator.advance_time(0.0 if self.pir_validator._timer_scheduler else 1.0)
         action = self.state_machine.advance_time(
             0.0 if self.state_machine._timer_scheduler else 1.0
         )

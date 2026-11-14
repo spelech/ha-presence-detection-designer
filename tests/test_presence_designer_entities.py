@@ -17,6 +17,7 @@ from custom_components.presence_detection_designer.const import (
     CONF_INACTIVITY_TIMEOUT,
     CONF_LLM_ENABLED,
     CONF_MODE,
+    CONF_PIR_VALIDATION_ENABLED,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
@@ -50,6 +51,7 @@ def sample_config():
         CONF_MODE: Mode.OPEN,
         CONF_BOUNDARY_ENTITIES: [],
         CONF_TRIGGER_ENTITIES: ["binary_sensor.lr_motion"],
+        CONF_PIR_VALIDATION_ENABLED: False,
         CONF_SUSTAINING_CONDITIONS: [
             {"entity_id": "media_player.lr_tv", "operator": "equals", "state": "playing"}
         ],

@@ -22,6 +22,7 @@ from .const import (
     BayesianWeightPreset,
     ConditionOperator,
 )
+from .sensor_reliability import apply_cooldown_weight, classify_sensor_reliability
 
 __all__ = [
     "BayesianEvaluation",
@@ -85,9 +86,8 @@ def resolve_observation_weights(obs: dict[str, Any]) -> tuple[str, float, float]
 
     if preset_raw in BAYESIAN_PRESET_WEIGHTS and not has_explicit:
         pt, pf = BAYESIAN_PRESET_WEIGHTS[preset_raw]
-        return preset_raw, pt, pf
-
-    if has_explicit:
+        preset_name = preset_raw
+    elif has_explicit:
         pt = _clamp_prob(obs.get("prob_given_true", 0.85))
         pf = _clamp_prob(obs.get("prob_given_false", 0.05))
         preset_name = (
@@ -95,10 +95,28 @@ def resolve_observation_weights(obs: dict[str, Any]) -> tuple[str, float, float]
             if preset_raw in BAYESIAN_PRESET_WEIGHTS
             else infer_preset_from_weights(pt, pf)
         )
-        return preset_name, pt, pf
+    else:
+        pt, pf = BAYESIAN_PRESET_WEIGHTS[BayesianWeightPreset.STRONG]
+        preset_name = str(BayesianWeightPreset.STRONG)
 
-    pt, pf = BAYESIAN_PRESET_WEIGHTS[BayesianWeightPreset.STRONG]
-    return str(BayesianWeightPreset.STRONG), pt, pf
+    raw_cd = obs.get("cooldown_sec")
+    if raw_cd is not None or obs.get("auto_cooldown_weight"):
+        eid = str(obs.get("entity_id", ""))
+        prof = classify_sensor_reliability(
+            eid,
+            cooldown_sec=float(raw_cd) if raw_cd is not None else None,
+            battery_powered=obs.get("battery_powered"),
+        )
+        if prof.reliability_weight < 0.999:
+            pt, pf = apply_cooldown_weight(
+                pt,
+                pf,
+                prof.cooldown_sec,
+                battery_powered=prof.battery_powered,
+            )
+            preset_name = infer_preset_from_weights(pt, pf)
+
+    return preset_name, pt, pf
 
 
 def friendly_entity_label(obs: dict[str, Any], entity_state_obj: Any = None) -> str:
@@ -133,6 +151,7 @@ def normalize_observation(obs: dict[str, Any]) -> dict[str, Any]:
         "prob_given_false": round(pf, 3),
         "likelihood_ratio": round(lr, 2),
         "penalize_when_off": bool(obs.get("penalize_when_off", False)),
+        "cooldown_sec": obs.get("cooldown_sec"),
     }
 
 

@@ -173,6 +173,7 @@ async def test_sustaining_actuator_never_latches_triggers_or_injects_manual_entr
             "inactivity_timeout": 30,
             "max_hold_timeout": 120,
             "trigger_entities": ["binary_sensor.lr_motion"],
+            "pir_validation_enabled": False,
             "sustaining_conditions": [
                 {"entity_id": "media_player.lr_tv", "operator": "equals", "state": "playing"}
             ],

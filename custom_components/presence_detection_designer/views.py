@@ -24,6 +24,7 @@ from .const import (
 )
 from .coordinator import RoomPresenceCoordinator, _safe_state_getter
 from .llm_verifier import LLMVerifier
+from .sensor_reliability import classify_sensor_reliability
 from .spatial_inference import evaluate_spatial_frame
 from .spatial_topology import compile_floorplan_topology
 from .store import async_get_store
@@ -416,6 +417,19 @@ class PDDStateGraphView(HomeAssistantView):
             if entry_filter and eid != entry_filter:
                 continue
             sm = coord.state_machine
+            pv = getattr(coord, "pir_validator", None)
+            sensor_weights = [
+                {
+                    "entity_id": obs["entity_id"],
+                    "label": obs.get("label") or obs["entity_id"],
+                    "category": (prof := classify_sensor_reliability(obs["entity_id"])).category,
+                    "cooldown_sec": prof.cooldown_sec,
+                    "reliability_weight": prof.reliability_weight,
+                    "requires_pir_validation": prof.requires_pir_validation,
+                }
+                for obs in (coord.bayesian_observations or [])
+                if isinstance(obs, dict) and obs.get("entity_id")
+            ]
             rooms.append(
                 {
                     "entry_id": coord.entry_id,
@@ -429,6 +443,20 @@ class PDDStateGraphView(HomeAssistantView):
                     "override": sm.override,
                     "mermaid_diagram": sm.get_mermaid_diagram(),
                     "transition_history": sm.transition_history,
+                    "pir_validation_enabled": getattr(coord, "pir_validation_enabled", True),
+                    "pir_validation_state": str(pv.state) if pv is not None else "disabled",
+                    "pir_corroboration_source": pv.last_corroboration_source
+                    if pv is not None
+                    else None,
+                    "pir_corroboration_detail": pv.last_corroboration_detail
+                    if pv is not None
+                    else None,
+                    "pir_candidate_remaining_sec": pv.candidate_remaining_sec
+                    if pv is not None
+                    else 0,
+                    "pir_mermaid_diagram": pv.get_mermaid_diagram() if pv is not None else "",
+                    "pir_transition_history": pv.transition_history if pv is not None else [],
+                    "sensor_weights": sensor_weights,
                 }
             )
         rooms.sort(key=lambda r: str(r.get("room_name", "")).lower())

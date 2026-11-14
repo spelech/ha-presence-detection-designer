@@ -8,7 +8,7 @@ This specification defines the functional requirements, category taxonomy, guard
 > - **Floorplan & Spatial Engine Preserved:** Existing 2D floorplan geometry, doorway occlusion, camera raycasting, and spatial classification remain the evidence foundation.
 > - **Pets Excluded from Occupancy:** Pet-only detections (`pet_present=True`, `human_present=False`) must not mark a room occupied.
 > - **Headcount Decoupled:** Whole-house headcount and conservation-law stomping are decoupled from room state machines and deferred to a separate specification.
-> - **Phased Rollout:** Phase 1 locks down the `transitions` engine, guardrails, entities, and UI observability; Phase 2 adds PIR false-positive validation (`PIR-01`..`PIR-02`) on top of the `transitions` engine.
+> - **Phased Rollout:** Phase 1 locks down the `transitions` engine, guardrails, entities, and UI observability; Phase 2 adds PIR false-positive validation (`PIR-01`..`PIR-03`) on top of the `transitions` engine.
 
 ---
 
@@ -49,8 +49,9 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 | **`GUARD-05`** | `GUARD` | `FailClosedGuardrail` | **LLM Verification Timeout Fail-Safe** | If Vision/LLM verification hangs, errors, or returns malformed data while in `occupied_verifying`, `verify_timeout` fails closed toward `vacant` instead of wedging. | `tests/test_transitions_guardrails.py::test_llm_verify_timeout_fails_to_vacant` |
 | **`GUARD-06`** | `GUARD` | `FailClosedGuardrail` | **Sustaining Actuator Boundary** | Actuators outside `trigger_entities` (e.g., `sustaining_conditions` like TVs/switches) never enter `_active_triggers`, discard cleanly on `off`, and never inject manual-entry Bayesian pulses. | `tests/test_transitions_guardrails.py::test_sustaining_actuator_never_latches_triggers_or_injects_manual_entry` |
 | **`GUARD-07`** | `GUARD` | `FailClosedGuardrail` | **Hold-Only Spatial Normalization** | `negative_space` / `blind_pocket` spatial holds with no direct `positive_drivers` normalize to `spatial_blind_pocket_hold=True` and `human_present=False`, entering `occupied_holding` with bounded `max_hold_timeout`. | `tests/test_transitions_guardrails.py::test_hold_only_spatial_estimate_maps_to_occupied_holding` |
-| **`PIR-01`** | `PIR` | `FailClosedGuardrail` | **Uncorroborated PIR Gate *(Phase 2)*** | Raw PIR triggers without camera/high-confidence/trajectory corroboration enter `candidate` (`is_present=False`) and drop back to `vacant` on verification timeout. | `tests/test_pir_validation.py` *(Phase 2)* |
-| **`PIR-02`** | `PIR` | `PositiveFeature` | **PIR Corroboration Promotion *(Phase 2)*** | A `candidate` room promotes to `occupied_confirmed` on camera confirmation, valid time-history corroboration, or adjacent-room trajectory. | `tests/test_pir_validation.py` *(Phase 2)* |
+| **`PIR-01`** | `PIR` | `FailClosedGuardrail` | **Separate `transitions` PIR Validation Gate** | Uncorroborated PIR/slow-sensor triggers enter `PIRValidationStateMachine` `candidate` (`10s` window, `is_present=False`) and expire to `suppressed`/`idle` without falsifying occupancy. | `tests/test_pir_validation.py` |
+| **`PIR-02`** | `PIR` | `PositiveFeature` | **Pluggable Any-One-Of PIR Corroboration** | A `candidate` or `suppressed` PIR promotes to `confirmed` (driving `occupied_confirmed`) when ANY ONE of `camera`, `trajectory`, `ble`, or `time_history` corroborates presence. | `tests/test_pir_validation.py` |
+| **`PIR-03`** | `PIR` | `PositiveFeature` | **Cooldown-Based Sensor Reliability Weighting** | Slow PIR/occupancy sensors (Ecobee 300s/1800s, battery camera PIR `family_room_ring_motion`) are monotonically downweighted by `weight_from_cooldown(cooldown_sec)` via Bayesian log-odds tempering so they cannot solo-trigger occupancy. | `tests/test_pir_validation.py` |
 | **`ENTITY-01`** | `ENTITY` | `PositiveFeature` | **Presence Binary Sensor & Attributes Contract** | `binary_sensor.<room>_presence` reports `is_on` (`occupied.*` or `override`) and exposes `occupancy_state`, `state_reason`, `cooling_remaining_sec`, `verified_by`, `transition_history`, and spatial/causal attributes. | `tests/test_presence_designer_entities.py` |
 | **`REPLAY-01`** | `REPLAY` | `PositiveFeature` | **Deterministic Replay & Scenario Simulation** | Replaying historical or synthetic sensor timelines through the `transitions` engine produces deterministic state durations and transition counts. | `tests/test_replay_and_statistics.py` |
 | **`REPLAY-02`** | `REPLAY` | `PositiveFeature` | **E2E Multi-Room Scenario & HA Playback Harness** | Declarative scenarios, disturbance injections (`unavailable`/`unknown`), and HA Recorder / `.storage` timelines execute real multi-room coordinators with a 6-part diagnostic envelope. | `tests/test_e2e_harness.py` |
@@ -142,10 +143,20 @@ Requirement identifiers use `<CATEGORY>-<NN>` format (`SPATIAL-01`, `STATE-01`, 
 - **Description**: When spatial inference classifies a room via `negative_space`, `blind_pocket`, or `should_hold_occupied=True` without direct `positive_drivers`, `build_coordinator_evidence_snapshot()` must normalize `human_present=False` and `spatial_blind_pocket_hold=True`. This keeps the room in `occupied_holding` (subject to `max_hold_timeout`) instead of latching `occupied_confirmed` indefinitely.
 - **Verification**: Snapshot-normalization and bounded-hold regression test in `tests/test_transitions_guardrails.py::test_hold_only_spatial_estimate_maps_to_occupied_holding`.
 
-### `PIR-01` & `PIR-02`: PIR False-Positive Validation *(Phase 2 — Post-Migration)*
-- **Category**: `PIR` (`FailClosedGuardrail` / `PositiveFeature`)
-- **Description**: To be detailed and implemented immediately after the `transitions` migration: introduce a `candidate` pre-occupancy state where uncorroborated PIR triggers wait for camera confirmation, time-history corroboration, or adjacent-room trajectory before setting `is_present=True`.
-- **Verification**: Dedicated `tests/test_pir_validation.py` suite in Phase 2.
+### `PIR-01`: Separate `transitions` PIR Validation Gate (`10s` Candidate Window)
+- **Category**: `PIR` (`FailClosedGuardrail`)
+- **Description**: Every room instantiates a dedicated `PIRValidationStateMachine` (`transitions.extensions.GraphMachine`: `idle -> candidate -> confirmed | suppressed -> idle`) in front of `RoomPresenceStateMachine` when `pir_validation_enabled=True` (default). Uncorroborated PIR or slow-sensor triggers remain `candidate` for `10s` (`is_present=False`) and expire to `suppressed` (if still latched `on`) or `idle` (if cleared) without falsely marking a vacant room occupied.
+- **Verification**: `tests/test_pir_validation.py` and `tests/test_e2e_harness.py`.
+
+### `PIR-02`: Pluggable Any-One-Of PIR Corroboration Promotion
+- **Category**: `PIR` (`PositiveFeature`)
+- **Description**: While in `candidate` (or `suppressed` with active PIR), ANY ONE of four pluggable corroboration paths immediately promotes the PIR gate to `confirmed` and drives `occupied_confirmed`: (1) `camera` (Frigate person/subzone confirmation), (2) `trajectory` (adjacent room occupied/recently cleared, corroborated multi-hop path, or recent connected perimeter door transit), (3) `ble` (Bermuda BLE area matching this room or an adjacent room), or (4) `time_history` (>=2 distinct room sensors active or >=2 fast-PIR pulses within `60s`).
+- **Verification**: `tests/test_pir_validation.py`.
+
+### `PIR-03`: Cooldown-Based Sensor Reliability Weighting & Hardware Re-Inventory
+- **Category**: `PIR` (`PositiveFeature`)
+- **Description**: Apply continuous cooldown reliability weighting `weight_from_cooldown(cooldown_sec, battery_powered=...)` via log-odds tempering to slow Ecobee entities (`*_motion` ~300s, `*_occupancy` ~1800s across all 7 Ecobee devices) and battery camera PIR (`binary_sensor.family_room_ring_motion`) so slow/unreliable sensors cannot solo-trigger occupancy. Maintain accurate physical placement for the 3 Ring keypads (`binary_sensor.garage_keypad_motion` moved from Laundry Room to Garage, `binary_sensor.keypad_motion`, `binary_sensor.upper_level_keypad_motion`) and 3 placed Wyze sensors (`basement_stairs_top_motion`, `basement_stairs_bottom_motion`, `upstairs_stairs_bottom_motion`).
+- **Verification**: `tests/test_pir_validation.py`.
 
 ### `ENTITY-01`: Presence Binary Sensor & Attributes Contract
 - **Category**: `ENTITY` (`PositiveFeature`)

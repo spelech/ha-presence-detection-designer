@@ -34,6 +34,8 @@ from .const import (
     CONF_NOTIFY_ON_CLEARED,
     CONF_NOTIFY_ON_OCCUPIED,
     CONF_NOTIFY_SLACK,
+    CONF_PIR_CANDIDATE_WINDOW,
+    CONF_PIR_VALIDATION_ENABLED,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
@@ -44,6 +46,8 @@ from .const import (
     DEFAULT_INACTIVITY_TIMEOUT,
     DEFAULT_LLM_PROMPT,
     DEFAULT_MAX_HOLD_TIMEOUT,
+    DEFAULT_PIR_CANDIDATE_WINDOW,
+    DEFAULT_PIR_VALIDATION_ENABLED,
     DEFAULT_VERIFY_TIMEOUT,
     DOMAIN,
     LLMProviderType,
@@ -51,6 +55,8 @@ from .const import (
 )
 from .evidence_snapshot import RoomEvidenceSnapshot
 from .llm_verifier import LLMVerifier
+from .pir_validation import PIRValidationStateMachine
+from .sensor_reliability import classify_sensor_reliability
 from .state_machine import RoomPresenceStateMachine
 
 _LOGGER = logging.getLogger(__name__)
@@ -119,6 +125,27 @@ def apply_coordinator_config_fields(
             llm_enabled=llm_enabled,
             bayesian_prior=coord.bayesian_prior,
             bayesian_threshold=coord.bayesian_threshold,
+        )
+
+    raw_pir_en = config.get(CONF_PIR_VALIDATION_ENABLED)
+    if raw_pir_en is None and coord.hass and isinstance(getattr(coord.hass, "data", None), dict):
+        st = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if st is not None and isinstance(getattr(st, "global_settings", None), dict):
+            raw_pir_en = st.global_settings.get(CONF_PIR_VALIDATION_ENABLED)
+    coord.pir_validation_enabled = (
+        DEFAULT_PIR_VALIDATION_ENABLED if raw_pir_en is None else bool(raw_pir_en)
+    )
+    pir_cand_win = float(
+        config.get(CONF_PIR_CANDIDATE_WINDOW, DEFAULT_PIR_CANDIDATE_WINDOW)
+        or DEFAULT_PIR_CANDIDATE_WINDOW
+    )
+    if preserve_state and getattr(coord, "pir_validator", None) is not None:
+        coord.pir_validator.room_name = coord.room_name
+        coord.pir_validator.candidate_window_sec = max(1.0, pir_cand_win)
+    else:
+        coord.pir_validator = PIRValidationStateMachine(
+            room_name=coord.room_name,
+            candidate_window_sec=pir_cand_win,
         )
 
     llm_cfg = coord._resolve_global_llm_defaults(config)
@@ -248,12 +275,41 @@ def build_coordinator_evidence_snapshot(
             for k in ("camera", "person", "subzone", "zone")
         )
     )
+
+    raw_triggers = set(getattr(coord, "_active_triggers", set()))
+    pv = getattr(coord, "pir_validator", None)
+    pir_gate_active = bool(getattr(coord, "pir_validation_enabled", False) and pv is not None)
+    sm_present = bool(getattr(getattr(coord, "state_machine", None), "is_present", False))
+
+    if pir_gate_active and not sm_present and not pv.pir_confirmed:
+        effective_triggers = frozenset(
+            t for t in raw_triggers if not classify_sensor_reliability(t).requires_pir_validation
+        )
+        if human_present and not camera_confirmed:
+            human_present = False
+        if eval_obj and eval_obj.is_occupied and should_trigger_bayes and not camera_confirmed:
+            active_non_pir = any(
+                not classify_sensor_reliability(
+                    str(obs.get("entity_id", ""))
+                ).requires_pir_validation
+                for obs in (eval_obj.active_observations or [])
+                if isinstance(obs, dict)
+            )
+            if not active_non_pir:
+                should_trigger_bayes = False
+    else:
+        effective_triggers = frozenset(raw_triggers)
+        if pir_gate_active and pv.pir_confirmed and not effective_triggers:
+            human_present = True
+
     last_trig = getattr(coord, "_last_trigger_entity", None)
+    if not last_trig and pv is not None and pv.pir_confirmed and pv.candidate_pir_sensors:
+        last_trig = sorted(pv.candidate_pir_sensors)[0]
     if not last_trig and eval_obj and eval_obj.active_observations:
         last_trig = eval_obj.active_observations[0].get("entity_id")
 
     return RoomEvidenceSnapshot(
-        active_triggers=frozenset(getattr(coord, "_active_triggers", set())),
+        active_triggers=effective_triggers,
         active_conditions=tuple(getattr(coord, "_active_condition_descs", [])),
         bayesian_occupied=bool(eval_obj and eval_obj.is_occupied and should_trigger_bayes),
         bayesian_probability=eval_obj.probability if eval_obj else 0.0,
@@ -279,3 +335,40 @@ def sync_coordinator_evidence(
     snapshot = build_coordinator_evidence_snapshot(coord, trigger_bayesian=trigger_bayesian)
     coord.state_machine.apply_evidence(snapshot, now_ts=now_ts)
     return snapshot
+
+
+def record_coordinator_timeline_snapshot(coord: Any) -> None:
+    """Record a compact sensor & state snapshot into PDDStore's rolling timeline buffer."""
+    if not coord.hass or not isinstance(getattr(coord.hass, "data", None), dict):
+        return
+    store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+    if store is None or not hasattr(store, "record_timeline_event"):
+        return
+
+    from .spatial_catalog import BLE_TRACKER_ENTITIES
+
+    entity_states: dict[str, str] = {}
+    tracked_eids: set[str] = (
+        set(coord.boundary_entities) | set(coord.trigger_entities) | set(BLE_TRACKER_ENTITIES)
+    )
+    for cond in coord.conditions:
+        if isinstance(cond, dict) and cond.get("entity_id"):
+            tracked_eids.add(str(cond["entity_id"]))
+    for obs in coord.bayesian_observations:
+        if isinstance(obs, dict) and obs.get("entity_id"):
+            tracked_eids.add(str(obs["entity_id"]))
+
+    for eid in sorted(tracked_eids):
+        st_obj = _safe_state_getter(coord.hass, eid)
+        if st_obj is not None:
+            entity_states[eid] = str(st_obj.state)
+
+    store.record_timeline_event(
+        coord.entry_id,
+        {
+            "is_present": coord.state_machine.is_present,
+            "occupancy_state": str(coord.state_machine.state),
+            "probability_pct": coord.state_machine.bayesian_probability_pct,
+            "entity_states": entity_states,
+        },
+    )

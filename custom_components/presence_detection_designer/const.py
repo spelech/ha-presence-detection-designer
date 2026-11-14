@@ -44,6 +44,8 @@ CONF_NOTIFY_ON_CLEARED = "notify_on_cleared"
 CONF_NEGATIVE_SPACE_ENABLED = "negative_space_enabled"
 CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
 CONF_BLE_DECIDER_ENABLED = "ble_decider_enabled"
+CONF_PIR_VALIDATION_ENABLED = "pir_validation_enabled"
+CONF_PIR_CANDIDATE_WINDOW = "pir_candidate_window"
 
 DEFAULT_SLACK_NOTIFY_SERVICE = "notify.scdbots"
 DEFAULT_SLACK_CHANNEL = "#presence-alerts"
@@ -52,6 +54,8 @@ DEFAULT_NOTIFY_SLACK = True
 DEFAULT_NEGATIVE_SPACE_ENABLED = True
 DEFAULT_GUEST_MODE_ENABLED = False
 DEFAULT_BLE_DECIDER_ENABLED = False
+DEFAULT_PIR_VALIDATION_ENABLED = True
+DEFAULT_PIR_CANDIDATE_WINDOW = 10  # seconds to wait for PIR corroboration
 
 # Defaults
 DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
@@ -76,6 +80,15 @@ class OccupancyState(StrEnum):
     OCCUPIED_COOLING = "occupied_cooling"
     OCCUPIED_VERIFYING = "occupied_verifying"
     OVERRIDE = "override"
+
+
+class PIRValidationState(StrEnum):
+    """Transitions states for the separate PIR candidate validation state machine."""
+
+    IDLE = "idle"
+    CANDIDATE = "candidate"
+    CONFIRMED = "confirmed"
+    SUPPRESSED = "suppressed"
 
 
 class Mode(StrEnum):
