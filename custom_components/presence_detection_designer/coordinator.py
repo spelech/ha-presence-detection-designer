@@ -360,7 +360,9 @@ class RoomPresenceCoordinator:
 
             get_house_perimeter_tracker(self.hass).reconcile_headcount()
 
-        action = self.state_machine.advance_time(1.0)
+        action = self.state_machine.advance_time(
+            0.0 if self.state_machine._timer_scheduler else 1.0
+        )
         if action == "REQUEST_LLM_VERIFY":
             if self._is_guest_mode_active():
                 self.state_machine.handle_llm_result(

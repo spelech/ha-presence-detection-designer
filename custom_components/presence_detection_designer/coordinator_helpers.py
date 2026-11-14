@@ -227,9 +227,19 @@ def build_coordinator_evidence_snapshot(
         else bool(trigger_bayesian)
     )
     sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
-    human_present = bool(sp.get("human_present", False))
+    raw_human = bool(sp.get("human_present", False))
     pet_present = bool(sp.get("pet_present", False))
     drivers = sp.get("positive_drivers") or []
+    is_hold_only_spatial = bool(
+        sp.get("method") in ("negative_space", "blind_pocket")
+        or (sp.get("should_hold_occupied", False) and not drivers)
+    )
+    human_present = raw_human and not is_hold_only_spatial
+    spatial_hold = bool(
+        raw_human
+        and is_hold_only_spatial
+        and (sp.get("should_hold_occupied", False) or sp.get("should_hold", False))
+    )
     camera_confirmed = bool(
         human_present
         and any(
@@ -253,7 +263,7 @@ def build_coordinator_evidence_snapshot(
         inactive_observations=tuple(eval_obj.inactive_observations) if eval_obj else (),
         human_present=human_present,
         pet_present=pet_present,
-        spatial_blind_pocket_hold=bool(sp.get("should_hold", False) and human_present),
+        spatial_blind_pocket_hold=spatial_hold,
         camera_confirmed=camera_confirmed,
         last_trigger_entity=last_trig,
     )

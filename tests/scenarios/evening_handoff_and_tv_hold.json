@@ -1,0 +1,154 @@
+{
+  "name": "evening_handoff_and_tv_hold",
+  "assumptions": [
+    "Hallway connects directly to Living Room",
+    "Living Room has sustaining TV condition and LLM verification enabled"
+  ],
+  "rooms": [
+    {
+      "room_name": "Hallway",
+      "mode": "open",
+      "inactivity_timeout": 60,
+      "trigger_entities": [
+        "binary_sensor.hallway_motion"
+      ],
+      "connected_rooms": [
+        "Living Room"
+      ]
+    },
+    {
+      "room_name": "Living Room",
+      "mode": "open",
+      "inactivity_timeout": 120,
+      "extend_timeout": 60,
+      "max_hold_timeout": 600,
+      "verify_timeout": 30,
+      "llm_enabled": true,
+      "trigger_entities": [
+        "binary_sensor.living_room_motion"
+      ],
+      "sustaining_conditions": [
+        {
+          "entity_id": "media_player.living_room_tv",
+          "state": "playing"
+        }
+      ],
+      "connected_rooms": [
+        "Hallway"
+      ]
+    }
+  ],
+  "initial_states": {
+    "binary_sensor.hallway_motion": "off",
+    "binary_sensor.living_room_motion": "off",
+    "media_player.living_room_tv": "off"
+  },
+  "steps": [
+    {
+      "at": 10,
+      "set": {
+        "binary_sensor.hallway_motion": "on"
+      }
+    },
+    {
+      "at": 11,
+      "expect": {
+        "Hallway": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "at": 15,
+      "set": {
+        "binary_sensor.hallway_motion": "off"
+      }
+    },
+    {
+      "at": 16,
+      "expect": {
+        "Hallway": {
+          "occupancy_state": "occupied_cooling",
+          "is_cooling_down": true
+        }
+      }
+    },
+    {
+      "at": 20,
+      "set": {
+        "binary_sensor.living_room_motion": "on",
+        "media_player.living_room_tv": "playing"
+      }
+    },
+    {
+      "at": 21,
+      "expect": {
+        "Hallway": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        },
+        "Living Room": {
+          "occupancy_state": "occupied_confirmed",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "at": 30,
+      "set": {
+        "binary_sensor.living_room_motion": "off"
+      }
+    },
+    {
+      "at": 31,
+      "expect": {
+        "Living Room": {
+          "occupancy_state": "occupied_holding",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "at": 100,
+      "set": {
+        "media_player.living_room_tv": "off"
+      }
+    },
+    {
+      "at": 101,
+      "expect": {
+        "Living Room": {
+          "occupancy_state": "occupied_cooling",
+          "is_cooling_down": true
+        }
+      }
+    },
+    {
+      "advance": 120
+    },
+    {
+      "expect": {
+        "Living Room": {
+          "occupancy_state": "occupied_verifying",
+          "is_on": true
+        }
+      }
+    },
+    {
+      "llm_result": {
+        "room": "Living Room",
+        "person_detected": false,
+        "reason": "Empty sofa"
+      }
+    },
+    {
+      "expect": {
+        "Living Room": {
+          "occupancy_state": "vacant",
+          "is_on": false
+        }
+      }
+    }
+  ]
+}
