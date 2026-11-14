@@ -36,6 +36,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import RoomPresenceCoordinator
+from .sensor_reliability import classify_sensor_reliability
 from .store import async_get_store
 
 
@@ -115,6 +116,30 @@ def build_combinatorics_preview(
     }
 
 
+def serialize_sensor_weights(observations: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Serialize per-observation sensor reliability metadata for UI rendering."""
+    weights: list[dict[str, Any]] = []
+    for obs in observations or []:
+        if not isinstance(obs, dict) or not obs.get("entity_id"):
+            continue
+        eid = str(obs["entity_id"])
+        prof = classify_sensor_reliability(eid)
+        weights.append(
+            {
+                "entity_id": eid,
+                "label": obs.get("label") or eid,
+                "category": prof.category,
+                "cooldown_sec": prof.cooldown_sec,
+                "reliability_weight": prof.reliability_weight,
+                "requires_pir_validation": prof.requires_pir_validation,
+                "human_exclusive": prof.is_human_exclusive,
+                "cooldown_weighted": obs.get("cooldown_weighted"),
+                "signal_weighted": obs.get("signal_weighted"),
+            }
+        )
+    return weights
+
+
 def serialize_room_coordinator(
     coordinator: RoomPresenceCoordinator,
     revisions: list[dict[str, Any]] | None = None,
@@ -122,6 +147,8 @@ def serialize_room_coordinator(
     """Serialize a RoomPresenceCoordinator and its live state for the Design Studio UI."""
     coordinator._eval_conditions_and_update()
     sm = coordinator.state_machine
+    pv = getattr(coordinator, "pir_validator", None)
+    sensor_weights = serialize_sensor_weights(coordinator.bayesian_observations)
     combinatorics = build_combinatorics_preview(
         prior=coordinator.bayesian_prior,
         threshold=coordinator.bayesian_threshold,
@@ -140,8 +167,20 @@ def serialize_room_coordinator(
         "state_reason": sm.state_reason,
         "last_transition_reason": sm.last_transition_reason,
         "verified_by": sm.verified_by,
+        "max_hold_timeout": getattr(sm, "max_hold_timeout", None),
         "transition_history": sm.transition_history,
         "mermaid_diagram": sm.get_mermaid_diagram(),
+        "pir_validation_enabled": getattr(coordinator, "pir_validation_enabled", True),
+        "pir_candidate_window": getattr(
+            pv, "candidate_window_sec", getattr(coordinator, "pir_candidate_window", 15.0)
+        ),
+        "pir_validation_state": str(pv.state) if pv is not None else "disabled",
+        "pir_corroboration_source": pv.last_corroboration_source if pv is not None else None,
+        "pir_corroboration_detail": pv.last_corroboration_detail if pv is not None else None,
+        "pir_candidate_remaining_sec": pv.candidate_remaining_sec if pv is not None else 0,
+        "pir_mermaid_diagram": pv.get_mermaid_diagram() if pv is not None else "",
+        "pir_transition_history": pv.transition_history if pv is not None else [],
+        "sensor_weights": sensor_weights,
         "override": sm.override,
         "bayesian_probability": sm.bayesian_probability,
         "bayesian_probability_pct": sm.bayesian_probability_pct,

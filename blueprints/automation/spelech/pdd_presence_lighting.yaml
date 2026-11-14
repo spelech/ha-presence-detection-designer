@@ -7,7 +7,7 @@ blueprint:
     `manual_intent`), ignores pet-only activations (`human_present: true`,
     `occupant_type != 'pet'`), supports ambient illuminance gating, applies time-of-day
     brightness levels, honors Sleep/DND/Guest blocker entities, and gently dims lights
-    as a pre-vacant warning when `box_state` transitions to `timer_active` before
+    as a pre-vacant warning when `occupancy_state` transitions to `occupied_cooling` before
     turning off on room vacation.
   domain: automation
   author: Steven T. Pelech
@@ -100,13 +100,13 @@ blueprint:
         boolean: {}
     enable_warning_dim:
       name: Enable Pre-Vacant Warning Dim
-      description: Gently dims lights when PDD `box_state` enters `timer_active` to warn occupants before the room is marked vacant.
+      description: Gently dims lights when PDD `occupancy_state` enters `occupied_cooling` to warn occupants before the room is marked vacant.
       default: true
       selector:
         boolean: {}
     warning_dim_pct:
       name: Warning Dim Brightness (%)
-      description: Brightness percentage during the `timer_active` pre-vacant countdown window.
+      description: Brightness percentage during the `occupied_cooling` pre-vacant countdown window.
       default: 35
       selector:
         number:
@@ -155,17 +155,17 @@ trigger:
     id: occupied
   - platform: state
     entity_id: !input presence_sensor
-    attribute: box_state
-    to: "timer_active"
+    attribute: occupancy_state
+    to: "occupied_cooling"
     id: warning_timer
   - platform: state
     entity_id: !input presence_sensor
-    attribute: box_state
-    from: "timer_active"
+    attribute: occupancy_state
+    from: "occupied_cooling"
     to:
-      - "occupied"
-      - "occupied_sealed"
-      - "occupied_unsealed"
+      - "occupied_confirmed"
+      - "occupied_holding"
+      - "override"
     id: re_occupied_from_timer
   - platform: state
     entity_id: !input presence_sensor

@@ -636,6 +636,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       inactive_observations: room.inactive_observations || [],
       natural_language_summary: room.natural_language_summary || "",
       combinatorics: room.combinatorics || {},
+      sensor_weights: room.sensor_weights || [],
       rule_guide: room.rule_guide || "",
       ha_bayesian_yaml: room.ha_bayesian_yaml || "",
       designer_yaml: room.designer_yaml || "",
@@ -1036,23 +1037,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   async saveCurrentRoom() {
     if (!this._selectedRoomId || !this._draftConfig) return;
     try {
-      // Automatically keep trigger_entities synced with main/reliable sensors
+      // Keep trigger_entities synced only with human-exclusive binary_sensors (SIGNAL-01)
       const obs = this._draftConfig.bayesian_observations || [];
-      const autoTriggers = [...(this._draftConfig.trigger_entities || [])];
+      const autoTriggers = (this._draftConfig.trigger_entities || []).filter((eid) =>
+        this._isHumanExclusiveCandidate(eid)
+      );
       for (const o of obs) {
         const preset = o.preset || o.weight || "moderate";
-        const lowEid = (o.entity_id || "").toLowerCase();
-        const isNonHumanBinary =
-          lowEid.includes("media_playing") ||
-          lowEid.endsWith("_door") ||
-          lowEid.includes("door_") ||
-          lowEid.endsWith("_window") ||
-          lowEid.includes("contact");
         if (
           (preset === "decisive" || preset === "strong") &&
           o.entity_id &&
           o.entity_id.startsWith("binary_sensor.") &&
-          !isNonHumanBinary &&
+          this._isHumanExclusiveCandidate(o.entity_id) &&
           !autoTriggers.includes(o.entity_id)
         ) {
           autoTriggers.push(o.entity_id);
@@ -1215,6 +1211,65 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     return "shared";
   }
 
+  _sensorWeightMap(selRoom, prev) {
+    const map = {};
+    const lists = [prev?.sensor_weights, selRoom?.sensor_weights];
+    for (const lst of lists) {
+      if (!Array.isArray(lst)) continue;
+      for (const item of lst) {
+        if (item && item.entity_id && !map[item.entity_id]) {
+          map[item.entity_id] = item;
+        }
+      }
+    }
+    return map;
+  }
+
+  _isHumanExclusiveCandidate(eid, weightMap = null) {
+    if (!eid) return false;
+    const w = weightMap ? weightMap[eid] : this._sensorWeightMap(this.selectedRoom, this._previewData)[eid];
+    if (w && typeof w.human_exclusive === "boolean") {
+      return w.human_exclusive;
+    }
+    const low = String(eid).toLowerCase();
+    if (
+      low.startsWith("light.") ||
+      low.startsWith("switch.") ||
+      low.startsWith("fan.") ||
+      low.startsWith("media_player.") ||
+      low.startsWith("climate.") ||
+      low.startsWith("cover.")
+    ) {
+      return false;
+    }
+    if (low.startsWith("sensor.")) {
+      return low.includes("ble_area") || low.includes("bermuda");
+    }
+    if (low.startsWith("binary_sensor.")) {
+      const nonHuman = [
+        "media_playing",
+        "_door",
+        "door_",
+        "_window",
+        "contact",
+        "_battery",
+        "_connectivity",
+        "_update",
+      ];
+      return !nonHuman.some((tok) => low.includes(tok));
+    }
+    return low.startsWith("camera.") || low.startsWith("device_tracker.") || low.startsWith("person.");
+  }
+
+  _slugifyRoom(name) {
+    return (
+      String(name || "room")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "") || "room"
+    );
+  }
+
   _applyFriendlyRoleGroup(obs, group, presets) {
     if (group === "primary") {
       obs.preset = "decisive";
@@ -1225,8 +1280,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     } else if (group === "keepalive") {
       obs.preset = "supporting";
       obs.corroboration_only = true;
-      obs.prob_given_true = 0.25;
-      obs.prob_given_false = 0.22;
+      const d = presets.supporting || { prob_given_true: 0.55, prob_given_false: 0.2 };
+      obs.prob_given_true = Math.max(0.55, Number(d.prob_given_true ?? 0.55));
+      obs.prob_given_false = Number(d.prob_given_false ?? 0.2);
     } else {
       obs.preset = "moderate";
       obs.corroboration_only = false;
@@ -1234,6 +1290,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       obs.prob_given_true = d.prob_given_true;
       obs.prob_given_false = d.prob_given_false;
     }
+    delete obs.cooldown_weighted;
+    delete obs.signal_weighted;
   }
 
   _roomStatusSummary(r) {
@@ -2162,6 +2220,24 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
               <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                  <span class="setting-label" style="font-weight:600;">🛡️ PIR Validation Gate (Corroborated Motion Entry)</span>
+                  <input type="checkbox" id="gl-pir-validation-enabled" ${
+                    this._globalDraft?.pir_validation_enabled !== false ? "checked" : ""
+                  } />
+                </div>
+                <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;margin-bottom:8px;">
+                  Holds raw PIR trips in a short candidate window unless corroborated by an adjacent occupied room, perimeter/interior door, camera/BLE confirmation, or sustained motion (rejecting standalone HVAC/sunlight/pet false triggers).
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                  <span style="font-size:12px;color:var(--ha-muted);">Default PIR Candidate Window (seconds)</span>
+                  <input type="number" min="3" max="120" step="1" class="input" id="gl-pir-candidate-window" style="width:90px;" value="${Number(
+                    this._globalDraft?.pir_candidate_window ?? 15
+                  )}" />
+                </div>
+              </div>
+
+              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
                   <span class="setting-label" style="font-weight:600;">👥 Guest Mode (Multi-Occupant / Low-Compute Mode)</span>
                   <input type="checkbox" id="gl-guest-mode-enabled" ${
                     this._globalDraft?.guest_mode_enabled ? "checked" : ""
@@ -2320,6 +2396,34 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 ${this._escape(st.label)}
               </span>
               ${
+                selRoom.verified_by && selRoom.verified_by !== "none"
+                  ? `<span style="font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--ha-subtle);border:1px solid var(--ha-divider);color:var(--ha-primary-text);" title="Current evidence source verifying occupancy">
+                      verified: ${this._escape(selRoom.verified_by)}
+                    </span>`
+                  : ""
+              }
+              ${
+                selRoom.pir_validation_state &&
+                selRoom.pir_validation_state !== "idle" &&
+                selRoom.pir_validation_state !== "disabled"
+                  ? `<span style="font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:${
+                      selRoom.pir_validation_state === "suppressed"
+                        ? "rgba(245,158,11,0.16)"
+                        : selRoom.pir_validation_state === "candidate"
+                        ? "rgba(56,189,248,0.16)"
+                        : "rgba(16,185,129,0.16)"
+                    };border:1px solid var(--ha-divider);color:${
+                      selRoom.pir_validation_state === "suppressed"
+                        ? "var(--ha-warning-text)"
+                        : selRoom.pir_validation_state === "candidate"
+                        ? "var(--ha-primary-text)"
+                        : "var(--ha-success-text)"
+                    };" title="PIR Validation Gate state">
+                      PIR Gate: ${this._escape(selRoom.pir_validation_state)}
+                    </span>`
+                  : ""
+              }
+              ${
                 occLabel
                   ? `<span style="font-size:12px;font-weight:600;padding:2px 10px;border-radius:999px;background:${
                       occType === "pet"
@@ -2441,6 +2545,55 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   value="${timeoutSec}"
                 />
                 <span style="font-size:13px;color:var(--ha-muted);">sec</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Bounded max hold timeout</div>
+                <div class="setting-help">Maximum time <code>occupied_holding</code> can remain active on secondary signals (Bayesian/condition/blind-pocket) before cooling down (${this._formatDuration(Number(cfg.max_hold_timeout ?? selRoom.max_hold_timeout ?? 1800))}).</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;width:150px;">
+                <input
+                  type="number"
+                  class="input"
+                  id="cfg-max-hold-timeout"
+                  min="60"
+                  max="14400"
+                  step="60"
+                  value="${Number(cfg.max_hold_timeout ?? selRoom.max_hold_timeout ?? 1800)}"
+                />
+                <span style="font-size:13px;color:var(--ha-muted);">sec</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">PIR validation gate (corroboration)</div>
+                <div class="setting-help">Require transient PIR motion to be corroborated within the candidate window (camera, adjacent room, door, BLE, or second pulse) before confirming occupancy.</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
+                  <input
+                    type="checkbox"
+                    id="cfg-pir-validation-enabled"
+                    ${cfg.pir_validation_enabled !== false ? "checked" : ""}
+                  />
+                  <span>Enabled</span>
+                </label>
+                <div style="display:flex;align-items:center;gap:6px;width:110px;">
+                  <input
+                    type="number"
+                    class="input"
+                    id="cfg-pir-candidate-window"
+                    min="3"
+                    max="120"
+                    step="1"
+                    value="${Number(cfg.pir_candidate_window ?? selRoom.pir_candidate_window ?? 15)}"
+                    ${cfg.pir_validation_enabled === false ? "disabled" : ""}
+                  />
+                  <span style="font-size:12.5px;color:var(--ha-muted);">s</span>
+                </div>
               </div>
             </div>
           </div>
@@ -2577,6 +2730,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                       const friendlyName =
                         obs.label || entityNameMap[obs.entity_id] || obs.entity_id || "Sensor";
                       const roleGroup = this._friendlyRoleGroup(obs);
+                      const weightInfo = this._sensorWeightMap(selRoom, prev)[obs.entity_id] || {};
+                      const isHuman = this._isHumanExclusiveCandidate(obs.entity_id, {
+                        [obs.entity_id]: weightInfo,
+                      });
+                      const cooldownSec = Number(obs.cooldown_sec ?? weightInfo.cooldown_sec ?? 0);
+                      const pirReq = Boolean(weightInfo.requires_pir_validation);
                       return `
                       <div class="sensor-row" data-obs-idx="${idx}">
                         <div class="sensor-info">
@@ -2584,7 +2743,24 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                         isAct ? "Currently active" : "Clear"
                       }"></span>
                           <div style="min-width:0;">
-                            <div class="sensor-title">${this._escape(friendlyName)}</div>
+                            <div class="sensor-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                              <span>${this._escape(friendlyName)}</span>
+                              <span style="padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;background:${
+                                isHuman ? "rgba(16,185,129,0.14)" : "rgba(148,163,184,0.16)"
+                              };color:${
+                        isHuman ? "var(--ha-success-text)" : "var(--ha-muted)"
+                      };">${isHuman ? "Person-coupled" : "Supporting only"}</span>
+                              ${
+                                cooldownSec > 0
+                                  ? `<span style="padding:1px 6px;border-radius:999px;font-size:10.5px;background:var(--ha-subtle);border:1px solid var(--ha-divider);color:var(--ha-muted);">${cooldownSec}s cooldown</span>`
+                                  : ""
+                              }
+                              ${
+                                pirReq
+                                  ? `<span style="padding:1px 6px;border-radius:999px;font-size:10.5px;background:var(--ha-accent-amber-bg);color:var(--ha-accent-amber-text);">PIR Gate</span>`
+                                  : ""
+                              }
+                            </div>
                             <div class="sensor-sub">${this._escape(obs.entity_id)}${
                         obs.state && obs.state !== "on" ? ` = ${this._escape(obs.state)}` : ""
                       }</div>
@@ -2593,15 +2769,19 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
                         <div>
                           <select class="select obs-role-simple" data-idx="${idx}">
-                            <option value="primary" ${
-                              roleGroup === "primary" ? "selected" : ""
-                            }>Main room sensor (triggers room alone)</option>
-                            <option value="shared" ${
-                              roleGroup === "shared" ? "selected" : ""
-                            }>Shared / hallway view (needs confirmation)</option>
+                            ${
+                              isHuman
+                                ? `<option value="primary" ${
+                                    roleGroup === "primary" ? "selected" : ""
+                                  }>Main human sensor (high confidence / trigger)</option>
+                                   <option value="shared" ${
+                                     roleGroup === "shared" ? "selected" : ""
+                                   }>Corroborated sensor (moderate weight)</option>`
+                                : ""
+                            }
                             <option value="keepalive" ${
-                              roleGroup === "keepalive" ? "selected" : ""
-                            }>Keep-alive only (extends timer once occupied)</option>
+                              roleGroup === "keepalive" || !isHuman ? "selected" : ""
+                            }>Supporting hold only (scores/holds once occupied)</option>
                           </select>
                         </div>
 
@@ -2623,9 +2803,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               placeholder="Add sensor (e.g. binary_sensor.living_room_motion)..."
             />
             <select class="select" id="simple-add-obs-role">
-              <option value="primary">Main room sensor (triggers room alone)</option>
-              <option value="shared" selected>Shared / hallway view (needs confirmation)</option>
-              <option value="keepalive">Keep-alive only (extends timer once occupied)</option>
+              <option value="primary">Main human sensor (high confidence / trigger)</option>
+              <option value="shared" selected>Corroborated sensor (moderate weight)</option>
+              <option value="keepalive">Supporting hold only (scores/holds once occupied)</option>
             </select>
             <button class="btn" id="btn-simple-add-obs">+ Add Sensor</button>
           </div>
@@ -2746,7 +2926,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   async _refreshStateGraph(entryId) {
     if (!entryId) return;
     try {
-      const res = await this._api("GET", `/api/presence_detection_designer/state_graph?entry_id=${encodeURIComponent(entryId)}`);
+      const res = await this._apiCall("GET", `/api/presence_detection_designer/state_graph?entry_id=${encodeURIComponent(entryId)}`);
       const fresh = (res && res.rooms && res.rooms[0]) || null;
       if (fresh && this._overview && Array.isArray(this._overview.rooms)) {
         const idx = this._overview.rooms.findIndex((r) => r.entry_id === entryId);
@@ -2875,7 +3055,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             : ""
         }
 
-        <div style="width:100%;overflow-x:auto;background:rgba(2,6,23,0.45);border:1px solid var(--ha-divider);border-radius:12px;padding:10px;">
+        <div style="width:100%;overflow-x:auto;background:rgba(15,23,42,0.92);border:1px solid var(--ha-divider);border-radius:12px;padding:10px;">
           <svg viewBox="0 0 710 345" style="width:100%;max-width:760px;height:auto;display:block;margin:0 auto;">
             <defs>
               <marker id="sm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -2973,8 +3153,42 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         <div class="card-head">
           <div>
             <h3 class="card-title">PIR Validation Gate &amp; Cooldown Reliability</h3>
-            <div class="card-desc">Separate <code>transitions.extensions.GraphMachine</code> gate (<code>10s</code> candidate window, any-one-of corroboration: Camera / Trajectory / BLE / Time-History).</div>
+            <div class="card-desc">Separate <code>transitions.extensions.GraphMachine</code> gate (<code>${Number(selRoom.pir_candidate_window ?? selRoom.config?.pir_candidate_window ?? 15)}s</code> candidate window, any-one-of corroboration: Camera / Trajectory / BLE / Time-History).</div>
           </div>
+          <span style="font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">PIR: <code>${this._escape(pirState)}</code></span>
+        </div>
+        <div style="width:100%;overflow-x:auto;background:rgba(15,23,42,0.92);border:1px solid var(--ha-divider);border-radius:12px;padding:10px;margin-bottom:12px;">
+          <svg viewBox="0 0 680 120" style="width:100%;max-width:740px;height:auto;display:block;margin:0 auto;">
+            ${[
+              { id: "idle", label: "idle", sub: "No PIR pulse", x: 18, y: 32, w: 120, h: 52 },
+              { id: "candidate", label: "candidate", sub: pirRemain > 0 ? `Window (${pirRemain}s)` : "Hold window", x: 205, y: 32, w: 140, h: 52 },
+              { id: "corroborated", label: "corroborated", sub: "Promotes room", x: 420, y: 10, w: 145, h: 46 },
+              { id: "suppressed", label: "suppressed", sub: "False pulse blocked", x: 420, y: 66, w: 145, h: 46 },
+            ]
+              .map((n) => {
+                const active = pirState === n.id;
+                const col =
+                  active && n.id === "corroborated"
+                    ? { fill: "rgba(16,185,129,0.24)", stroke: "#34d399", text: "#d1fae5" }
+                    : active && n.id === "suppressed"
+                    ? { fill: "rgba(245,158,11,0.24)", stroke: "#fbbf24", text: "#fef3c7" }
+                    : active && n.id === "candidate"
+                    ? { fill: "rgba(56,189,248,0.24)", stroke: "#38bdf8", text: "#e0f2fe" }
+                    : active
+                    ? { fill: "rgba(148,163,184,0.22)", stroke: "#94a3b8", text: "#f1f5f9" }
+                    : { fill: "rgba(15,23,42,0.7)", stroke: "rgba(148,163,184,0.35)", text: "#94a3b8" };
+                return `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10" fill="${col.fill}" stroke="${col.stroke}" stroke-width="${active ? 2.4 : 1.2}"></rect>
+                  <text x="${n.x + n.w / 2}" y="${n.y + 21}" fill="${col.text}" font-size="11.5" font-weight="700" text-anchor="middle">${this._escape(n.label)}</text>
+                  <text x="${n.x + n.w / 2}" y="${n.y + 37}" fill="#94a3b8" font-size="9.5" text-anchor="middle">${this._escape(n.sub)}</text>`;
+              })
+              .join("")}
+            <line x1="138" y1="58" x2="205" y2="58" stroke="rgba(148,163,184,0.55)" stroke-width="1.5" marker-end="url(#sm-arrow)" />
+            <text x="171" y="50" fill="#94a3b8" font-size="9" text-anchor="middle">pir_tripped</text>
+            <line x1="345" y1="48" x2="420" y2="34" stroke="rgba(52,211,153,0.65)" stroke-width="1.5" marker-end="url(#sm-arrow)" />
+            <text x="382" y="33" fill="#6ee7b7" font-size="9" text-anchor="middle">corroborated</text>
+            <line x1="345" y1="68" x2="420" y2="88" stroke="rgba(251,191,36,0.65)" stroke-width="1.5" marker-end="url(#sm-arrow)" />
+            <text x="382" y="92" fill="#fcd34d" font-size="9" text-anchor="middle">window_expired</text>
+          </svg>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;">
           <div style="padding:10px 12px;border-radius:10px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">
@@ -3017,7 +3231,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                             <td style="padding:6px;">${this._escape(sw.category || "")}</td>
                             <td style="padding:6px;">${Number(sw.cooldown_sec || 0)}s</td>
                             <td style="padding:6px;">${Number(sw.reliability_weight ?? 1).toFixed(2)}</td>
-                            <td style="padding:6px;"><span style="padding:2px 6px;border-radius:999px;font-size:11px;font-weight:600;background:${sw.human_exclusive !== false ? "rgba(16,185,129,0.16)" : "rgba(148,163,184,0.18)"};color:${sw.human_exclusive !== false ? "#34d399" : "#cbd5e1"};">${sw.human_exclusive !== false ? "Person" : "Supporting"}</span></td>
+                            <td style="padding:6px;"><span style="padding:2px 6px;border-radius:999px;font-size:11px;font-weight:600;background:${sw.human_exclusive !== false ? "rgba(16,185,129,0.16)" : "rgba(148,163,184,0.18)"};color:${sw.human_exclusive !== false ? "var(--ha-success-text)" : "var(--ha-muted)"};">${sw.human_exclusive !== false ? "Person" : "Supporting"}</span></td>
                             <td style="padding:6px;">${sw.requires_pir_validation ? "Required" : "Bypass"}</td>
                           </tr>
                         `
@@ -3066,6 +3280,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             this._advTab === "truth" ? "active" : ""
           }" data-adv-tab="truth">Combination Truth Table</button>
           <button class="sub-tab ${
+            this._advTab === "automations" ? "active" : ""
+          }" data-adv-tab="automations">Automations &amp; Blueprints</button>
+          <button class="sub-tab ${
             this._advTab === "yaml" ? "active" : ""
           }" data-adv-tab="yaml">YAML &amp; AI Rules</button>
           <button class="sub-tab ${
@@ -3113,11 +3330,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             </div>
           </div>
 
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <div class="setting-label">Detailed Sensor Probabilities — Current Score: ${livePct}%</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap;">
+            <div>
+              <div class="setting-label">Detailed Sensor Probabilities — Current Score: ${livePct}%</div>
+              <div style="font-size:12px;color:var(--ha-muted);">Bayesians score confidence and hold existing occupancy (BAYES-01); camera &amp; PIR off remain neutral (BAYES-04).</div>
+            </div>
             <div style="display:flex;gap:8px;">
               <button class="btn btn-sm" id="btn-add-ble">+ Add Household BLE</button>
-              <button class="btn btn-sm" id="btn-sync-triggers">Sync Instant Triggers</button>
+              <button class="btn btn-sm" id="btn-sync-triggers">Sync Human Triggers</button>
             </div>
           </div>
 
@@ -3126,10 +3346,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               <thead>
                 <tr style="border-bottom:1px solid var(--ha-divider);text-align:left;color:var(--ha-muted);">
                   <th style="padding:8px 6px;">Entity ID &amp; Label</th>
+                  <th style="padding:8px 6px;">Signal / Tempering</th>
                   <th style="padding:8px 6px;">Preset</th>
                   <th style="padding:8px 6px;">P(E|Occ)</th>
                   <th style="padding:8px 6px;">P(E|Vac)</th>
                   <th style="padding:8px 6px;">Operator &amp; State</th>
+                  <th style="padding:8px 6px;"></th>
                 </tr>
               </thead>
               <tbody>
@@ -3142,6 +3364,19 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     };
                     const pTrue = Number(obs.prob_given_true ?? pDefaults.prob_given_true);
                     const pFalse = Number(obs.prob_given_false ?? pDefaults.prob_given_false);
+                    const wMeta = this._sensorWeightMap(selRoom, prev)[obs.entity_id] || {};
+                    const isHuman = this._isHumanExclusiveCandidate(obs.entity_id, {
+                      [obs.entity_id]: wMeta,
+                    });
+                    const cdSec = Number(obs.cooldown_sec ?? wMeta.cooldown_sec ?? 0);
+                    const tempered = Boolean(obs.cooldown_weighted || obs.signal_weighted);
+                    const badLift = pTrue <= pFalse || (presetVal === "supporting" && pTrue < 0.5);
+                    const inactItem = (prev.inactive_observations || []).find(
+                      (i) => i.entity_id === obs.entity_id
+                    );
+                    const lrOff = inactItem ? Number(inactItem.likelihood_ratio ?? 1.0) : 1.0;
+                    const offText =
+                      lrOff < 0.99 ? `Off LR ${lrOff.toFixed(2)} (Confirmed BLE)` : "Off: Neutral";
                     return `
                     <tr style="border-bottom:1px solid var(--ha-divider);">
                       <td style="padding:8px 6px;">
@@ -3152,7 +3387,35 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                       obs.label || ""
                     )}" placeholder="Label" />
                       </td>
-                      <td style="padding:8px 6px;width:130px;">
+                      <td style="padding:8px 6px;min-width:155px;font-size:11.5px;">
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:3px;">
+                          <span style="padding:1px 6px;border-radius:999px;font-weight:600;background:${
+                            isHuman ? "rgba(16,185,129,0.14)" : "rgba(148,163,184,0.16)"
+                          };color:${
+                      isHuman ? "var(--ha-success-text)" : "var(--ha-muted)"
+                    };">${isHuman ? "Person" : "Supporting"}</span>
+                          ${
+                            cdSec > 0
+                              ? `<span style="padding:1px 6px;border-radius:999px;background:var(--ha-subtle);border:1px solid var(--ha-divider);">${cdSec}s</span>`
+                              : ""
+                          }
+                          ${
+                            tempered
+                              ? `<span style="padding:1px 6px;border-radius:999px;background:var(--ha-accent-cyan-bg);color:var(--ha-accent-cyan-text);" title="Single-pass tempered">1x weighted</span>`
+                              : ""
+                          }
+                        </div>
+                        <div style="color:${
+                          badLift
+                            ? "var(--ha-danger-text)"
+                            : lrOff < 0.99
+                            ? "var(--ha-warning-text)"
+                            : "var(--ha-muted)"
+                        };">${
+                      badLift ? "⚠ Fix weights (P(E|Occ) > P(E|Vac))" : offText
+                    }</div>
+                      </td>
+                      <td style="padding:8px 6px;width:125px;">
                         <select class="select obs-preset" data-idx="${idx}">
                           ${["decisive", "strong", "moderate", "supporting", "weak_hint", "custom"]
                             .map(
@@ -3162,17 +3425,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                             .join("")}
                         </select>
                       </td>
-                      <td style="padding:8px 6px;width:90px;">
+                      <td style="padding:8px 6px;width:85px;">
                         <input type="number" step="0.01" min="0.01" max="0.99" class="input obs-prob" data-idx="${idx}" data-key="prob_given_true" value="${pTrue.toFixed(
                       2
                     )}" />
                       </td>
-                      <td style="padding:8px 6px;width:90px;">
+                      <td style="padding:8px 6px;width:85px;">
                         <input type="number" step="0.01" min="0.01" max="0.99" class="input obs-prob" data-idx="${idx}" data-key="prob_given_false" value="${pFalse.toFixed(
                       2
                     )}" />
                       </td>
-                      <td style="padding:8px 6px;width:190px;">
+                      <td style="padding:8px 6px;width:185px;">
                         <div style="display:flex;gap:4px;">
                           <select class="select obs-field" data-idx="${idx}" data-key="operator">
                             ${["equals", "in", "greater_than", "less_than", "not_equals"]
@@ -3189,6 +3452,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     )}" style="width:80px;" />
                         </div>
                       </td>
+                      <td style="padding:8px 6px;text-align:right;">
+                        <button class="btn-danger-text obs-del" data-idx="${idx}" title="Remove observation">×</button>
+                      </td>
                     </tr>`;
                   })
                   .join("")}
@@ -3200,10 +3466,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             ? `
           <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:16px;">
             <div>
-              <div class="setting-label" style="margin-bottom:8px;">Sensors that trigger occupancy alone (&ge; ${threshPct}%)</div>
+              <div class="setting-label" style="margin-bottom:8px;">Solo sensors crossing score/hold threshold (&ge; ${threshPct}%)</div>
+              <div style="font-size:11.5px;color:var(--ha-muted);margin-bottom:6px;">Scores confidence and holds existing occupancy; never starts occupancy from vacant (BAYES-01).</div>
               ${
                 (comb.solo_triggers || []).length === 0
-                  ? `<div style="font-size:13px;color:var(--ha-muted);">None — at least 2 sensors must agree.</div>`
+                  ? `<div style="font-size:13px;color:var(--ha-muted);">None — at least 2 sensors must agree to hold.</div>`
                   : (comb.solo_triggers || [])
                       .map(
                         (s) => `
@@ -3216,7 +3483,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               }
             </div>
             <div>
-              <div class="setting-label" style="margin-bottom:8px;">2-sensor combinations that trigger (&ge; ${threshPct}%)</div>
+              <div class="setting-label" style="margin-bottom:8px;">2-sensor combinations crossing hold threshold (&ge; ${threshPct}%)</div>
               ${
                 (comb.pair_triggers || []).length === 0
                   ? `<div style="font-size:13px;color:var(--ha-muted);">No 2-sensor combinations cross threshold.</div>`
@@ -3251,6 +3518,78 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             </div>
           </div>
         `
+            : this._advTab === "automations"
+            ? (() => {
+                const slug = this._slugifyRoom(cfg.room_name || selRoom.room_name);
+                const entityId = `binary_sensor.${slug}_presence`;
+                const lightingYaml = `alias: "${cfg.room_name || selRoom.room_name} — PDD Lighting (State & Warning Dim)"
+description: "Uses PDD occupancy_state, manual_off_suppressed, and human_present attributes"
+use_blueprint:
+  path: spelech/pdd_presence_lighting.yaml
+  input:
+    presence_sensor: ${entityId}
+    respect_manual_off: true
+    ignore_pets: true
+    enable_warning_dim: true`;
+                const stateYaml = `alias: "${cfg.room_name || selRoom.room_name} — Occupancy State Automation"
+mode: restart
+trigger:
+  - platform: state
+    entity_id: ${entityId}
+    attribute: occupancy_state
+action:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ state_attr('${entityId}', 'occupancy_state') == 'occupied_confirmed'
+                 and state_attr('${entityId}', 'human_present') | default(true, true)
+                 and not (state_attr('${entityId}', 'manual_off_suppressed') | default(false, true)) }}
+        sequence:
+          - service: light.turn_on
+            target:
+              area_id: ${cfg.area_id || slug}
+      - conditions:
+          - condition: template
+            value_template: "{{ state_attr('${entityId}', 'is_cooling_down') == true }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              area_id: ${cfg.area_id || slug}
+            data:
+              brightness_pct: 35
+      - conditions:
+          - condition: state
+            entity_id: ${entityId}
+            state: "off"
+        sequence:
+          - service: light.turn_off
+            target:
+              area_id: ${cfg.area_id || slug}`;
+                return `
+          <div style="margin-bottom:14px;">
+            <div class="setting-label" style="margin-bottom:4px;">Entity &amp; Blueprint Contract (<code>${this._escape(entityId)}</code>)</div>
+            <div style="font-size:12.5px;color:var(--ha-muted);">
+              Automations should consume <code>occupancy_state</code> (<code>occupied_confirmed</code>, <code>occupied_holding</code>, <code>occupied_cooling</code>, <code>vacant</code>), <code>verified_by</code>, <code>is_cooling_down</code>, <code>human_present</code>, and <code>manual_off_suppressed</code>.
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span class="setting-label" style="font-size:12.5px;">Blueprint Config (<code>pdd_presence_lighting.yaml</code>)</span>
+                <button class="btn btn-sm btn-copy-auto" data-auto-target="auto-yaml-blueprint">Copy</button>
+              </div>
+              <textarea class="code-area" id="auto-yaml-blueprint" readonly style="min-height:190px;">${this._escape(lightingYaml)}</textarea>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span class="setting-label" style="font-size:12.5px;">Direct State-Aware Automation YAML</span>
+                <button class="btn btn-sm btn-copy-auto" data-auto-target="auto-yaml-direct">Copy</button>
+              </div>
+              <textarea class="code-area" id="auto-yaml-direct" readonly style="min-height:190px;">${this._escape(stateYaml)}</textarea>
+            </div>
+          </div>`;
+              })()
             : this._advTab === "yaml"
             ? `
           <div style="display:flex;gap:6px;margin-bottom:10px;">
@@ -4979,7 +5318,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         operator: "equals",
         state: "on",
       };
-      this._applyFriendlyRoleGroup(newObs, roleSelect?.value || "shared", presets);
+      let chosenRole = roleSelect?.value || "shared";
+      if (!this._isHumanExclusiveCandidate(eid) && chosenRole !== "keepalive") {
+        chosenRole = "keepalive";
+        this.showToast("Non-human signal assigned Supporting Hold role (SIGNAL-01)", "info");
+      }
+      this._applyFriendlyRoleGroup(newObs, chosenRole, presets);
       this._draftConfig.bayesian_observations.push(newObs);
       this._dirty = true;
       this.refreshPreview();
@@ -6103,6 +6447,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         negative_space_enabled: Boolean(root.querySelector("#gl-neg-space-enabled")?.checked),
         guest_mode_enabled: Boolean(root.querySelector("#gl-guest-mode-enabled")?.checked),
         ble_decider_enabled: Boolean(root.querySelector("#gl-ble-decider-enabled")?.checked),
+        pir_validation_enabled: Boolean(root.querySelector("#gl-pir-validation-enabled")?.checked !== false),
+        pir_candidate_window: Math.max(
+          3,
+          Number(root.querySelector("#gl-pir-candidate-window")?.value ?? 15)
+        ),
       };
       this.saveGlobalSettings();
     });
@@ -6192,6 +6541,21 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._dirty = true;
       this.render();
     });
+    root.querySelector("#cfg-max-hold-timeout")?.addEventListener("change", (e) => {
+      this._draftConfig.max_hold_timeout = Math.max(60, Number(e.target.value) || 1800);
+      this._dirty = true;
+      this.render();
+    });
+    root.querySelector("#cfg-pir-validation-enabled")?.addEventListener("change", (e) => {
+      this._draftConfig.pir_validation_enabled = Boolean(e.target.checked);
+      this._dirty = true;
+      this.render();
+    });
+    root.querySelector("#cfg-pir-candidate-window")?.addEventListener("change", (e) => {
+      this._draftConfig.pir_candidate_window = Math.max(3, Number(e.target.value) || 15);
+      this._dirty = true;
+      this.render();
+    });
 
     root.querySelector("#cfg-notify-slack")?.addEventListener("change", (e) => {
       this._draftConfig.notify_slack = e.target.checked;
@@ -6246,14 +6610,26 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         if (
           (preset === "decisive" || preset === "strong") &&
           o.entity_id &&
-          o.entity_id.startsWith("binary_sensor.")
+          o.entity_id.startsWith("binary_sensor.") &&
+          this._isHumanExclusiveCandidate(o.entity_id)
         ) {
           if (!triggers.includes(o.entity_id)) triggers.push(o.entity_id);
         }
       }
       this._draftConfig.trigger_entities = triggers;
       this._dirty = true;
-      this.showToast(`Synced ${triggers.length} main sensors`, "info");
+      this.showToast(`Synced ${triggers.length} person-coupled triggers`, "info");
+    });
+
+    root.querySelectorAll(".btn-copy-auto").forEach((el) => {
+      el.addEventListener("click", () => {
+        const tid = el.getAttribute("data-auto-target");
+        const ta = tid ? root.querySelector(`#${tid}`) : null;
+        if (ta && navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(ta.value || "");
+          this.showToast("Copied automation YAML to clipboard", "success");
+        }
+      });
     });
 
     root.querySelectorAll(".obs-field").forEach((el) => {
@@ -6278,6 +6654,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         if (presets[p] && p !== "custom") {
           obs.prob_given_true = presets[p].prob_given_true;
           obs.prob_given_false = presets[p].prob_given_false;
+          delete obs.cooldown_weighted;
+          delete obs.signal_weighted;
         }
         this._dirty = true;
         this.refreshPreview();
