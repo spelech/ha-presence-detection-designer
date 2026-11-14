@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ha-presence-detection-designer"
-version = "0.3.0"
+version = "0.3.1"
 description = "Home Assistant custom integration combining spatial floorplan geometry, hierarchical transitions state machines, and camera/sensor occupancy verification."
 authors = [{name = "Steven T. Pelech"}]
 readme = "README.md"
