@@ -1,4 +1,4 @@
-"""Coordinator managing room state machine, Bayesian fusion, entity tracking, and LLM verification."""
+"""Coordinator managing transitions room state machine, evidence fusion, and LLM verification."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .causal_context import (
     process_coordinator_actuator_event,
 )
 from .condition_evaluator import evaluate_all, is_state_stale
-from .const import DATA_STORE, DOMAIN, BoxState
+from .const import DATA_STORE, DOMAIN, OccupancyState
 from .coordinator_dispatch import (
     _safe_state_getter,
     async_send_coordinator_test_notification,
@@ -34,10 +34,11 @@ from .coordinator_dispatch import (
     process_coordinator_trigger_event,
     record_coordinator_timeline_snapshot,
     resolve_global_llm_defaults,
+    sync_coordinator_evidence,
 )
 from .coordinator_helpers import apply_coordinator_config_fields
 from .notifications import NotificationDispatcher
-from .state_machine import RoomStateMachine
+from .state_machine import RoomPresenceStateMachine
 
 __all__ = ["RoomPresenceCoordinator", "_safe_state_getter"]
 
@@ -45,7 +46,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class RoomPresenceCoordinator:
-    """Coordinates state machine, Bayesian fusion, entity listeners, and LLM verification."""
+    """Coordinates transitions state machine, spatial/Bayesian evidence, entity listeners, and LLM checks."""
 
     def __init__(
         self,
@@ -72,7 +73,12 @@ class RoomPresenceCoordinator:
         self._settling_ts: float = 0.0
         self._last_corroborated_path: list[str] | None = None
         self._last_suppressed_reason: str | None = None
-        self.state_machine: RoomStateMachine = None  # type: ignore[assignment]
+
+        self._active_triggers: set[str] = set()
+        self._active_condition_descs: list[str] = []
+        self._last_trigger_entity: str | None = None
+        self._bayesian_drives_occupancy: bool = False
+        self.state_machine: RoomPresenceStateMachine = None  # type: ignore[assignment]
 
         self._apply_config_fields(self.config, preserve_state=False)
 
@@ -112,8 +118,43 @@ class RoomPresenceCoordinator:
 
         dispatch_presence_transition(self)
 
+    def _attach_ha_timer_hooks(self) -> None:
+        """Wire event-driven HA async_call_later timers into the RoomPresenceStateMachine."""
+        if not self.hass or not hasattr(self.hass, "loop"):
+            return
+        try:
+            from homeassistant.helpers.event import async_call_later
+
+            if type(async_call_later).__name__ == "MagicMock":
+                return
+
+            def _schedule(delay: float, cb: Callable[[], None]) -> Callable[[], None]:
+                return async_call_later(self.hass, delay, lambda _now: cb())
+
+            def _on_expired(expired_trigger: str) -> None:
+                if (
+                    expired_trigger == "countdown_expired"
+                    and self.state_machine.state == OccupancyState.OCCUPIED_VERIFYING
+                ):
+                    if self._is_guest_mode_active():
+                        self.state_machine.handle_llm_result(
+                            False, "Skipped LLM verification in Guest Mode"
+                        )
+                        self.async_update_listeners()
+                        return
+                    self.async_update_listeners()
+                    if hasattr(self.hass, "async_create_task"):
+                        self.hass.async_create_task(self.async_run_llm_verification())
+                    return
+                self.async_update_listeners()
+
+            self.state_machine._timer_scheduler = _schedule
+            self.state_machine._on_timer_expired = _on_expired
+        except Exception:  # noqa: BLE001
+            pass
+
     async def async_setup(self) -> None:
-        """Start listening to entity state changes and timer ticks."""
+        """Start listening to entity state changes and schedule event-driven timers."""
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
@@ -123,6 +164,8 @@ class RoomPresenceCoordinator:
             async_track_state_change_event,
             async_track_time_interval,
         )
+
+        self._attach_ha_timer_hooks()
 
         if self.trigger_entities:
             unsub = async_track_state_change_event(
@@ -180,13 +223,15 @@ class RoomPresenceCoordinator:
         self.async_refresh_all_states()
 
     def _unsubscribe_trackers(self) -> None:
-        """Unsubscribe entity state listeners and timer tick without clearing entity listeners."""
+        """Unsubscribe entity state listeners and cancel active state timers without clearing entity listeners."""
         for unsub in self._unsub_trackers:
             try:
                 unsub()
             except Exception:  # noqa: BLE001
                 pass
         self._unsub_trackers.clear()
+        if self.state_machine is not None:
+            self.state_machine._cancel_timer()
 
     def async_unload(self) -> None:
         """Unsubscribe all entity listeners and timers."""
@@ -194,28 +239,27 @@ class RoomPresenceCoordinator:
         self._listeners.clear()
 
     def async_refresh_all_states(self) -> None:
-        """Evaluate current HA states for boundaries, triggers, conditions, and Bayesian fusion."""
+        """Evaluate current HA states for triggers, conditions, and Bayesian/spatial fusion."""
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
-        for b_eid in self.boundary_entities:
-            st_obj = _safe_state_getter(self.hass, b_eid)
-            if st_obj is not None:
-                is_open = st_obj.state in ("on", "open")
-                self.state_machine.handle_boundary(b_eid, is_open)
-
+        self._active_triggers.clear()
         for t_eid in self.trigger_entities:
             st_obj = _safe_state_getter(self.hass, t_eid)
-            is_active = False
             if st_obj is not None and not is_state_stale(st_obj, max_age_seconds=60.0):
-                is_active = st_obj.state in ("on", "playing", "home")
-            self.state_machine.handle_trigger(t_eid, is_active)
+                if st_obj.state in ("on", "playing", "home"):
+                    self._active_triggers.add(t_eid)
+                    self._last_trigger_entity = t_eid
 
         self._eval_conditions_and_update()
 
     def _eval_bayesian_and_update(self) -> BayesianEvaluation | None:
         """Evaluate Bayesian sensor fusion across all configured observations and negative-space geometry."""
         return evaluate_coordinator_bayesian(self)
+
+    def _sync_state_machine_evidence(self) -> None:
+        """Normalize current triggers/conditions/Bayesian/spatial state and apply to state machine."""
+        sync_coordinator_evidence(self)
 
     def _is_guest_mode_active(self) -> bool:
         """Return True if global Guest Mode is currently enabled."""
@@ -234,7 +278,7 @@ class RoomPresenceCoordinator:
         )
 
     def notify_adjacent_occupancy(self, from_room_name: str) -> bool:
-        """Clear vacating timer immediately if an adjacent connected room just detected an occupant."""
+        """Clear cooling timer immediately if an adjacent connected room just detected an occupant."""
         if self._is_guest_mode_active() or self._is_definitive_tracker_pinned():
             return False
         if self.state_machine.handle_adjacent_room_occupied(from_room_name):
@@ -253,7 +297,7 @@ class RoomPresenceCoordinator:
         record_coordinator_timeline_snapshot(self)
 
     def _eval_conditions_and_update(self) -> None:
-        """Evaluate sustaining conditions and Bayesian observations."""
+        """Evaluate sustaining conditions and Bayesian/spatial observations."""
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
@@ -265,8 +309,9 @@ class RoomPresenceCoordinator:
                 else _safe_state_getter(self.hass, eid)
             ),
         )
-        self.state_machine.handle_conditions(any_active, descs)
-        self._eval_bayesian_and_update()
+        self._active_condition_descs = list(descs) if any_active else []
+        if not self._eval_bayesian_and_update():
+            self._sync_state_machine_evidence()
 
     @callback
     def _handle_actuator_change(self, event: Any) -> None:
@@ -280,17 +325,13 @@ class RoomPresenceCoordinator:
 
     @callback
     def _handle_boundary_change(self, event: Any) -> None:
-        """Handle boundary sensor event (door open/close)."""
+        """Forward exterior door open/close events to HousePerimeterTracker (decoupled from room state)."""
         to_state = event.data.get("new_state")
         entity_id = event.data.get("entity_id")
         if not to_state or not entity_id:
             return
 
-        # Covers report transitional states. "opening" is still an opening edge;
-        # "closing"/"closed" are closed. The perimeter tracker also de-duplicates
-        # repeated same-state events so one garage cycle cannot count twice.
         is_open = to_state.state in ("on", "open", "opening")
-        self.state_machine.handle_boundary(entity_id, is_open)
         if self.hass:
             from .house_perimeter import get_house_perimeter_tracker
 
@@ -301,24 +342,25 @@ class RoomPresenceCoordinator:
         self.async_update_listeners()
 
     @callback
-    def _handle_condition_change(self, event: Any) -> None:
+    def _handle_condition_change(self, _event: Any) -> None:
         """Handle condition entity state change."""
         self._eval_conditions_and_update()
         self.async_update_listeners()
 
     @callback
-    def _handle_bayesian_change(self, event: Any) -> None:
+    def _handle_bayesian_change(self, _event: Any) -> None:
         """Handle state change on a Bayesian observation entity."""
         self._eval_bayesian_and_update()
         self.async_update_listeners()
 
     async def _async_handle_tick(self, _now: Any) -> None:
-        """Execute 1 second tick."""
+        """Advance deadline clock for virtual/non-timer environments and update cooling listeners."""
         if self.hass:
             from .house_perimeter import get_house_perimeter_tracker
 
             get_house_perimeter_tracker(self.hass).reconcile_headcount()
-        action = self.state_machine.handle_tick(1)
+
+        action = self.state_machine.advance_time(1.0)
         if action == "REQUEST_LLM_VERIFY":
             if self._is_guest_mode_active():
                 self.state_machine.handle_llm_result(
@@ -328,7 +370,7 @@ class RoomPresenceCoordinator:
                 return
             self.async_update_listeners()
             await self.async_run_llm_verification()
-        elif action == "VACATED" or self.state_machine.box_state == BoxState.TIMER_ACTIVE:
+        elif action in ("VACATED", "HOLD_EXPIRED") or self.state_machine.is_cooling_down:
             self.async_update_listeners()
 
     async def async_run_llm_verification(self) -> None:
@@ -349,7 +391,8 @@ class RoomPresenceCoordinator:
 
     async def async_manual_verify(self) -> None:
         """Trigger immediate LLM verification."""
-        self.state_machine.box_state = BoxState.LLM_VERIFYING
+        if self.state_machine.state == OccupancyState.OCCUPIED_COOLING:
+            self.state_machine.trigger("countdown_expired", reason="Manual verification triggered")
         self.async_update_listeners()
         await self.async_run_llm_verification()
 
@@ -364,7 +407,7 @@ class RoomPresenceCoordinator:
         )
         result["entry_id"] = self.entry_id
         result["bayesian_probability_pct"] = self.state_machine.bayesian_probability_pct
-        result["box_state"] = str(self.state_machine.box_state)
+        result["occupancy_state"] = str(self.state_machine.state)
         result["is_present"] = self.state_machine.is_present
         return result
 

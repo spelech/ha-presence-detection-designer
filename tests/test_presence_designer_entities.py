@@ -21,8 +21,8 @@ from custom_components.presence_detection_designer.const import (
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
     DOMAIN,
-    BoxState,
     Mode,
+    OccupancyState,
 )
 from custom_components.presence_detection_designer.coordinator import (
     RoomPresenceCoordinator,
@@ -65,9 +65,10 @@ def test_coordinator_init(mock_hass, sample_config):
     coord = RoomPresenceCoordinator(mock_hass, "entry_123", sample_config)
     assert coord.room_name == "Living Room"
     assert coord.state_machine.is_present is False
-    assert coord.state_machine.box_state == BoxState.IDLE_CLEAR
+    assert coord.state_machine.state == OccupancyState.VACANT
 
 
+@pytest.mark.requirement("ENTITY-01", category="ENTITY", req_type="PositiveFeature")
 def test_entities_mapping(mock_hass, sample_config):
     """Test binary_sensor, button, and switch bindings."""
     coord = RoomPresenceCoordinator(mock_hass, "entry_123", sample_config)
@@ -78,8 +79,12 @@ def test_entities_mapping(mock_hass, sample_config):
     assert sensor.unique_id == "entry_123_presence"
     attrs = sensor.extra_state_attributes
     assert attrs["mode"] == Mode.OPEN
-    assert attrs["box_state"] == BoxState.IDLE_CLEAR
-    assert attrs["vacating_countdown"] == 0
+    assert attrs["occupancy_state"] == OccupancyState.VACANT
+    assert attrs["is_cooling_down"] is False
+    assert attrs["cooling_remaining_sec"] == 0
+    assert "state_reason" in attrs
+    assert attrs["verified_by"] == "none"
+    assert isinstance(attrs["transition_history"], list)
 
     btn = VerifyPresenceButton(coord, "entry_123")
     assert btn.name == "Living Room Verify Presence"
@@ -101,7 +106,8 @@ async def test_switch_override_toggle(mock_hass, sample_config):
     await switch.async_turn_on()
     assert switch.is_on is True
     assert sensor.is_on is True
-    assert sensor.extra_state_attributes["box_state"] == BoxState.OVERRIDE
+    assert sensor.extra_state_attributes["occupancy_state"] == OccupancyState.OVERRIDE
+    assert sensor.extra_state_attributes["verified_by"] == "manual_override"
 
     await switch.async_turn_off()
     assert switch.is_on is False

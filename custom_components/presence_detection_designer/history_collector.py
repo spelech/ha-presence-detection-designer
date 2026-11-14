@@ -19,10 +19,10 @@ from .const import (
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
-    BoxState,
+    OccupancyState,
 )
 from .coordinator import _safe_state_getter
-from .state_machine import RoomStateMachine
+from .state_machine import RoomPresenceStateMachine
 from .store import async_get_store
 
 _LOGGER = logging.getLogger(__name__)
@@ -274,26 +274,38 @@ async def async_fetch_room_history(
 
 
 def _advance_state_machine_over_interval(
-    sm: RoomStateMachine,
+    sm: RoomPresenceStateMachine,
     dt_seconds: float,
 ) -> list[tuple[float, str]]:
-    """Advance RoomStateMachine over dt_seconds, returning any intermediate (offset_sec, action) transitions."""
-    remaining = max(0, int(round(dt_seconds)))
-    if remaining <= 0:
+    """Advance RoomPresenceStateMachine over dt_seconds, returning intermediate (offset_sec, action) transitions."""
+    remaining = max(0.0, float(dt_seconds))
+    if remaining <= 0.0:
         return []
 
     transitions: list[tuple[float, str]] = []
-    elapsed = 0
-    while remaining > 0:
-        if sm.box_state == BoxState.TIMER_ACTIVE and sm.vacating_countdown is not None:
-            step = min(remaining, max(1, sm.vacating_countdown))
+    elapsed = 0.0
+    while remaining > 1e-6:
+        if (
+            sm.state
+            in (
+                OccupancyState.OCCUPIED_HOLDING,
+                OccupancyState.OCCUPIED_COOLING,
+                OccupancyState.OCCUPIED_VERIFYING,
+            )
+            and sm._deadline_ts is not None
+        ):
+            rem_deadline = max(0.001, sm._deadline_ts - sm._now())
+            step = min(remaining, rem_deadline)
         else:
             step = remaining
 
-        action = sm.handle_tick(step)
+        action = sm.advance_time(step)
         elapsed += step
         remaining -= step
 
+        if action == "HOLD_EXPIRED":
+            transitions.append((float(elapsed), "HOLD_EXPIRED"))
+            continue
         if action == "REQUEST_LLM_VERIFY":
             sm.handle_llm_result(False, "Deterministic replay timeout expired")
             transitions.append((float(elapsed), "VACATED"))
@@ -412,7 +424,7 @@ def _build_sensor_swimlanes(
                         "width_pct": max(
                             0.4, round(((seg_end - seg_start) / window_sec) * 100.0, 3)
                         ),
-                        "state": "closed (sealed)",
+                        "state": "closed (holding)",
                     }
                 )
         swimlanes.append(

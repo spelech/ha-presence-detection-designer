@@ -35,7 +35,7 @@ from .const import (
 
 
 def explain_config_in_natural_language(config: dict[str, Any]) -> str:
-    """Generate a plain-English explanation of a room's Bayesian & Wasp-in-a-Box config."""
+    """Generate a plain-English explanation of a room's Bayesian & state machine config."""
     from .bayesian_engine import (
         build_effective_observations,
         friendly_entity_label,
@@ -61,7 +61,7 @@ def explain_config_in_natural_language(config: dict[str, Any]) -> str:
         f"### {room_name} — Presence Architecture & Bayesian Sensor Guide",
         f"- **Architecture Mode**: `{mode}` "
         + (
-            f"(Wasp-in-a-Box sealed by {', '.join(boundaries)}; grace timeout {grace}s when unsealed)"
+            f"(Bounded by {', '.join(boundaries)}; cooling timeout {inactivity}s, grace {grace}s)"
             if mode == Mode.BOUNDED and boundaries
             else f"(Open zone with {inactivity}s inactivity countdown)"
         ),

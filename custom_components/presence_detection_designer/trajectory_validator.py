@@ -3,7 +3,7 @@
 Enforces physical reality constraints on occupancy transitions:
 1. High-Confidence Source Preservation:
    If an occupant is localized with high confidence in Room A (Frigate visual detection,
-   sealed perimeter, bed sensor, or workstation load), a non-adjacent Room B cannot suddenly
+   confirmed camera detection, bed sensor, or workstation load), a non-adjacent Room B cannot suddenly
    become occupied without an unbroken physical trajectory.
 2. Topological Path Corroboration with Branching:
    Discovers all simple paths between currently occupied rooms and candidate room B.
@@ -26,7 +26,7 @@ from .const import (
     DATA_STORE,
     DEFAULT_TRANSIT_WINDOW_SEC,
     DOMAIN,
-    BoxState,
+    OccupancyState,
 )
 from .coordinator_helpers import (
     async_send_coordinator_test_notification,
@@ -173,7 +173,7 @@ def is_room_high_confidence(coord: Any) -> bool:
 
     High confidence criteria:
     - Frigate camera visual detection of human (subzone or whole-frame person active)
-    - Perimeter sealed (door closed with occupant inside)
+    - Confirmed hold state (sustained occupancy evidence active)
     - Bed occupancy / workstation load (>190W) / Steve definitive BLE pinned
     - Bayesian probability >= 0.80 with active observations
     """
@@ -182,9 +182,6 @@ def is_room_high_confidence(coord: Any) -> bool:
     sm = coord.state_machine
     if not sm.is_present:
         return False
-
-    if sm.is_perimeter_sealed or sm.box_state == BoxState.OCCUPIED_SEALED:
-        return True
 
     sp = getattr(coord, "last_spatial_estimate", None)
     if isinstance(sp, dict):
@@ -281,9 +278,9 @@ def resolve_corroborating_activity_map(
             continue
         sm = getattr(coord, "state_machine", None)
         if sm:
-            if sm._active_triggers:
+            if getattr(coord, "_active_triggers", None) or sm.snapshot.active_triggers:
                 activity[r_name] = now
-            if sm.is_present and sm.box_state != BoxState.IDLE_CLEAR:
+            if sm.is_present and sm.state != OccupancyState.VACANT:
                 activity[r_name] = max(activity.get(r_name, 0.0), now - 5.0)
             if getattr(sm, "last_cleared_time", 0.0) > 0:
                 activity[r_name] = max(activity.get(r_name, 0.0), float(sm.last_cleared_time))
@@ -334,21 +331,6 @@ def corroborate_transition_trajectory(
     for c in occupied_coords:
         occ_name = getattr(c, "room_name", "")
         if candidate_room in graph.get(occ_name, set()):
-            if c.state_machine.is_perimeter_sealed:
-                door_opened = False
-                for b_eid in getattr(c, "boundary_entities", []):
-                    last_on = act_ts.get(b_eid, 0.0)
-                    if last_on > 0.0 and (now - last_on) <= transit_window_sec:
-                        door_opened = True
-                        break
-                if not door_opened:
-                    return CorroborationResult(
-                        is_valid=False,
-                        is_adjacent=True,
-                        source_room=occ_name,
-                        reason=f"sealed_perimeter_in_{occ_name}_boundary_unopened",
-                    )
-
             return CorroborationResult(
                 is_valid=True,
                 is_adjacent=True,

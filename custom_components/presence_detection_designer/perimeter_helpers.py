@@ -6,8 +6,6 @@ import logging
 import time
 from typing import Any
 
-from .const import DATA_STORE, DOMAIN
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -47,7 +45,7 @@ def infer_door_vector(
     interior_motion_before = False
     if host_coord and hasattr(host_coord, "state_machine"):
         sm = host_coord.state_machine
-        if sm._active_triggers:
+        if getattr(host_coord, "_active_triggers", None) or sm.snapshot.active_triggers:
             interior_motion_before = True
         elif sm.last_occupied_time and (opened_ts - sm.last_occupied_time) < 30.0:
             interior_motion_before = True
@@ -150,68 +148,13 @@ def resolve_pending_exit_corroborations(tracker: Any, now_ts: float | None = Non
 
 
 def enforce_conservation_law(tracker: Any, newly_occupied_room: str | None = None) -> list[str]:
-    """Enforce conservation law: total occupied rooms must not exceed house occupant count."""
-    vacated_rooms: list[str] = []
-    if (
-        not tracker.hass
-        or not hasattr(tracker.hass, "data")
-        or not isinstance(tracker.hass.data, dict)
-    ):
-        return vacated_rooms
-
-    store = tracker.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-    if store is not None and hasattr(store, "global_settings"):
-        gs = store.global_settings or {}
-        if not gs.get("enable_conservation_law", False):
-            return vacated_rooms
-
-    from .trajectory_validator import get_all_room_coordinators
-
-    coordinators = get_all_room_coordinators(tracker.hass)
-    occupied = [c for c in coordinators if c.state_machine and c.state_machine.is_present]
-
-    # Case 0: House is vacant -> all rooms must be clear, UNLESS they have active physical triggers/conditions
-    if tracker.state.count == 0:
-        for c in occupied:
-            sm = getattr(c, "state_machine", None)
-            if sm and (sm._active_triggers or sm.active_conditions or getattr(sm, "_bayesian_active", False) or getattr(sm, "bayesian_occupied", False)):
-                _LOGGER.warning(
-                    "Conservation Law: Room %s has active physical presence/triggers while occupant count is 0; declining force-clear to prevent flapping",
-                    c.room_name,
-                )
-                continue
-            c.state_machine.force_clear()
-            vacated_rooms.append(c.room_name)
-            c.async_update_listeners()
-        return vacated_rooms
-
-    # Case 1: Single occupant -> at most 1 room occupied
-    if tracker.state.count == 1 and len(occupied) > 1:
-        target_keep = newly_occupied_room
-        if not target_keep:
-            target_keep = max(
-                occupied,
-                key=lambda c: getattr(c.state_machine, "last_occupied_time", 0.0),
-            ).room_name
-
-        for c in occupied:
-            if c.room_name != target_keep:
-                sm = getattr(c, "state_machine", None)
-                if sm and (sm._active_triggers or sm.active_conditions or getattr(sm, "_bayesian_active", False) or getattr(sm, "bayesian_occupied", False)):
-                    _LOGGER.info(
-                        "Conservation Law: Room %s has active triggers; not vacating despite single-occupant target %s",
-                        c.room_name,
-                        target_keep,
-                    )
-                    continue
-                c.state_machine.force_clear()
-                c._last_adjacent_arrival = (
-                    f"Vacated by Conservation Law (single occupant in {target_keep})"
-                )
-                vacated_rooms.append(c.room_name)
-                c.async_update_listeners()
-
-    return vacated_rooms
+    """No-op under GUARD-03: whole-house headcount is decoupled from room state machines."""
+    _LOGGER.debug(
+        "Headcount conservation law skipped (GUARD-03 decoupled; newly_occupied_room=%s, count=%s)",
+        newly_occupied_room,
+        getattr(getattr(tracker, "state", None), "count", None),
+    )
+    return []
 
 
 async def async_setup_perimeter_tracking(tracker: Any) -> None:

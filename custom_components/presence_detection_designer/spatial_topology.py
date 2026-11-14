@@ -145,8 +145,8 @@ def _build_spatial_ambiguities(
                         "camera_id": None,
                         "description": (
                             f"{r_name} has unmonitored exits: {', '.join(seal_info['unsealed_exits'])}. "
-                            "Using Wasp-in-a-Box `bounded` mode locks occupancy as `occupied_sealed` when "
-                            "the exterior door is closed."
+                            "Boundary mode (`bounded`) tracks door contacts alongside bounded hold timeouts; "
+                            "unmonitored exits should use `open` mode."
                         ),
                         "resolution": f"Switch {r_name} to `mode: open` with Cross-Room Timer Hand-Off.",
                     }

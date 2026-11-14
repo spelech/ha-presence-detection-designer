@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from custom_components.presence_detection_designer.spatial_inference import (
     evaluate_spatial_frame,
     reconstruct_house_timeline,
@@ -12,6 +14,7 @@ from custom_components.presence_detection_designer.spatial_topology import (
 )
 
 
+@pytest.mark.requirement("SPATIAL-02", category="SPATIAL", req_type="PositiveFeature")
 def test_positive_subzone_localization() -> None:
     """Active Frigate sub-zone localizes directly to the sub-zone 2D box."""
     fp = get_default_floorplan()

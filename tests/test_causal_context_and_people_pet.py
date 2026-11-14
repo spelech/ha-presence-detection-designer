@@ -15,6 +15,7 @@ from custom_components.presence_detection_designer.const import (
     DOMAIN,
 )
 from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
+from custom_components.presence_detection_designer.evidence_snapshot import RoomEvidenceSnapshot
 from custom_components.presence_detection_designer.sensor import RoomOccupantSensor
 from custom_components.presence_detection_designer.spatial_catalog import (
     HOUSEHOLD_ANIMAL_PROFILES,
@@ -159,7 +160,13 @@ def test_coordinator_google_assistant_manual_off_and_auto_latch_prevention():
     assert coord.state_machine.active_conditions == []
 
     # 2. Occupant says "Hey Google, turn off the Office lights" while occupied
-    coord.state_machine.handle_trigger("binary_sensor.office_motion", True)
+    coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.office_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.office_motion",
+        )
+    )
     assert bin_sensor.is_on is True
 
     state_map["light.office_lights"] = _make_state("off", user_id=ga_user)
@@ -180,7 +187,7 @@ def test_coordinator_google_assistant_manual_off_and_auto_latch_prevention():
 
     # 3. When room vacates, manual_intent automatically resets to 'auto'
     coord._previous_presence = True
-    coord.state_machine.is_present = False
+    coord.state_machine.force_clear()
     coord.async_update_listeners()
     assert bin_sensor.extra_state_attributes["manual_intent"] == "auto"
     assert bin_sensor.extra_state_attributes["manual_off_suppressed"] is False

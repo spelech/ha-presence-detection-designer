@@ -314,7 +314,9 @@ def test_collect_room_states_identifies_occupied_and_clear():
     coord_office.is_present = True
     coord_office.state_machine.is_present = True
     coord_office.state_machine.last_occupied_time = time.time() - 120.0
-    coord_office.state_machine.box_state = "occupied"
+    coord_office.state_machine.occupancy_state = "occupied_confirmed"
+    coord_office.state_machine.is_cooling_down = False
+    coord_office.state_machine.cooling_remaining_sec = 0
     coord_office.state_machine.last_trigger_entity = "binary_sensor.steves_desk_pir"
     coord_office.state_machine.active_conditions = []
     coord_office.last_spatial_estimate = None
@@ -323,7 +325,9 @@ def test_collect_room_states_identifies_occupied_and_clear():
     coord_kitchen.room_name = "Kitchen"
     coord_kitchen.is_present = False
     coord_kitchen.state_machine.is_present = False
-    coord_kitchen.state_machine.box_state = "idle_clear"
+    coord_kitchen.state_machine.occupancy_state = "vacant"
+    coord_kitchen.state_machine.is_cooling_down = False
+    coord_kitchen.state_machine.cooling_remaining_sec = 0
 
     mock_hass.data = {
         DOMAIN: {

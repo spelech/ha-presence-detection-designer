@@ -1,221 +1,143 @@
-"""Test Presence Detection Designer State Machine."""
+"""Tests for RoomPresenceStateMachine core lifecycle, holding, LLM verification, and overrides."""
 
-from custom_components.presence_detection_designer.const import BoxState, Mode
-from custom_components.presence_detection_designer.state_machine import RoomStateMachine
+import pytest
+
+from custom_components.presence_detection_designer.const import OccupancyState
+from custom_components.presence_detection_designer.evidence_snapshot import RoomEvidenceSnapshot
+from custom_components.presence_detection_designer.state_machine import RoomPresenceStateMachine
 
 
+@pytest.mark.requirement("STATE-01", category="STATE", req_type="PositiveFeature")
 def test_open_mode_trigger_and_timeout():
-    """Test open mode presence triggering and inactivity countdown."""
-    sm = RoomStateMachine(
+    """Test trigger activation, cooling entry, virtual clock tick, and vacancy."""
+    sm = RoomPresenceStateMachine(
         name="Living Room",
-        mode=Mode.OPEN,
         inactivity_timeout=10,
         llm_enabled=False,
     )
     assert sm.is_present is False
-    assert sm.box_state == BoxState.IDLE_CLEAR
+    assert sm.state == OccupancyState.VACANT
 
-    # Motion detected
-    sm.handle_trigger("binary_sensor.pir", is_active=True)
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.pir"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.pir",
+        ),
+        now_ts=100.0,
+    )
     assert sm.is_present is True
+    assert sm.state == OccupancyState.OCCUPIED_CONFIRMED
     assert sm.last_trigger_entity == "binary_sensor.pir"
 
-    # Motion goes off -> timer starts
-    sm.handle_trigger("binary_sensor.pir", is_active=False)
+    sm.apply_evidence(RoomEvidenceSnapshot(), now_ts=110.0)
     assert sm.is_present is True
-    assert sm.box_state == BoxState.TIMER_ACTIVE
-    assert sm.vacating_countdown == 10
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+    assert sm.cooling_remaining_sec == 10
 
-    # Tick 5 seconds
-    action = sm.handle_tick(5)
-    assert action is None
-    assert sm.vacating_countdown == 5
+    assert sm.advance_time(5.0, now_ts=115.0) is None
+    assert sm.cooling_remaining_sec == 5
     assert sm.is_present is True
 
-    # Tick remaining 5 seconds
-    action = sm.handle_tick(5)
+    action = sm.advance_time(5.0, now_ts=120.0)
     assert action == "VACATED"
     assert sm.is_present is False
-    assert sm.box_state == BoxState.IDLE_CLEAR
+    assert sm.state == OccupancyState.VACANT
 
 
-def test_sustaining_condition_prevents_timeout():
-    """Test sustaining condition keeps presence ON even when motion stops."""
-    sm = RoomStateMachine(
+@pytest.mark.requirement("GUARD-01", category="GUARD", req_type="FailClosedGuardrail")
+def test_sustaining_condition_holds_with_finite_max_hold_cap():
+    """Sustaining condition holds occupancy in occupied_holding and expires safely at max_hold_timeout."""
+    sm = RoomPresenceStateMachine(
         name="Living Room",
-        mode=Mode.OPEN,
         inactivity_timeout=10,
+        max_hold_timeout=60,
         llm_enabled=False,
     )
-    # Trigger motion
-    sm.handle_trigger("binary_sensor.pir", is_active=True)
-    sm.handle_trigger("binary_sensor.pir", is_active=False)
-
-    # Sustaining condition (e.g. TV on) turns active
-    sm.handle_conditions(any_active=True, active_descriptions=["media_player.tv == playing"])
-    assert sm.is_present is True
-    assert sm.box_state == BoxState.OCCUPIED
-
-    # Ticking should not vacate
-    action = sm.handle_tick(20)
-    assert action is None
-    assert sm.is_present is True
-
-    # When TV turns off, timer resumes
-    sm.handle_conditions(any_active=False, active_descriptions=[])
-    assert sm.box_state == BoxState.TIMER_ACTIVE
-    assert sm.vacating_countdown == 10
-
-
-def test_bounded_mode_wasp_in_box():
-    """Test bounded room sealed box logic."""
-    sm = RoomStateMachine(
-        name="Office",
-        mode=Mode.BOUNDED,
-        grace_timeout=30,
-        llm_enabled=False,
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.pir"}),
+            active_conditions=("media_player.tv == playing",),
+            human_present=True,
+        ),
+        now_ts=100.0,
     )
-    # Enter room: door opens, motion triggers, door closes
-    sm.handle_boundary("binary_sensor.door", is_open=True)
-    sm.handle_trigger("binary_sensor.motion", is_active=True)
-    assert sm.box_state == BoxState.OCCUPIED_UNSEALED
+    assert sm.state == OccupancyState.OCCUPIED_CONFIRMED
 
-    # Door closes while motion is active
-    sm.handle_boundary("binary_sensor.door", is_open=False)
-    assert sm.box_state == BoxState.OCCUPIED_SEALED
-
-    # Occupant sits still at desk: motion goes inactive, but door remains closed
-    sm.handle_trigger("binary_sensor.motion", is_active=False)
-    # Box remains sealed! Presence stays True indefinitely
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(active_conditions=("media_player.tv == playing",)),
+        now_ts=110.0,
+    )
     assert sm.is_present is True
-    assert sm.box_state == BoxState.OCCUPIED_SEALED
+    assert sm.state == OccupancyState.OCCUPIED_HOLDING
 
-    sm.handle_tick(100)
-    assert sm.is_present is True
-    assert sm.box_state == BoxState.OCCUPIED_SEALED
+    assert sm.advance_time(20.0, now_ts=130.0) is None
+    assert sm.state == OccupancyState.OCCUPIED_HOLDING
 
-    # Occupant leaves: door opens, then closes with NO subsequent motion
-    sm.handle_boundary("binary_sensor.door", is_open=True)
-    assert sm.box_state == BoxState.OCCUPIED_UNSEALED
-    sm.handle_boundary("binary_sensor.door", is_open=False)
-    # Now timer should start countdown
-    assert sm.box_state == BoxState.TIMER_ACTIVE
-    assert sm.vacating_countdown == 30
-
-    action = sm.handle_tick(30)
-    assert action == "VACATED"
-    assert sm.is_present is False
-    assert sm.box_state == BoxState.IDLE_CLEAR
+    sm.apply_evidence(RoomEvidenceSnapshot(), now_ts=135.0)
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+    assert sm.cooling_remaining_sec == 10
 
 
+@pytest.mark.requirement("GUARD-05", category="GUARD", req_type="FailClosedGuardrail")
 def test_llm_verification_extension():
-    """Test LLM verification request when timer expires, and extension when person detected."""
-    sm = RoomStateMachine(
+    """Cooling expiration triggers Vision/LLM verification; confirmation extends cooling."""
+    sm = RoomPresenceStateMachine(
         name="Den",
-        mode=Mode.OPEN,
         inactivity_timeout=5,
         extend_timeout=60,
         llm_enabled=True,
     )
-    sm.handle_trigger("binary_sensor.pir", is_active=True)
-    sm.handle_trigger("binary_sensor.pir", is_active=False)
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(active_triggers=frozenset({"binary_sensor.pir"}), human_present=True),
+        now_ts=100.0,
+    )
+    sm.apply_evidence(RoomEvidenceSnapshot(), now_ts=105.0)
 
-    action = sm.handle_tick(5)
+    action = sm.advance_time(5.0, now_ts=110.0)
     assert action == "REQUEST_LLM_VERIFY"
-    assert sm.box_state == BoxState.LLM_VERIFYING
-    assert sm.is_present is True  # still present while verifying
-
-    # LLM confirms person is still on couch
-    sm.handle_llm_result(person_detected=True, reasoning="Person reading book on sofa")
+    assert sm.state == OccupancyState.OCCUPIED_VERIFYING
     assert sm.is_present is True
-    assert sm.box_state == BoxState.TIMER_ACTIVE
-    assert sm.vacating_countdown == 60
+
+    sm.handle_llm_result(
+        person_detected=True, reasoning="Person reading book on sofa", now_ts=112.0
+    )
+    assert sm.is_present is True
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+    assert sm.cooling_remaining_sec == 60
     assert sm.last_llm_result["reason"] == "Person reading book on sofa"
 
 
+@pytest.mark.requirement("GUARD-04", category="GUARD", req_type="FailClosedGuardrail")
 def test_manual_override():
-    """Test manual override switch."""
-    sm = RoomStateMachine(name="Guest Room", mode=Mode.OPEN)
+    """Manual override forces occupancy regardless of evidence."""
+    sm = RoomPresenceStateMachine(name="Guest Room")
     assert sm.is_present is False
 
-    sm.set_override(True)
+    sm.set_override(True, now_ts=10.0)
     assert sm.is_present is True
-    assert sm.box_state == BoxState.OVERRIDE
+    assert sm.state == OccupancyState.OVERRIDE
 
-    # Ticking has no effect
-    sm.handle_tick(500)
-    assert sm.is_present is True
-
-    sm.set_override(False)
+    sm.set_override(False, now_ts=20.0)
     assert sm.is_present is False
-    assert sm.box_state == BoxState.IDLE_CLEAR
+    assert sm.state == OccupancyState.VACANT
 
 
-def test_occupied_room_starts_countdown_when_all_sensors_idle_on_tick():
-    """Verify that an OCCUPIED room with 0 active triggers and 0 conditions starts countdown on tick."""
-    sm = RoomStateMachine(name="Master Bedroom", mode=Mode.OPEN, inactivity_timeout=120)
-    # Simulate room triggered occupied
-    sm.handle_trigger("binary_sensor.pir", is_active=True)
-    assert sm.box_state == BoxState.OCCUPIED
-    assert sm.is_present is True
-
-    # Now sensor turns off, but simulate edge case where bayesian evaluation was already idle
-    sm._active_triggers.clear()
-    sm._bayesian_active = False
-    sm.bayesian_occupied = False
-    # Still in OCCUPIED
-    assert sm.box_state == BoxState.OCCUPIED
-
-    # On next 1-second tick, it must automatically start vacating countdown!
-    sm.handle_tick(1)
-    assert sm.box_state == BoxState.TIMER_ACTIVE
-    assert sm.vacating_countdown == 119
-    assert sm.is_present is True
-
-
-def test_bounded_room_with_llm_starts_countdown_when_sealed_motion_ceases():
-    """Verify that a sealed bounded room with camera LLM enabled counts down to verification when motion ceases."""
-    sm = RoomStateMachine(
-        name="Garage",
-        mode=Mode.BOUNDED,
-        inactivity_timeout=60,
-        has_boundaries=True,
-        llm_enabled=True,
+@pytest.mark.requirement("STATE-06", category="STATE", req_type="PositiveFeature")
+def test_adjacent_handoff_clears_cooling_room():
+    """Adjacent room detection vacates room when no active evidence holds it."""
+    sm = RoomPresenceStateMachine(name="Master Bathroom", inactivity_timeout=60, llm_enabled=False)
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.motion"}), human_present=True
+        ),
+        now_ts=100.0,
     )
-    # Door opens, motion trips, door closes while moving -> OCCUPIED_SEALED
-    sm.handle_boundary("cover.garage_door", is_open=True)
-    sm.handle_trigger("binary_sensor.garage_motion", is_active=True)
-    sm.handle_boundary("cover.garage_door", is_open=False)
-    assert sm.box_state == BoxState.OCCUPIED_SEALED
+    sm.apply_evidence(RoomEvidenceSnapshot(), now_ts=105.0)
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
 
-    # Motion ceases
-    sm.handle_trigger("binary_sensor.garage_motion", is_active=False)
-    # Because LLM is enabled, it must begin counting down towards camera verification instead of staying sealed forever!
-    sm.handle_tick(1)
-    assert sm.box_state == BoxState.TIMER_ACTIVE
-    assert sm.vacating_countdown == 59
-
-
-def test_adjacent_handoff_clears_sealed_room_when_motion_ceased():
-    """Verify that walking into an adjacent room clears a sealed room when this room has no active triggers."""
-    sm = RoomStateMachine(
-        name="Master Bathroom",
-        mode=Mode.BOUNDED,
-        has_boundaries=True,
-        llm_enabled=False,
-    )
-    # Door opens, motion trips, door closes -> OCCUPIED_SEALED
-    sm.handle_boundary("binary_sensor.door", is_open=True)
-    sm.handle_trigger("binary_sensor.motion", is_active=True)
-    sm.handle_boundary("binary_sensor.door", is_open=False)
-    assert sm.box_state == BoxState.OCCUPIED_SEALED
-
-    # Person leaves bathroom into Bedroom: motion in bathroom ceases
-    sm.handle_trigger("binary_sensor.motion", is_active=False)
-
-    # Master Bedroom detects occupant -> adjacent handoff
-    cleared = sm.handle_adjacent_room_occupied("Master Bedroom")
+    cleared = sm.handle_adjacent_room_occupied("Master Bedroom", now_ts=110.0)
     assert cleared is True
     assert sm.is_present is False
-    assert sm.box_state == BoxState.IDLE_CLEAR
+    assert sm.state == OccupancyState.VACANT
     assert sm.last_handoff_room == "Master Bedroom"

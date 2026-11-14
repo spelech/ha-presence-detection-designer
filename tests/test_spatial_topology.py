@@ -17,10 +17,11 @@ from custom_components.presence_detection_designer.const import (
     CONF_ROOM_NAME,
     CONF_TRIGGER_ENTITIES,
     DOMAIN,
-    BoxState,
     Mode,
+    OccupancyState,
 )
 from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
+from custom_components.presence_detection_designer.evidence_snapshot import RoomEvidenceSnapshot
 from custom_components.presence_detection_designer.spatial_topology import (
     DEVICE_MODEL_PRESETS,
     apply_compiled_topology_to_config,
@@ -33,7 +34,7 @@ from custom_components.presence_detection_designer.spatial_topology import (
     point_in_cone,
     ray_segment_intersection,
 )
-from custom_components.presence_detection_designer.state_machine import RoomStateMachine
+from custom_components.presence_detection_designer.state_machine import RoomPresenceStateMachine
 from custom_components.presence_detection_designer.views import PDDFloorplanView
 
 
@@ -68,9 +69,8 @@ def test_zero_percent_probability_when_idle_and_timer_decay():
     assert eval_idle.probability_pct == 0.0
     assert eval_idle.is_occupied is False
 
-    sm = RoomStateMachine(
+    sm = RoomPresenceStateMachine(
         name="Living Room",
-        mode=Mode.OPEN,
         inactivity_timeout=100,
         llm_enabled=False,
         bayesian_prior=0.20,
@@ -78,7 +78,7 @@ def test_zero_percent_probability_when_idle_and_timer_decay():
     )
     assert sm.bayesian_probability_pct == 0.0
 
-    # Activate presence via Bayesian
+    # Activate presence via Bayesian snapshot
     eval_active = evaluate_bayesian(
         observations=obs,
         state_getter=lambda _eid: MagicMock(state="on", attributes={}),
@@ -86,63 +86,60 @@ def test_zero_percent_probability_when_idle_and_timer_decay():
         threshold=0.75,
     )
     assert eval_active.probability_pct > 80.0
-    sm.handle_bayesian(
-        probability=eval_active.probability,
-        probability_pct=eval_active.probability_pct,
-        is_occupied=True,
-        summary=eval_active.natural_language_summary,
-        active_observations=eval_active.active_observations,
-        inactive_observations=[],
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            bayesian_occupied=True,
+            bayesian_probability=eval_active.probability,
+            bayesian_probability_pct=eval_active.probability_pct,
+            bayesian_summary=eval_active.natural_language_summary,
+            active_observations=tuple(eval_active.active_observations),
+        ),
+        now_ts=1000.0,
     )
     assert sm.is_present is True
-    assert sm.box_state == BoxState.OCCUPIED
+    assert sm.state == OccupancyState.OCCUPIED_CONFIRMED
 
-    # Sensor clears -> starts 100s countdown timer
-    sm.handle_bayesian(
-        probability=0.0,
-        probability_pct=0.0,
-        is_occupied=False,
-        summary="Idle",
-        active_observations=[],
-        inactive_observations=eval_idle.inactive_observations,
+    # Sensor clears -> starts 100s cooling countdown
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            bayesian_occupied=False,
+            bayesian_probability=0.0,
+            bayesian_probability_pct=0.0,
+            bayesian_summary="Idle",
+            inactive_observations=tuple(eval_idle.inactive_observations),
+        ),
+        now_ts=1010.0,
     )
-    assert sm.box_state == BoxState.TIMER_ACTIVE
-    assert sm.vacating_countdown == 100
-    assert sm.bayesian_probability_pct > 0.0
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+    assert sm.cooling_remaining_sec == 100
 
-    # Tick 50s -> probability decays halfway toward 0.0%
-    sm.handle_tick(50)
-    mid_pct = sm.bayesian_probability_pct
-    assert 0.0 < mid_pct < 75.0
+    # Advance 50s -> remaining countdown halves cleanly
+    assert sm.advance_time(50.0, now_ts=1060.0) is None
+    assert sm.cooling_remaining_sec == 50
 
-    # Tick remaining 50s -> vacates to 0.0%
-    action = sm.handle_tick(50)
+    # Advance remaining 50s -> vacates to 0.0%
+    action = sm.advance_time(50.0, now_ts=1110.0)
     assert action == "VACATED"
     assert sm.is_present is False
-    assert sm.box_state == BoxState.IDLE_CLEAR
+    assert sm.state == OccupancyState.VACANT
     assert sm.bayesian_probability_pct == 0.0
 
 
-def test_open_vs_bounded_box_state_no_fake_sealed():
-    """Verify Mode.OPEN never reports BoxState.OCCUPIED_SEALED, and Mode.BOUNDED without doors does not seal."""
-    sm_open = RoomStateMachine(name="Front Entry", mode=Mode.OPEN, inactivity_timeout=60)
-    sm_open.handle_trigger("binary_sensor.entry_motion", is_active=True)
-    assert sm_open.box_state == BoxState.OCCUPIED
-
-    sm_bounded_no_doors = RoomStateMachine(
-        name="Storage Room", mode=Mode.BOUNDED, inactivity_timeout=60, has_boundaries=False
+def test_transitions_never_seals_on_closed_doors():
+    """Verify closed doors never produce legacy OCCUPIED_SEALED state (bounded cooling applies instead)."""
+    sm = RoomPresenceStateMachine(name="Master Bedroom", inactivity_timeout=60)
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.bed_person"}), human_present=True
+        ),
+        now_ts=0.0,
     )
-    sm_bounded_no_doors.handle_trigger("binary_sensor.storage_person", is_active=True)
-    assert sm_bounded_no_doors.box_state == BoxState.OCCUPIED
-
-    sm_bounded_with_door = RoomStateMachine(
-        name="Master Bedroom", mode=Mode.BOUNDED, inactivity_timeout=60
-    )
-    sm_bounded_with_door.handle_boundary("binary_sensor.master_bedroom_door", is_open=False)
-    sm_bounded_with_door.handle_trigger("binary_sensor.bed_person", is_active=True)
-    assert sm_bounded_with_door.box_state == BoxState.OCCUPIED_SEALED
+    assert sm.state == OccupancyState.OCCUPIED_CONFIRMED
+    sm.apply_evidence(RoomEvidenceSnapshot(), now_ts=5.0)
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
 
 
+@pytest.mark.requirement("STATE-06", category="STATE", req_type="PositiveFeature")
 def test_cross_room_timer_handoff(mock_hass):
     """Verify that when an adjacent connected room detects a person, a vacating timer zeros out immediately."""
     lr_cfg = {
@@ -173,31 +170,44 @@ def test_cross_room_timer_handoff(mock_hass):
         "entry_dr": dr_coord,
     }
 
-    # 1. Person detected in Living Room, then leaves Living Room zone (timer starts at 240s)
-    lr_coord.state_machine.handle_trigger("binary_sensor.lr_zone", is_active=True)
-    lr_coord.state_machine.handle_trigger("binary_sensor.lr_zone", is_active=False)
+    # 1. Person detected in Living Room, then leaves Living Room zone (cooling starts at 240s)
+    lr_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.lr_zone"}), human_present=True
+        )
+    )
+    lr_coord.state_machine.apply_evidence(RoomEvidenceSnapshot())
     assert lr_coord.state_machine.is_present is True
-    assert lr_coord.state_machine.box_state == BoxState.TIMER_ACTIVE
-    assert lr_coord.state_machine.vacating_countdown == 240
+    assert lr_coord.state_machine.state == OccupancyState.OCCUPIED_COOLING
+    assert lr_coord.state_machine.cooling_remaining_sec == 240
 
-    # 2. Person enters adjacent Dining Room -> Living Room timer immediately zeros out!
+    # 2. Person enters adjacent Dining Room -> Living Room cooling immediately clears!
     states["binary_sensor.dr_zone"].state = "on"
-    dr_coord.state_machine.handle_trigger("binary_sensor.dr_zone", is_active=True)
+    dr_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.dr_zone"}), human_present=True
+        )
+    )
     dr_coord._notify_connected_rooms_if_active()
 
-    assert lr_coord.state_machine.vacating_countdown == 0
+    assert lr_coord.state_machine.cooling_remaining_sec == 0
     assert lr_coord.state_machine.is_present is False
-    assert lr_coord.state_machine.box_state == BoxState.IDLE_CLEAR
+    assert lr_coord.state_machine.state == OccupancyState.VACANT
     assert lr_coord.state_machine.bayesian_probability_pct == 0.0
     assert lr_coord.state_machine.last_handoff_room == "Dining Room"
 
     # 3. Multi-person safety: if Living Room still has an active sensor, adjacent room does NOT vacate it
-    lr_coord.state_machine.handle_trigger("binary_sensor.lr_zone", is_active=True)
+    lr_coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.lr_zone"}), human_present=True
+        )
+    )
     assert lr_coord.state_machine.is_present is True
     assert lr_coord.notify_adjacent_occupancy("Dining Room") is False
     assert lr_coord.state_machine.is_present is True
 
 
+@pytest.mark.requirement("SPATIAL-01", category="SPATIAL", req_type="PositiveFeature")
 def test_spatial_topology_compiler_and_apply():
     """Test 2D floorplan geometry, camera cone overlap, topology compilation, and config application."""
     assert point_in_cone(100, 50, 50, 50, 0, 90, 100) is True
@@ -578,5 +588,8 @@ def test_ikea_vallhorn_and_wyze_sense_presets_and_dual_lobe_raycast():
     assert "binary_sensor.motion_detector_basement1" not in sensors_by_id
     assert "binary_sensor.laundry_room_ring_motion" in sensors_by_id
     assert sensors_by_id["binary_sensor.laundry_room_ring_motion"]["host_room"] == "Laundry Room"
-    assert sensors_by_id["binary_sensor.laundry_room_ring_motion"]["model_preset"] == "ring_alarm_pir_gen2"
+    assert (
+        sensors_by_id["binary_sensor.laundry_room_ring_motion"]["model_preset"]
+        == "ring_alarm_pir_gen2"
+    )
     assert "sonoff_snzb_03pr2" in DEVICE_MODEL_PRESETS

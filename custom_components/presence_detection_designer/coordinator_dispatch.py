@@ -1,4 +1,4 @@
-"""Cross-room handoff notifications, transition event bus firing, and timeline recording for RoomPresenceCoordinator."""
+"""Cross-room handoff notifications, transition event bus firing, and evidence dispatch."""
 
 from __future__ import annotations
 
@@ -11,7 +11,12 @@ from .const import (
     DATA_STORE,
     DOMAIN,
     EVENT_PRESENCE_TRANSITION,
-    BoxState,
+    OccupancyState,
+)
+from .coordinator_helpers import (
+    _safe_state_getter,
+    build_coordinator_evidence_snapshot,
+    sync_coordinator_evidence,
 )
 from .trajectory_validator import (
     async_send_coordinator_test_notification,
@@ -23,23 +28,15 @@ from .trajectory_validator import (
 __all__ = [
     "_safe_state_getter",
     "async_send_coordinator_test_notification",
+    "build_coordinator_evidence_snapshot",
     "dispatch_presence_transition",
     "evaluate_coordinator_bayesian",
     "notify_connected_rooms_if_active",
     "process_coordinator_trigger_event",
     "record_coordinator_timeline_snapshot",
     "resolve_global_llm_defaults",
+    "sync_coordinator_evidence",
 ]
-
-
-def _safe_state_getter(hass: Any, entity_id: str) -> Any:
-    """Return HA state object only if its `.state` attribute is a concrete string."""
-    if not hass or not hasattr(hass, "states"):
-        return None
-    state_obj = hass.states.get(entity_id)
-    if state_obj is None or not isinstance(getattr(state_obj, "state", None), str):
-        return None
-    return state_obj
 
 
 def dispatch_presence_transition(coord: Any) -> None:
@@ -56,11 +53,6 @@ def dispatch_presence_transition(coord: Any) -> None:
     duration_sec: float | None = None
     if to_state == "occupied":
         coord._occupied_start_time = now_ts
-        from .house_perimeter import get_house_perimeter_tracker
-
-        get_house_perimeter_tracker(coord.hass).enforce_conservation_law(
-            newly_occupied_room=coord.room_name
-        )
     else:
         if coord._occupied_start_time is not None:
             duration_sec = now_ts - coord._occupied_start_time
@@ -81,7 +73,8 @@ def dispatch_presence_transition(coord: Any) -> None:
                     "presence": curr_presence,
                     "from_state": from_state,
                     "to_state": to_state,
-                    "box_state": coord.state_machine.box_state,
+                    "occupancy_state": str(coord.state_machine.state),
+                    "transition_reason": coord.state_machine.last_transition_reason,
                     "bayesian_probability": coord.state_machine.bayesian_probability,
                     "bayesian_probability_pct": coord.state_machine.bayesian_probability_pct,
                     "occupant_type": est.get("occupant_type", "human" if curr_presence else "none"),
@@ -132,6 +125,7 @@ def dispatch_presence_transition(coord: Any) -> None:
         else [],
         "active_sustaining_conditions": coord.state_machine.active_conditions,
         "driver_entity": coord.state_machine.last_trigger_entity,
+        "transition_reason": coord.state_machine.last_transition_reason,
     }
     if coord.last_bayesian_eval:
         curr_eval["probability"] = coord.last_bayesian_eval.probability
@@ -191,10 +185,9 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
         return
     if coord._is_guest_mode_active():
         return
-    if not coord.state_machine.is_present or coord.state_machine.box_state not in (
-        BoxState.OCCUPIED,
-        BoxState.OCCUPIED_SEALED,
-        BoxState.OCCUPIED_UNSEALED,
+    if not coord.state_machine.is_present or coord.state_machine.state not in (
+        OccupancyState.OCCUPIED_CONFIRMED,
+        OccupancyState.OCCUPIED_HOLDING,
     ):
         return
 
@@ -258,7 +251,7 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
         coord.entry_id,
         {
             "is_present": coord.state_machine.is_present,
-            "box_state": str(coord.state_machine.box_state),
+            "occupancy_state": str(coord.state_machine.state),
             "probability_pct": coord.state_machine.bayesian_probability_pct,
             "entity_states": entity_states,
         },
@@ -327,38 +320,30 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         coord.last_spatial_estimate = None
 
     sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
-    shade_excluded_eids = (
-        set(sp.get("shade_sunlight_excluded_entities") or []) if neg_space_enabled else set()
+    shade_excluded_eids = set(sp.get("shade_sunlight_excluded_entities") or []) | set(
+        sp.get("pet_excluded_entities") or []
     )
-    pet_excluded_eids = set(sp.get("pet_excluded_entities") or [])
-    tracker = getattr(coord, "actuation_tracker", None)
-    auto_latched_eids = set(tracker.automated_entities_on) if tracker is not None else set()
-    suppressed_eids = shade_excluded_eids | pet_excluded_eids | auto_latched_eids
-
     obs_to_eval = list(coord.bayesian_observations)
-    virtual_neg_space_eid = "__spatial_negative_space__"
-    has_neg_space_boost = bool(
-        neg_space_enabled
-        and isinstance(coord.last_spatial_estimate, dict)
-        and float(coord.last_spatial_estimate.get("probability_boost", 0.0)) > 0.0
-    )
-    if has_neg_space_boost and coord.last_spatial_estimate:
+    virtual_neg_eid = "__spatial_negative_space__"
+    has_neg_boost = False
+    if neg_space_enabled and sp and float(sp.get("probability_boost", 0.0)) > 0.0:
+        has_neg_boost = True
         obs_to_eval.append(
             {
-                "entity_id": virtual_neg_space_eid,
+                "entity_id": virtual_neg_eid,
                 "prob_given_true": 0.85,
                 "prob_given_false": 0.12,
                 "target_state": "on",
-                "label": coord.last_spatial_estimate.get("inferred_subregion")
-                or "Negative-Space Spatial Exclusion",
+                "label": sp.get("inferred_subregion") or "Negative-Space Spatial Exclusion",
             }
         )
 
-    virtual_manual_eid = "__manual_human_actuation__"
+    virtual_manual_eid = "__manual_actuation_context__"
     has_manual_boost = False
+    tracker = getattr(coord, "actuation_tracker", None)
     if (
         tracker is not None
-        and tracker.manual_intent == "manual_on"
+        and getattr(tracker, "manual_intent", "auto") == "manual_on"
         and tracker.last_manual_ts is not None
         and (time.time() - tracker.last_manual_ts)
         <= float(getattr(coord.state_machine, "inactivity_timeout", 300))
@@ -374,6 +359,13 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
             }
         )
 
+    suppressed_eids = set(shade_excluded_eids)
+    if tracker is not None:
+        for obs in obs_to_eval:
+            eid = obs.get("entity_id")
+            if eid and tracker.is_entity_auto_latched(str(eid)):
+                suppressed_eids.add(str(eid))
+
     class _VirtualState:
         state = "on"
 
@@ -382,7 +374,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         attributes: dict[str, Any] = {}
 
     def _bayesian_state_getter(eid: str) -> Any:
-        if eid == virtual_neg_space_eid and has_neg_space_boost:
+        if eid == virtual_neg_eid and has_neg_boost:
             return _VirtualState()
         if eid == virtual_manual_eid and has_manual_boost:
             return _VirtualState()
@@ -410,21 +402,10 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         if not check_coordinator_trajectory(coord, now_ts=time.time()).is_valid:
             should_trigger_sm = False
 
-    coord.state_machine.handle_bayesian(
-        probability=evaluation.probability,
-        probability_pct=evaluation.probability_pct,
-        is_occupied=evaluation.is_occupied,
-        summary=evaluation.natural_language_summary,
-        active_observations=evaluation.active_observations,
-        inactive_observations=evaluation.inactive_observations,
-        trigger_state_machine=should_trigger_sm,
-    )
+    coord._bayesian_drives_occupancy = bool(should_trigger_sm)
+    sync_coordinator_evidence(coord, trigger_bayesian=should_trigger_sm, now_ts=now_ts)
     record_coordinator_timeline_snapshot(coord)
-    if (
-        evaluation.is_occupied
-        and (coord.has_explicit_bayesian or has_manual_boost)
-        and not guest_mode_enabled
-    ):
+    if evaluation.is_occupied and should_trigger_sm and not guest_mode_enabled:
         notify_connected_rooms_if_active(coord)
     return evaluation
 
@@ -456,7 +437,7 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
             spatial_frame = getattr(coord, "_last_spatial_frame", None) or {}
             pinned_rooms = spatial_frame.get("steve_pinned_rooms") or []
             if pinned_rooms and coord.room_name not in pinned_rooms:
-                if not b_occupied and not coord.state_machine.active_conditions:
+                if not b_occupied and not coord._active_condition_descs:
                     return
 
             traj = check_coordinator_trajectory(coord, now_ts=now)
@@ -470,7 +451,13 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     if not is_active and getattr(coord, "_settling_entity", None) == entity_id:
         coord._settling_entity = None
 
-    coord.state_machine.handle_trigger(entity_id, is_active)
+    if is_active:
+        coord._active_triggers.add(str(entity_id))
+        coord._last_trigger_entity = str(entity_id)
+    else:
+        coord._active_triggers.discard(str(entity_id))
+
+    sync_coordinator_evidence(coord)
     if is_active:
         coord._notify_connected_rooms_if_active()
     coord.async_update_listeners()

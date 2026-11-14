@@ -17,6 +17,7 @@ from custom_components.presence_detection_designer.const import (
     DOMAIN,
 )
 from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
+from custom_components.presence_detection_designer.evidence_snapshot import RoomEvidenceSnapshot
 
 
 @pytest.fixture
@@ -39,6 +40,7 @@ def mock_hass() -> MagicMock:
 
 
 @pytest.mark.asyncio
+@pytest.mark.requirement("NOTIFY-01", category="NOTIFY", req_type="PositiveFeature")
 async def test_coordinator_dispatches_notification_on_occupied(mock_hass: MagicMock) -> None:
     config = {
         CONF_ROOM_NAME: "Living Room",
@@ -57,7 +59,13 @@ async def test_coordinator_dispatches_notification_on_occupied(mock_hass: MagicM
     mock_hass.states.get.side_effect = lambda eid: (
         MagicMock(state="on") if eid == "binary_sensor.living_room_motion" else None
     )
-    coord.state_machine.handle_trigger("binary_sensor.living_room_motion", True)
+    coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.living_room_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.living_room_motion",
+        )
+    )
     coord.async_update_listeners()
 
     # Verify task created
@@ -78,7 +86,13 @@ async def test_coordinator_skips_notification_when_disabled(mock_hass: MagicMock
     coord = RoomPresenceCoordinator(mock_hass, "guest_room", config)
     coord._notification_dispatcher.async_dispatch_notification = AsyncMock()
 
-    coord.state_machine.handle_trigger("binary_sensor.guest_motion", True)
+    coord.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.guest_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.guest_motion",
+        )
+    )
     coord.async_update_listeners()
 
     # Dispatcher should not be called because notify_slack is False

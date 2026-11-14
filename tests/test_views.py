@@ -19,8 +19,8 @@ from custom_components.presence_detection_designer.const import (
     CONF_TRIGGER_ENTITIES,
     DOMAIN,
     BayesianWeightPreset,
-    BoxState,
     Mode,
+    OccupancyState,
 )
 from custom_components.presence_detection_designer.coordinator import (
     RoomPresenceCoordinator,
@@ -33,6 +33,7 @@ from custom_components.presence_detection_designer.views import (
     PDDRoomActionView,
     PDDRoomConfigView,
     PDDRoomRollbackView,
+    PDDStateGraphView,
     PDDTranslateView,
     async_apply_and_persist_room_config,
     async_register_views,
@@ -147,15 +148,15 @@ async def test_hot_apply_preserves_occupancy_state(mock_hass):
     coord = RoomPresenceCoordinator(mock_hass, "entry_mb", initial_cfg)
     await coord.async_setup()
 
-    # Room is occupied & sealed because bed_zone is 'on' and door is 'off'
+    # Room is occupied_confirmed because bed_zone is 'on'
     assert coord.state_machine.is_present is True
-    assert coord.state_machine.box_state == BoxState.OCCUPIED_SEALED
+    assert coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
 
-    # Now sensor turns off while person is sleeping inside sealed room
+    # Now sensor turns off -> room enters bounded occupied_cooling (not stuck OCCUPIED_SEALED)
     st_bed.state = "off"
     coord.async_refresh_all_states()
     assert coord.state_machine.is_present is True
-    assert coord.state_machine.box_state == BoxState.OCCUPIED_SEALED
+    assert coord.state_machine.state == OccupancyState.OCCUPIED_COOLING
 
     # Hot-apply a new configuration (e.g. changing timeout and threshold) in-place
     new_cfg = {
@@ -165,9 +166,9 @@ async def test_hot_apply_preserves_occupancy_state(mock_hass):
     }
     await coord.async_apply_config_in_place(new_cfg)
 
-    # Active sealed occupancy is preserved without requiring a reload or re-trigger!
+    # Active cooling occupancy is preserved without requiring a reload or re-trigger!
     assert coord.state_machine.is_present is True
-    assert coord.state_machine.box_state == BoxState.OCCUPIED_SEALED
+    assert coord.state_machine.state == OccupancyState.OCCUPIED_COOLING
     assert coord.bayesian_threshold == 0.78
     assert coord.state_machine.inactivity_timeout == 600
 
@@ -188,7 +189,7 @@ async def test_views_end_to_end(mock_hass):
     )
     mock_hass.http = MagicMock()
     async_register_views(mock_hass)
-    assert mock_hass.http.register_view.call_count == 13
+    assert mock_hass.http.register_view.call_count == 14
 
     coord = RoomPresenceCoordinator(
         mock_hass,
@@ -212,6 +213,8 @@ async def test_views_end_to_end(mock_hass):
     assert data["rooms"][0]["room_name"] == "Office"
     assert data["rooms"][0]["is_present"] is True
     assert "decisive" in data["presets"]
+    assert data["rooms"][0]["occupancy_state"] == "occupied_confirmed"
+    assert "stateDiagram" in data["rooms"][0]["mermaid_diagram"]
 
     # 2. RoomConfig view (save update and create revision)
     cfg_view = PDDRoomConfigView()
@@ -453,3 +456,33 @@ async def test_timeline_reconstruction_view(mock_hass):
     status_off, res_off = _unpack(await view.get(req_off))
     assert status_off == 200
     assert res_off["negative_space_enabled"] is False
+
+
+@pytest.mark.requirement("UI-01", category="UI", req_type="PositiveFeature")
+@pytest.mark.anyio
+async def test_state_graph_view_returns_mermaid_and_history(mock_hass):
+    """@requirement UI-01: State graph endpoint returns live Mermaid diagram and transition audit feed."""
+    mock_hass.states.get = MagicMock(return_value=MagicMock(state="on", attributes={}))
+    coord = RoomPresenceCoordinator(
+        mock_hass,
+        "entry_sg",
+        {
+            CONF_ROOM_NAME: "Kitchen",
+            CONF_MODE: str(Mode.OPEN),
+            CONF_TRIGGER_ENTITIES: ["binary_sensor.kitchen_motion"],
+        },
+    )
+    await coord.async_setup()
+    mock_hass.data.setdefault(DOMAIN, {})["entry_sg"] = coord
+
+    view = PDDStateGraphView()
+    req = _make_request(mock_hass)
+    req.query = {}
+    status, body = _unpack(await view.get(req))
+    assert status == 200
+    assert len(body["rooms"]) == 1
+    room = body["rooms"][0]
+    assert room["occupancy_state"] == OccupancyState.OCCUPIED_CONFIRMED
+    assert "stateDiagram" in room["mermaid_diagram"]
+    assert isinstance(room["transition_history"], list)
+    assert len(room["transition_history"]) >= 1
