@@ -702,6 +702,21 @@ def test_panel_js_responsive_and_state_chart_strip():
         "View State Chart",
         "set panel(panel)",
         "_panelVersion",
+        'this._floorplanMode = "devices"',
+        "this._roomsLocked = true",
+        "btn-fp-mode-devices",
+        "btn-fp-lock-rooms",
+        "btn-fp-undo",
+        "btn-fp-redo",
+        "btn-fp-reset-rooms",
+        "btn-fp-reset-selected-room",
+        "_transformSvgPath",
+        "_updateFloorplanCanvasInPlace",
+        "_buildLosAndConeHandlesSvg",
+        "fp-controls-layer",
+        "fp-hit-target",
+        "fp-quick-bar",
+        "fp-live-hud",
     ):
         assert tok in panel_js, f"Missing UI layout/state-chart token {tok!r}"
 
@@ -810,3 +825,223 @@ def test_coordinator_timer_hook_uses_ha_callback(monkeypatch):
     coord.state_machine._timer_scheduler(1.0, lambda: None)
     assert len(captured) == 1
     assert is_callback(captured[0]) is True
+@pytest.mark.requirement("UI-03", category="UI", req_type="PositiveFeature")
+def test_panel_js_floorplan_pointer_ux():
+    """@requirement UI-03: Floorplan defaults to device editing with locked rooms, dead-zone, smooth PIR/camera LOS handles, polygon preservation, and undo/reset."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("node executable not available for JS behavioral verification")
+
+    repo_root = Path(__file__).resolve().parent.parent
+    panel_path = (
+        repo_root / "custom_components" / "presence_detection_designer" / "static" / "panel.js"
+    )
+    js_test = r"""
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const src = fs.readFileSync(process.argv[1], "utf8");
+
+function makeElement(tag = "div") {
+  return {
+    tagName: tag.toUpperCase(),
+    attributes: {},
+    listeners: {},
+    children: [],
+    style: {},
+    value: "",
+    innerHTML: "",
+    classList: { contains: () => false, add: () => {}, remove: () => {} },
+    setAttribute(k, v) { this.attributes[k] = String(v); },
+    getAttribute(k) { return this.attributes[k] ?? null; },
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    closest() { return null; },
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    hasPointerCapture() { return false; },
+    getScreenCTM() { return { inverse: () => ({}) }; },
+  };
+}
+
+class FakeHTMLElement {
+  constructor() {
+    this.shadowRoot = makeElement("shadow-root");
+  }
+  attachShadow() { return this.shadowRoot; }
+}
+
+const defined = {};
+const sandbox = {
+  HTMLElement: FakeHTMLElement,
+  customElements: { define(n, c) { defined[n] = c; }, get(n) { return defined[n]; } },
+  document: {
+    createElement: (t) => makeElement(t),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    activeElement: null,
+  },
+  window: { addEventListener: () => {}, removeEventListener: () => {} },
+  localStorage: { _m: {}, getItem(k) { return this._m[k] || null; }, setItem(k, v) { this._m[k] = String(v); } },
+  requestAnimationFrame: (fn) => { fn(); return 1; },
+  cancelAnimationFrame: () => {},
+  ResizeObserver: class { observe() {} disconnect() {} },
+  console,
+  setTimeout,
+  clearTimeout,
+  Math,
+  JSON,
+  Number,
+  String,
+  Array,
+  Object,
+  Map,
+  Set,
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(src, sandbox);
+
+const PanelClass = defined["presence-detection-designer-panel"];
+assert(PanelClass, "Panel custom element should register");
+
+const panel = new PanelClass();
+assert.strictEqual(panel._floorplanMode, "devices");
+assert.strictEqual(panel._roomsLocked, true);
+
+panel._floorplan = panel._loadLocalOrDefaultFloorplan();
+panel._compiledTopology = panel._compileFloorplanClient(panel._floorplan);
+panel._studioView = "floorplan";
+panel._selectedFloorId = "main";
+panel._hass = {
+  callApi: async () => ({ status: "ok" }),
+  states: {},
+};
+
+const svgCanvas = makeElement("svg");
+svgCanvas.id = "fp-svg-canvas";
+svgCanvas.createSVGPoint = () => ({ x: 0, y: 0, matrixTransform: function() { return { x: this.x, y: this.y }; } });
+svgCanvas.getScreenCTM = () => ({ inverse: () => ({}) });
+
+const hudEl = makeElement("div");
+const saveEl = makeElement("span");
+const rootSelectors = {
+  "#fp-svg-canvas": svgCanvas,
+  "#fp-live-hud": hudEl,
+  "#fp-save-state": saveEl,
+};
+panel.shadowRoot.querySelector = (sel) => rootSelectors[sel] || null;
+panel.shadowRoot.querySelectorAll = () => [];
+panel.render = () => {};
+
+// Wire pointer handlers on fake svgCanvas via _attachListeners slice or direct setup:
+// Re-run _attachListeners with guarded root queries so all canvas pointer listeners attach.
+panel._bindEvents();
+
+const lRoom = panel._floorplan.rooms.find((r) => r.svg_path && (r.floor || "main") === "main");
+assert(lRoom, "Default floorplan should include L-shaped svg_path room");
+const origRoomX = lRoom.x;
+const origRoomY = lRoom.y;
+const origSvgPath = lRoom.svg_path;
+
+// 1. Clicking/dragging a room in default 'devices' mode must NOT grab or move the room.
+const fakeRoomTarget = {
+  closest(sel) {
+    if (sel === ".fp-room-box") return { getAttribute: (k) => (k === "data-room-name" ? (lRoom.name || lRoom.room_name) : null) };
+    return null;
+  },
+};
+const fire = (type, props) => {
+  for (const fn of (svgCanvas.listeners[type] || [])) {
+    fn({ preventDefault() {}, stopPropagation() {}, pointerId: 1, shiftKey: false, ...props });
+  }
+};
+fire("pointerdown", { clientX: origRoomX + 20, clientY: origRoomY + 20, target: fakeRoomTarget });
+fire("pointermove", { clientX: origRoomX + 60, clientY: origRoomY + 60, target: fakeRoomTarget });
+fire("pointerup", { clientX: origRoomX + 60, clientY: origRoomY + 60, target: fakeRoomTarget });
+assert.strictEqual(lRoom.x, origRoomX, "Room X must stay unchanged in devices mode");
+assert.strictEqual(lRoom.y, origRoomY, "Room Y must stay unchanged in devices mode");
+assert.strictEqual(panel._fpUndoStack.length, 0, "No undo pushed when room is protected");
+
+// 2. Micro-movement (< 4px dead-zone) on PIR origin must NOT mutate coordinates or push undo.
+const pir = panel._floorplan.sensors.find((s) => s.sensor_type !== "door_contact");
+assert(pir, "Default floorplan should contain a PIR sensor");
+const origPirX = pir.x;
+const origPirY = pir.y;
+const origPirRange = pir.range_px || 180;
+const fakePirOrigin = {
+  closest(sel) {
+    if (sel === ".fp-sensor-origin") return { getAttribute: (k) => (k === "data-sensor-id" ? pir.id : null) };
+    return null;
+  },
+};
+fire("pointerdown", { clientX: origPirX, clientY: origPirY, target: fakePirOrigin });
+fire("pointermove", { clientX: origPirX + 2, clientY: origPirY + 2, target: fakePirOrigin });
+fire("pointerup", { clientX: origPirX + 2, clientY: origPirY + 2, target: fakePirOrigin });
+assert.strictEqual(pir.x, origPirX);
+assert.strictEqual(pir.y, origPirY);
+assert.strictEqual(panel._fpUndoStack.length, 0, "Dead-zone click must not push undo");
+
+// 3. Dragging PIR heading handle rotates LOS without clobbering range_px.
+const fakePirHeading = {
+  closest(sel) {
+    if (sel === ".fp-sensor-handle") {
+      return {
+        getAttribute: (k) => (k === "data-handle" ? "heading" : k === "data-sensor-id" ? pir.id : null),
+      };
+    }
+    return null;
+  },
+};
+fire("pointerdown", { clientX: origPirX + 45, clientY: origPirY, target: fakePirHeading });
+fire("pointermove", { clientX: origPirX, clientY: origPirY - 45, target: fakePirHeading });
+fire("pointerup", { clientX: origPirX, clientY: origPirY - 45, target: fakePirHeading });
+assert.strictEqual(pir.heading_deg, 270, "Dragging directly up from PIR should aim 270 deg");
+assert.strictEqual(pir.range_px || 180, origPirRange, "Heading drag must NOT collapse PIR range_px");
+assert.strictEqual(panel._fpUndoStack.length, 1);
+
+// 4. Dragging unlocked room in 'rooms' mode preserves svg_path, and _resetFloorplanRooms(true) restores exact room while keeping PIR aim.
+panel._floorplanMode = "rooms";
+panel._roomsLocked = false;
+fire("pointerdown", { clientX: origRoomX + 20, clientY: origRoomY + 20, target: fakeRoomTarget });
+fire("pointermove", { clientX: origRoomX + 40, clientY: origRoomY + 50, target: fakeRoomTarget });
+fire("pointerup", { clientX: origRoomX + 40, clientY: origRoomY + 50, target: fakeRoomTarget });
+assert.notStrictEqual(lRoom.x, origRoomX);
+assert(lRoom.svg_path && lRoom.svg_path.length > 0, "Moving room must preserve svg_path polygon");
+assert.notStrictEqual(lRoom.svg_path, origSvgPath, "Moving room must translate svg_path coordinates");
+
+panel._resetFloorplanRooms(true);
+const restoredRoom = panel._floorplan.rooms.find((r) => (r.name || r.room_name) === (lRoom.name || lRoom.room_name));
+assert.strictEqual(restoredRoom.x, origRoomX);
+assert.strictEqual(restoredRoom.y, origRoomY);
+assert.strictEqual(restoredRoom.svg_path, origSvgPath);
+assert.strictEqual(
+  panel._floorplan.sensors.find((s) => s.id === pir.id).heading_deg,
+  270,
+  "Restoring rooms must keep sensor edits intact"
+);
+
+// 5. Undo/redo round-trip works cleanly.
+panel._undoFp();
+assert.notStrictEqual(
+  panel._floorplan.rooms.find((r) => (r.name || r.room_name) === (lRoom.name || lRoom.room_name)).x,
+  origRoomX
+);
+panel._redoFp();
+assert.strictEqual(
+  panel._floorplan.rooms.find((r) => (r.name || r.room_name) === (lRoom.name || lRoom.room_name)).x,
+  origRoomX
+);
+"""
+    proc = subprocess.run(
+        [node_bin, "-e", js_test, str(panel_path)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, f"Node floorplan UX test failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
