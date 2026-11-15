@@ -79,6 +79,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "ble_decider_enabled": DEFAULT_BLE_DECIDER_ENABLED,
     "pir_validation_enabled": DEFAULT_PIR_VALIDATION_ENABLED,
     "pir_candidate_window": DEFAULT_PIR_CANDIDATE_WINDOW,
+    "ui_advanced_mode": False,
     "transit_window_sec": 90.0,
     "settling_window_sec": 2.0,
     "house_occupant_count": 1,
@@ -290,13 +291,18 @@ class PDDStore:
             "negative_space_enabled",
             "guest_mode_enabled",
             "ble_decider_enabled",
+            "pir_validation_enabled",
             "slack_daily_thread",
             "slack_notify_transitions",
             "include_camera_snapshot",
             "enable_conservation_law",
+            "ui_advanced_mode",
         ):
             if bkey in updates and updates[bkey] is not None:
                 gs[bkey] = bool(updates[bkey])
+
+        if "pir_candidate_window" in updates and updates["pir_candidate_window"] is not None:
+            gs["pir_candidate_window"] = max(3, int(float(updates["pir_candidate_window"])))
 
         if "house_occupant_count" in updates and updates["house_occupant_count"] is not None:
             gs["house_occupant_count"] = max(0, int(updates["house_occupant_count"]))

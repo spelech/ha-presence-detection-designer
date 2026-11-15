@@ -681,7 +681,7 @@ def test_panel_js_ui_contracts():
 
 @pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
 def test_panel_js_responsive_and_state_chart_strip():
-    """@requirement UI-02: panel.js includes intermediate header wrap, version badge, and state chart strip."""
+    """@requirement UI-02: panel.js includes container-query HA-sidebar layout, floorplan layers/legend, badge strip, and multipane settings."""
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -690,13 +690,51 @@ def test_panel_js_responsive_and_state_chart_strip():
     ).read_text(encoding="utf-8")
 
     for tok in (
-        "@media (max-width: 1430px)",
+        "@container pdd (max-width: 1460px)",
+        "ResizeObserver",
+        ".room-badge-strip",
+        ".fp-layer-bar",
+        ".fp-legend-panel",
+        ".settings-nav",
+        "#gl-ui-advanced-mode",
+        "gl-ui-advanced-mode",
         ".sm-lifecycle-strip",
         "View State Chart",
         "set panel(panel)",
         "_panelVersion",
     ):
         assert tok in panel_js, f"Missing UI layout/state-chart token {tok!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
+async def test_store_global_settings_persists_ui_advanced_and_pir_gate(mock_hass):
+    """@requirement UI-02: GlobalSettings view and PDDStore persist ui_advanced_mode, pir_validation_enabled, and clamped pir_candidate_window."""
+    from custom_components.presence_detection_designer.store import async_get_store
+
+    store = await async_get_store(mock_hass)
+    assert store.global_settings["ui_advanced_mode"] is False
+
+    gs_view = PDDGlobalSettingsView()
+    status, gs_res = _unpack(
+        await gs_view.post(
+            _make_request(
+                mock_hass,
+                {
+                    "ui_advanced_mode": True,
+                    "pir_validation_enabled": False,
+                    "pir_candidate_window": 1,
+                },
+            )
+        )
+    )
+    assert status == 200
+    assert gs_res["global_settings"]["ui_advanced_mode"] is True
+    assert gs_res["global_settings"]["pir_validation_enabled"] is False
+    assert gs_res["global_settings"]["pir_candidate_window"] == 3
+    assert store.global_settings["ui_advanced_mode"] is True
+    assert store.global_settings["pir_validation_enabled"] is False
+    assert store.global_settings["pir_candidate_window"] == 3
 
 
 @pytest.mark.asyncio
