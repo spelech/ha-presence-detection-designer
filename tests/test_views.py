@@ -677,3 +677,98 @@ def test_panel_js_ui_contracts():
         "Solo sensors crossing score/hold threshold",
     ):
         assert required_id in panel_js, f"Missing UI contract token {required_id!r} in panel.js"
+
+
+@pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
+def test_panel_js_responsive_and_state_chart_strip():
+    """@requirement UI-02: panel.js includes intermediate header wrap, version badge, and state chart strip."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    panel_js = (
+        repo_root / "custom_components" / "presence_detection_designer" / "static" / "panel.js"
+    ).read_text(encoding="utf-8")
+
+    for tok in (
+        "@media (max-width: 1430px)",
+        ".sm-lifecycle-strip",
+        "View State Chart",
+        "set panel(panel)",
+        "_panelVersion",
+    ):
+        assert tok in panel_js, f"Missing UI layout/state-chart token {tok!r}"
+
+
+@pytest.mark.asyncio
+async def test_ensure_panel_and_views_registers_static_alias_and_serializes(monkeypatch):
+    """_async_ensure_panel_and_views registers both static paths and serializes concurrent calls."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from custom_components.presence_detection_designer import _async_ensure_panel_and_views
+
+    registered_paths = []
+    view_calls = 0
+
+    class FakeHttp:
+        async def async_register_static_paths(self, configs):
+            await asyncio.sleep(0.01)
+            registered_paths.extend(c.url_path for c in configs)
+
+    hass = SimpleNamespace(
+        data={},
+        http=FakeHttp(),
+        config=SimpleNamespace(path=lambda p: f"/tmp/{p}"),
+    )
+
+    def fake_register_views(_hass):
+        nonlocal view_calls
+        view_calls += 1
+
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer.async_register_views",
+        fake_register_views,
+    )
+
+    await asyncio.gather(
+        _async_ensure_panel_and_views(hass),
+        _async_ensure_panel_and_views(hass),
+        _async_ensure_panel_and_views(hass),
+    )
+
+    assert "/presence_detection_designer/static" in registered_paths
+    assert "/presence_detection_designer_static" in registered_paths
+    assert registered_paths.count("/presence_detection_designer/static") == 1
+    assert view_calls == 1
+
+
+def test_coordinator_timer_hook_uses_ha_callback(monkeypatch):
+    """RoomPresenceCoordinator._attach_ha_timer_hooks decorates async_call_later callback with @callback."""
+    from types import SimpleNamespace
+
+    from homeassistant.core import is_callback
+
+    from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
+
+    captured = []
+
+    def fake_async_call_later(_hass, _delay, action):
+        captured.append(action)
+        return lambda: None
+
+    monkeypatch.setattr(
+        "homeassistant.helpers.event.async_call_later",
+        fake_async_call_later,
+    )
+
+    hass = SimpleNamespace(loop=object(), data={}, states=None)
+    coord = RoomPresenceCoordinator(
+        hass,
+        "entry_cb_1",
+        {"room_name": "Callback Room", "trigger_entities": []},
+    )
+    coord._attach_ha_timer_hooks()
+    assert coord.state_machine._timer_scheduler is not None
+    coord.state_machine._timer_scheduler(1.0, lambda: None)
+    assert len(captured) == 1
+    assert is_callback(captured[0]) is True

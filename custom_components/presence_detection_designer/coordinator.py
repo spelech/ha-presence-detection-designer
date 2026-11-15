@@ -139,7 +139,11 @@ class RoomPresenceCoordinator:
                 return
 
             def _schedule(delay: float, cb: Callable[[], None]) -> Callable[[], None]:
-                return async_call_later(self.hass, delay, lambda _now: cb())
+                @callback
+                def _timer_cb(_now: Any) -> None:
+                    cb()
+
+                return async_call_later(self.hass, delay, _timer_cb)
 
             def _on_expired(expired_trigger: str) -> None:
                 if (
