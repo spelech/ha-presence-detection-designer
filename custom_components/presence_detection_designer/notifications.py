@@ -86,45 +86,23 @@ class NotificationDispatcher:
         hass: Any,
         channel: str,
     ) -> str:
-        """Ensure target Slack channel exists; create it via conversations.create if missing."""
+        """Ensure target Slack channel exists; share verification across coordinators."""
         clean_name = channel.lstrip("#").strip().lower()
-        if not clean_name or clean_name in self._verified_channels:
-            return channel
-
         mgr = get_slack_daily_thread_manager(hass)
-        token = mgr.get_slack_token(hass)
-        if not token or not hasattr(hass, "async_add_executor_job"):
+        if (
+            not clean_name
+            or clean_name in self._verified_channels
+            or clean_name in mgr._verified_channels
+        ):
             return channel
-
-        try:
-            list_res = await hass.async_add_executor_job(
-                self._call_slack_web_api,
-                "https://slack.com/api/conversations.list?types=public_channel,private_channel&limit=200",
-                token,
-                None,
-            )
-            if isinstance(list_res, dict) and list_res.get("ok"):
-                existing = {
-                    str(ch.get("name", "")).lower(): ch
-                    for ch in (list_res.get("channels") or [])
-                    if isinstance(ch, dict)
-                }
-                if clean_name in existing:
-                    self._verified_channels.add(clean_name)
-                    return channel
-
-                create_res = await hass.async_add_executor_job(
-                    self._call_slack_web_api,
-                    "https://slack.com/api/conversations.create",
-                    token,
-                    {"name": clean_name, "is_private": False},
-                )
-                if isinstance(create_res, dict) and create_res.get("ok"):
-                    _LOGGER.info("Auto-created missing Slack channel #%s", clean_name)
-                    self._verified_channels.add(clean_name)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Slack channel auto-provisioning skipped for %s: %s", channel, err)
-
+        token = mgr.get_slack_token(hass)
+        if not token:
+            return channel
+        await mgr.async_ensure_slack_channel(
+            hass, channel, token, call_api_fn=self._call_slack_web_api
+        )
+        if clean_name in mgr._verified_channels:
+            self._verified_channels.add(clean_name)
         return channel
 
     def resolve_transition_driver(
@@ -435,8 +413,13 @@ class NotificationDispatcher:
                 _schedule_digest_update()
                 return True
 
-        if not notify_trans and not use_threads:
-            return True
+        explicitly_muted = room_config.get("slack_notify_transitions") is False or (
+            room_config.get("slack_notify_transitions") is None
+            and "slack_notify_transitions" in global_settings
+            and not global_settings.get("slack_notify_transitions")
+        )
+        if not notify_trans and (not use_threads or (explicitly_muted and token)):
+            return not (use_threads and explicitly_muted and token)
 
         # Fallback delivery: standard HA notify service
         service_data: dict[str, Any] = {
@@ -472,17 +455,8 @@ class NotificationDispatcher:
                 notify_service_full,
                 thread_ts,
             )
-            if use_threads and token and thread_ts and hasattr(hass, "async_create_task"):
-                coro = mgr.async_update_daily_digest(
-                    hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
-                )
-                hass.async_create_task(coro)
-                if (
-                    type(hass.async_create_task).__name__ == "MagicMock"
-                    and getattr(hass.async_create_task, "side_effect", None) is None
-                    and hasattr(coro, "close")
-                ):
-                    coro.close()
+            if use_threads and token and thread_ts:
+                _schedule_digest_update()
             return True
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(

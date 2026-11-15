@@ -24,6 +24,7 @@ from .const import (
 )
 from .coordinator import RoomPresenceCoordinator
 from .llm_verifier import LLMVerifier
+from .slack_cards import cancel_startup_slack_digest_sync, schedule_startup_slack_digest_sync
 from .store import async_get_store
 from .views import async_apply_and_persist_room_config, async_register_views
 
@@ -66,16 +67,8 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
                 )
                 await hass.http.async_register_static_paths(
                     [
-                        StaticPathConfig(
-                            "/presence_detection_designer/static",
-                            static_dir,
-                            False,
-                        ),
-                        StaticPathConfig(
-                            "/presence_detection_designer_static",
-                            static_dir,
-                            False,
-                        ),
+                        StaticPathConfig("/presence_detection_designer/static", static_dir, False),
+                        StaticPathConfig("/presence_detection_designer_static", static_dir, False),
                     ]
                 )
         except Exception as err:  # noqa: BLE001
@@ -226,7 +219,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         gs = store.global_settings or {}
         channel = str(gs.get("slack_channel") or "#presence-alerts")
         if token and gs.get("notifications_enabled", True) and gs.get("slack_daily_thread", True):
-            await mgr.async_update_daily_digest(hass, channel, token, format_duration)
+            await mgr.async_update_daily_digest(hass, channel, token, format_duration, force=True)
 
     async def handle_explain_presence(call: Any) -> dict[str, Any] | None:
         """Generate natural-language and YAML explanations for one or all rooms."""
@@ -388,7 +381,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         gs = store.global_settings or {}
         channel = str(gs.get("slack_channel") or "#presence-alerts")
         if token:
-            await mgr.async_update_daily_digest(hass, channel, token, format_duration)
+            await mgr.async_update_daily_digest(hass, channel, token, format_duration, force=True)
 
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)
@@ -429,9 +422,12 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     )
 
     coordinator = RoomPresenceCoordinator(hass, entry.entry_id, config_data)
-    await coordinator.async_setup()
-
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    try:
+        await coordinator.async_setup()
+    except Exception:
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        raise
 
     if hasattr(hass.config_entries, "async_forward_entry_setups"):
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -458,6 +454,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
             pass
 
     entry.async_on_unload(entry.add_update_listener(async_update_options))
+    schedule_startup_slack_digest_sync(hass)
     return True
 
 
@@ -480,14 +477,16 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
     remaining_coords = [
         v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, RoomPresenceCoordinator)
     ]
-    if not remaining_coords and hass.data.get(DOMAIN, {}).get(PANEL_REGISTERED):
-        try:
-            from homeassistant.components.frontend import async_remove_panel
+    if not remaining_coords:
+        cancel_startup_slack_digest_sync(hass)
+        if hass.data.get(DOMAIN, {}).get(PANEL_REGISTERED):
+            try:
+                from homeassistant.components.frontend import async_remove_panel
 
-            async_remove_panel(hass, DOMAIN, warn_if_unknown=False)
-            hass.data[DOMAIN][PANEL_REGISTERED] = False
-        except Exception:  # noqa: BLE001
-            pass
+                async_remove_panel(hass, DOMAIN, warn_if_unknown=False)
+                hass.data[DOMAIN][PANEL_REGISTERED] = False
+            except Exception:  # noqa: BLE001
+                pass
 
     return unload_ok
 
