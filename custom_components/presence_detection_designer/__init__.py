@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -38,7 +39,13 @@ async def _async_ensure_panel_and_views(hass: Any) -> None:
     if not hass or not hasattr(hass, "data") or not isinstance(hass.data, dict):
         return
     domain_data = hass.data.setdefault(DOMAIN, {})
+    setup_lock = domain_data.setdefault("_setup_lock", asyncio.Lock())
+    async with setup_lock:
+        await _async_ensure_panel_and_views_locked(hass, domain_data)
 
+
+async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str, Any]) -> None:
+    """Locked registration of static paths, HTTP views, and sidebar panel."""
     version = "0.1.0"
     try:
         from homeassistant.loader import async_get_integration
@@ -63,7 +70,12 @@ async def _async_ensure_panel_and_views(hass: Any) -> None:
                             "/presence_detection_designer/static",
                             static_dir,
                             False,
-                        )
+                        ),
+                        StaticPathConfig(
+                            "/presence_detection_designer_static",
+                            static_dir,
+                            False,
+                        ),
                     ]
                 )
         except Exception as err:  # noqa: BLE001

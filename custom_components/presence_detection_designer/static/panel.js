@@ -14,6 +14,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null;
+    this._panel = null;
+    this._panelVersion = "0.3.2";
     this._overview = null;
     this._selectedRoomId = null;
     this._draftConfig = null;
@@ -78,6 +80,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       if (this._initialized) {
         this.render();
       }
+    }
+  }
+
+  set panel(panel) {
+    this._panel = panel;
+    if (panel && panel.config && panel.config.version) {
+      this._panelVersion = String(panel.config.version);
     }
   }
 
@@ -2126,32 +2135,103 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         .obs-preset { min-width: 110px; }
         .obs-prob { min-width: 72px; }
 
-        @media (max-width: 1100px) {
+        .sm-lifecycle-strip {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px;
+          padding-top: 12px;
+          margin-top: 2px;
+          border-top: 1px solid var(--ha-divider);
+        }
+        .sm-pill-track {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 4px;
+        }
+        .sm-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 3px 9px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 500;
+          border: 1px solid var(--ha-divider);
+          background: var(--ha-subtle);
+          color: var(--ha-muted);
+          cursor: pointer;
+          white-space: nowrap;
+        }
+        .sm-pill:hover {
+          color: var(--ha-text);
+          border-color: var(--ha-primary-text);
+        }
+        .sm-pill.active-occupied {
+          background: rgba(16, 185, 129, 0.16);
+          border-color: #10b981;
+          color: var(--ha-success-text);
+          font-weight: 700;
+        }
+        .sm-pill.active-cooling {
+          background: rgba(245, 158, 11, 0.16);
+          border-color: #f59e0b;
+          color: var(--ha-warning-text);
+          font-weight: 700;
+        }
+        .sm-pill.active-override {
+          background: var(--ha-accent-purple-bg);
+          border-color: var(--ha-accent-purple-border);
+          color: var(--ha-accent-purple-text);
+          font-weight: 700;
+        }
+        .sm-pill.active-vacant {
+          background: rgba(148, 163, 184, 0.18);
+          border-color: #94a3b8;
+          color: var(--ha-text);
+          font-weight: 700;
+        }
+        .sm-arrow {
+          font-size: 11px;
+          color: var(--ha-muted);
+          opacity: 0.7;
+        }
+
+        @media (max-width: 1430px) {
           .app-header {
             height: auto;
+            min-height: 56px;
             flex-wrap: wrap;
-            padding: 10px 14px;
-            gap: 8px;
+            padding: 8px 16px;
+            gap: 6px 12px;
           }
           .header-left {
             flex: 1 1 auto;
             gap: 8px;
+            flex-wrap: wrap;
           }
           .nav-tabs {
             order: 3;
             width: 100%;
             height: auto;
-            overflow-x: auto;
+            flex-wrap: wrap;
+            gap: 4px;
             border-top: 1px solid var(--ha-divider);
             padding-top: 4px;
           }
           .nav-tab {
-            padding: 8px 12px;
+            padding: 7px 12px;
           }
           .header-actions {
             flex-wrap: wrap;
             gap: 6px;
           }
+        }
+
+        @media (max-width: 1100px) {
           .timeline-split-grid {
             grid-template-columns: 1fr;
           }
@@ -2170,6 +2250,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           }
           .header-actions {
             width: 100%;
+          }
+          .nav-tab {
+            padding: 6px 10px;
+            font-size: 12.5px;
           }
           .seg-group {
             flex-wrap: wrap;
@@ -2245,6 +2329,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               : ""
           }
           <h1 class="header-title">Presence Detection</h1>
+          <span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;background:var(--ha-subtle);border:1px solid var(--ha-divider);color:var(--ha-muted);">v${this._escape(
+            this._panelVersion || "0.3.2"
+          )}</span>
           <span class="header-summary">${occupiedCount} of ${rooms.length} rooms occupied</span>
         </div>
 
@@ -2716,6 +2803,49 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           </button>
           <button class="btn" id="btn-room-refresh">Recalculate</button>
           <button class="btn btn-primary" id="btn-save-room">Save Changes</button>
+        </div>
+
+        <div class="sm-lifecycle-strip">
+          <div class="sm-pill-track" title="Live Transitions State Machine — click any state to open the full State Chart">
+            ${[
+              { id: "vacant", label: "vacant" },
+              { id: "occupied_confirmed", label: "confirmed" },
+              { id: "occupied_holding", label: "holding" },
+              { id: "occupied_cooling", label: "cooling" },
+              { id: "occupied_verifying", label: "verifying" },
+              { id: "override", label: "override" },
+            ]
+              .map((step, i) => {
+                const cur = String(selRoom.occupancy_state || "vacant");
+                const isAct = cur === step.id;
+                const cls = !isAct
+                  ? ""
+                  : step.id === "vacant"
+                  ? "active-vacant"
+                  : step.id === "override"
+                  ? "active-override"
+                  : step.id === "occupied_cooling" || step.id === "occupied_verifying"
+                  ? "active-cooling"
+                  : "active-occupied";
+                const sep = i > 0 ? `<span class="sm-arrow">${step.id === "override" ? "|" : "&rarr;"}</span>` : "";
+                return `${sep}<button type="button" class="sm-pill ${cls}" data-editor-tab="state_machine">${step.label}</button>`;
+              })
+              .join("")}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            ${(() => {
+              const hist = Array.isArray(selRoom.transition_history) ? selRoom.transition_history : [];
+              const lastAcc = [...hist].reverse().find((h) => h.accepted);
+              return lastAcc
+                ? `<span style="font-size:11.5px;color:var(--ha-muted);">Last: <code>${this._escape(
+                    lastAcc.trigger
+                  )}</code> (<code>${this._escape(lastAcc.source)}</code> &rarr; <code>${this._escape(
+                    lastAcc.dest
+                  )}</code>)</span>`
+                : "";
+            })()}
+            <button type="button" class="btn btn-sm" data-editor-tab="state_machine">🔀 View State Chart</button>
+          </div>
         </div>
       </div>
 
@@ -4384,6 +4514,11 @@ action:
     const isSensorMode = this._floorplanMode === "sensors";
 
     // 3. Camera Sub-Zones (2D bounding boxes inside camera cones)
+    const roomLabelBands = fRooms.map((b) => {
+      const a = this._roomLabelAnchor(b);
+      return { x1: a.x, x2: a.x + Math.min(a.w, 160), y1: a.y + 8, y2: a.y + 46 };
+    });
+    const placedSzLabels = [];
     const subZonesSvg = fCams
       .map((cam) => {
         const camId = cam.id || cam.camera_entity;
@@ -4394,7 +4529,23 @@ action:
             const sw = Math.max(24, Number(sz.width || 60));
             const sh = Math.max(24, Number(sz.height || 60));
             const isSelSz = this._selectedSubZoneId === sz.id && isCamMode;
-            const szLabelFit = this._fitSvgLabel(sz.label || sz.id, sw - 8, 9.5);
+            const szLabelFit = isCamMode ? this._fitSvgLabel(sz.label || sz.id, sw - 8, 9.5) : "";
+            let labelY = sy + sh / 2 + 3;
+            if (szLabelFit) {
+              const cx = sx + sw / 2;
+              for (const band of roomLabelBands) {
+                if (cx >= band.x1 - 20 && cx <= band.x2 + 20 && labelY >= band.y1 && labelY <= band.y2 + 6) {
+                  labelY = Math.max(labelY, Math.min(sy + sh - 5, band.y2 + 12));
+                }
+              }
+              for (const prevLbl of placedSzLabels) {
+                if (Math.abs(prevLbl.cx - cx) < 75 && Math.abs(prevLbl.y - labelY) < 13) {
+                  labelY = prevLbl.y + 14;
+                }
+              }
+              labelY = Math.min(sy + sh - 5, Math.max(sy + 12, labelY));
+              placedSzLabels.push({ cx, y: labelY });
+            }
             return `
               <g class="fp-subzone-group" data-cam-id="${this._escape(camId)}" data-subzone-id="${this._escape(sz.id)}" style="${isCamMode ? "opacity:0.95;" : "opacity:0.55;pointer-events:none;"}">
                 <title>${this._escape(sz.label || sz.id)}</title>
@@ -4417,7 +4568,7 @@ action:
                   szLabelFit
                     ? `<text
                   x="${(sx + sw / 2).toFixed(1)}"
-                  y="${(sy + sh / 2 + 3).toFixed(1)}"
+                  y="${labelY.toFixed(1)}"
                   text-anchor="middle"
                   fill="#0369a1"
                   font-size="9.5"
@@ -5502,8 +5653,8 @@ action:
       });
     });
 
-    // Editor 3-tab navigation
-    root.querySelectorAll(".editor-tab-btn[data-editor-tab], .sub-tab[data-editor-tab]").forEach((el) => {
+    // Editor tab navigation (tabs + quick state-chart jump pills)
+    root.querySelectorAll("[data-editor-tab]").forEach((el) => {
       el.addEventListener("click", () => {
         this._editorTab = el.getAttribute("data-editor-tab") || "setup";
         this.render();
