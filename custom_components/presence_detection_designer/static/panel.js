@@ -52,13 +52,20 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._selectedDoorId = null;
     this._activeFpDrag = null;
     this._saveFpTimeout = null;
+    this._saveFpServerTimeout = null;
     this._canvasRenderRaf = null;
     this._fpLayers = this._loadFpLayers();
     this._showBlueprintUnderlay = this._fpLayers.underlay !== false;
     this._underlayOpacity = 0.88;
     this._containerBp = "full";
     this._resizeObserver = null;
-    this._floorplanMode = "rooms"; // "rooms" | "cameras" | "sensors"
+    this._floorplanMode = "devices"; // "devices" | "cameras" | "sensors" | "rooms"
+    this._roomsLocked = true;
+    this._selectedDeviceType = null; // "camera" | "sensor" | "ble" | "subzone" | "room"
+    this._fpUndoStack = [];
+    this._fpRedoStack = [];
+    this._fpDirty = false;
+    this._fpSaving = false;
     this._selectedSensorId = null;
     this._selectedSubZoneId = null;
     this._selectedBleProxyId = null;
@@ -180,6 +187,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       this._resizeObserver = new ResizeObserver(() => this._updateContainerBp());
       this._resizeObserver.observe(this);
     }
+    if (!this._onWindowKeyDown && typeof window !== "undefined") {
+      this._onWindowKeyDown = (e) => this._handleFloorplanKeyDown(e);
+      window.addEventListener("keydown", this._onWindowKeyDown);
+    }
     if (!this._initialized) {
       this._initialized = true;
       this.render();
@@ -193,6 +204,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
       this._resizeObserver = null;
+    }
+    if (this._onWindowKeyDown && typeof window !== "undefined") {
+      window.removeEventListener("keydown", this._onWindowKeyDown);
+      this._onWindowKeyDown = null;
     }
   }
 
@@ -329,6 +344,190 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
   _snapValue(val, step = 10) {
     return Math.round(val / step) * step;
+  }
+
+  _transformSvgPath(svgPath, sx, sy, oldW, oldH, nx, ny, nw, nh) {
+    if (!svgPath || typeof svgPath !== "string") return svgPath;
+    const scaleX = oldW > 0 ? nw / oldW : 1;
+    const scaleY = oldH > 0 ? nh / oldH : 1;
+    return svgPath.replace(
+      /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/g,
+      (_m, px, py) => {
+        const rx = nx + (Number(px) - sx) * scaleX;
+        const ry = ny + (Number(py) - sy) * scaleY;
+        return `${Math.round(rx * 10) / 10},${Math.round(ry * 10) / 10}`;
+      }
+    );
+  }
+
+  _pushFpUndo(snapshotJson = null) {
+    if (!this._floorplan) return;
+    try {
+      const snap = snapshotJson || JSON.stringify(this._floorplan);
+      if (this._fpUndoStack.length > 0 && this._fpUndoStack[this._fpUndoStack.length - 1] === snap) {
+        return;
+      }
+      this._fpUndoStack.push(snap);
+      if (this._fpUndoStack.length > 50) {
+        this._fpUndoStack.shift();
+      }
+      this._fpRedoStack = [];
+      this._fpDirty = true;
+    } catch (_e) {}
+  }
+
+  _undoFp() {
+    if (!this._fpUndoStack || this._fpUndoStack.length === 0) return;
+    try {
+      const current = this._floorplan ? JSON.stringify(this._floorplan) : null;
+      const prev = this._fpUndoStack.pop();
+      if (!prev) return;
+      if (current) this._fpRedoStack.push(current);
+      this._floorplan = JSON.parse(prev);
+      this._fpDirty = true;
+      this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+      this._debounceSaveFloorplan();
+      this.render();
+      this.showToast("Undid last floorplan change", "info");
+    } catch (_e) {}
+  }
+
+  _redoFp() {
+    if (!this._fpRedoStack || this._fpRedoStack.length === 0) return;
+    try {
+      const current = this._floorplan ? JSON.stringify(this._floorplan) : null;
+      const next = this._fpRedoStack.pop();
+      if (!next) return;
+      if (current) this._fpUndoStack.push(current);
+      this._floorplan = JSON.parse(next);
+      this._fpDirty = true;
+      this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+      this._debounceSaveFloorplan();
+      this.render();
+      this.showToast("Redid floorplan change", "info");
+    } catch (_e) {}
+  }
+
+  _resetFloorplanRooms(floorOnly = true, singleRoomName = null) {
+    if (!this._floorplan || typeof PDD_DEFAULT_FLOORPLAN === "undefined") return;
+    const defRooms = PDD_DEFAULT_FLOORPLAN.rooms || [];
+    const activeFloorId = this._selectedFloorId || "main";
+    this._pushFpUndo();
+    const rooms = this._floorplan.rooms || [];
+    let restored = 0;
+    for (let i = 0; i < rooms.length; i++) {
+      const r = rooms[i];
+      const rName = r.name || r.room_name;
+      if (singleRoomName && rName !== singleRoomName) continue;
+      if (!singleRoomName && floorOnly && (r.floor || "main") !== activeFloorId) continue;
+      const def = defRooms.find(
+        (d) => (d.id && d.id === r.id) || (d.name || d.room_name) === rName
+      );
+      if (!def) continue;
+      const clone = JSON.parse(JSON.stringify(def));
+      rooms[i] = clone;
+      restored++;
+    }
+    this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+    this._debounceSaveFloorplan();
+    this.render();
+    this.showToast(
+      singleRoomName
+        ? `Restored ${singleRoomName} to exact default blueprint`
+        : `Restored ${restored} rooms on this floor (sensors & cameras preserved)`,
+      "info"
+    );
+  }
+
+  _nudgeSelectedFloorplanItem(dx, dy, dHeading = 0) {
+    if (!this._floorplan) return;
+    const activeFloorId = this._selectedFloorId || "main";
+    const dtype = this._selectedDeviceType;
+    let target = null;
+    let kind = dtype;
+    if (kind === "camera" || (!kind && this._selectedCamEntity)) {
+      target = (this._floorplan.cameras || []).find(
+        (c) => (c.id || c.camera_entity) === this._selectedCamEntity && (c.floor || "main") === activeFloorId
+      );
+      kind = "camera";
+    } else if (kind === "sensor" || (!kind && this._selectedSensorId)) {
+      target = (this._floorplan.sensors || []).find(
+        (s) => s.id === this._selectedSensorId && (s.floor || "main") === activeFloorId
+      );
+      kind = "sensor";
+    } else if (kind === "ble" || (!kind && this._selectedBleProxyId)) {
+      target = (this._floorplan.ble_proxies || []).find(
+        (p) => p.id === this._selectedBleProxyId && (p.floor || "main") === activeFloorId
+      );
+      kind = "ble";
+    } else if (kind === "subzone" && this._selectedSubZoneId) {
+      const cam = (this._floorplan.cameras || []).find(
+        (c) => (c.id || c.camera_entity) === this._selectedCamEntity
+      );
+      target = (cam?.sub_zones || []).find((z) => z.id === this._selectedSubZoneId);
+    } else if (kind === "room" && this._floorplanMode === "rooms" && !this._roomsLocked && this._selectedRoomBoxName) {
+      target = (this._floorplan.rooms || []).find(
+        (b) => (b.name || b.room_name) === this._selectedRoomBoxName
+      );
+    }
+    if (!target) return;
+    this._pushFpUndo();
+    if (dx || dy) {
+      const nx = Math.max(0, Math.min(990, Number(target.x || 0) + dx));
+      const ny = Math.max(0, Math.min(570, Number(target.y || 0) + dy));
+      if (kind === "room" && target.svg_path) {
+        const rw = Number(target.width ?? target.w ?? 200);
+        const rh = Number(target.height ?? target.h ?? 150);
+        target.svg_path = this._transformSvgPath(target.svg_path, Number(target.x), Number(target.y), rw, rh, nx, ny, rw, rh);
+      }
+      target.x = nx;
+      target.y = ny;
+    }
+    if (dHeading && (kind === "camera" || (kind === "sensor" && target.sensor_type !== "door_contact"))) {
+      target.heading_deg = (Math.round(Number(target.heading_deg || 0) + dHeading) % 360 + 360) % 360;
+    }
+    this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+    this._debounceSaveFloorplan();
+    this._updateFloorplanCanvasInPlace();
+    this._syncQuickBarValuesInPlace();
+  }
+
+  _handleFloorplanKeyDown(e) {
+    if (this._studioView !== "floorplan") return;
+    const active = this.shadowRoot?.activeElement || document.activeElement;
+    if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      e.preventDefault();
+      this._undoFp();
+      return;
+    }
+    if ((mod && e.key.toLowerCase() === "z" && e.shiftKey) || (mod && e.key.toLowerCase() === "y")) {
+      e.preventDefault();
+      this._redoFp();
+      return;
+    }
+    const step = e.shiftKey ? 10 : 2;
+    const angStep = e.shiftKey ? 15 : 2;
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      this._nudgeSelectedFloorplanItem(-step, 0, 0);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      this._nudgeSelectedFloorplanItem(step, 0, 0);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      this._nudgeSelectedFloorplanItem(0, -step, 0);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      this._nudgeSelectedFloorplanItem(0, step, 0);
+    } else if (e.key === "[" || e.key === ",") {
+      e.preventDefault();
+      this._nudgeSelectedFloorplanItem(0, 0, -angStep);
+    } else if (e.key === "]" || e.key === ".") {
+      e.preventDefault();
+      this._nudgeSelectedFloorplanItem(0, 0, angStep);
+    }
   }
 
   _snapRoomGeometry(box, otherRooms, snapDist = 8) {
@@ -735,7 +934,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       const data = await this._apiCall("GET", "/api/presence_detection_designer/overview");
       this._overview = data;
       this._globalDraft = JSON.parse(JSON.stringify(data.global_settings || {}));
-      if (data.floorplan) {
+      if (data.floorplan && !this._activeFpDrag && !this._fpDirty) {
         this._floorplan = JSON.parse(JSON.stringify(data.floorplan));
       } else if (!this._floorplan) {
         this._floorplan = this._loadLocalOrDefaultFloorplan();
@@ -843,6 +1042,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       });
       if (res && res.floorplan) {
         this._floorplan = res.floorplan;
+        this._fpDirty = false;
         this._compiledTopology =
           res.compiled_topology || this._compileFloorplanClient(this._floorplan);
         try {
@@ -921,6 +1121,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   }
 
   _debounceSaveFloorplan() {
+    this._fpDirty = true;
     clearTimeout(this._saveFpTimeout);
     this._saveFpTimeout = setTimeout(() => {
       try {
@@ -928,7 +1129,28 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           window.localStorage.setItem("pdd_floorplan_layout_v4", JSON.stringify(this._floorplan));
         }
       } catch (_e) {}
-    }, 400);
+    }, 300);
+    clearTimeout(this._saveFpServerTimeout);
+    this._saveFpServerTimeout = setTimeout(async () => {
+      if (!this._floorplan || this._activeFpDrag) return;
+      try {
+        this._fpSaving = true;
+        await this._apiCall("POST", "/api/presence_detection_designer/floorplan", {
+          action: "save",
+          floorplan: this._floorplan,
+        });
+        this._fpDirty = false;
+      } catch (_e) {
+        // Offline / route unavailable fallback keeps localStorage
+      } finally {
+        this._fpSaving = false;
+        const badge = this.shadowRoot?.querySelector("#fp-save-state");
+        if (badge) {
+          badge.textContent = this._fpDirty ? "Unsaved" : "Saved ✓";
+          badge.className = `fp-save-badge ${this._fpDirty ? "dirty" : "saved"}`;
+        }
+      }
+    }, 900);
   }
 
   async _analyzeCameraAlignment(camId) {
@@ -1065,7 +1287,64 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     if (this._canvasRenderRaf) return;
     this._canvasRenderRaf = requestAnimationFrame(() => {
       this._canvasRenderRaf = null;
-      this.render();
+      if (this._activeFpDrag) {
+        this._updateFloorplanCanvasInPlace();
+        this._syncQuickBarValuesInPlace();
+      } else {
+        this.render();
+      }
+    });
+  }
+
+  _updateFloorplanCanvasInPlace() {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const svg = root.querySelector("#fp-svg-canvas");
+    if (!svg) return;
+    const bundle = this._renderFloorplanSvgBundle(this.selectedRoom);
+    if (!bundle) return;
+    svg.innerHTML = bundle.svgInner;
+    const hud = root.querySelector("#fp-live-hud");
+    if (hud && bundle.hudHtml !== undefined) {
+      hud.innerHTML = bundle.hudHtml;
+    }
+  }
+
+  _syncQuickBarValuesInPlace() {
+    const root = this.shadowRoot;
+    if (!root || !this._floorplan) return;
+    const activeFloorId = this._selectedFloorId || "main";
+    let item = null;
+    if (this._selectedDeviceType === "camera") {
+      item = (this._floorplan.cameras || []).find(
+        (c) => (c.id || c.camera_entity) === this._selectedCamEntity && (c.floor || "main") === activeFloorId
+      );
+    } else if (this._selectedDeviceType === "sensor") {
+      item = (this._floorplan.sensors || []).find(
+        (s) => s.id === this._selectedSensorId && (s.floor || "main") === activeFloorId
+      );
+    } else if (this._selectedDeviceType === "ble") {
+      item = (this._floorplan.ble_proxies || []).find(
+        (p) => p.id === this._selectedBleProxyId && (p.floor || "main") === activeFloorId
+      );
+    } else if (this._selectedDeviceType === "subzone") {
+      const cam = (this._floorplan.cameras || []).find(
+        (c) => (c.id || c.camera_entity) === this._selectedCamEntity
+      );
+      item = (cam?.sub_zones || []).find((z) => z.id === this._selectedSubZoneId);
+    } else if (this._selectedDeviceType === "room") {
+      item = (this._floorplan.rooms || []).find(
+        (b) => (b.name || b.room_name) === this._selectedRoomBoxName
+      );
+    }
+    if (!item) return;
+    root.querySelectorAll(".fp-quick-input").forEach((inp) => {
+      const k = inp.getAttribute("data-key");
+      if (!k) return;
+      const val = k === "width" ? (item.width ?? item.w) : k === "height" ? (item.height ?? item.h) : item[k];
+      if (val !== undefined && document.activeElement !== inp) {
+        inp.value = Math.round(Number(val));
+      }
     });
   }
 
@@ -2479,6 +2758,133 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           padding: 4px 8px;
           border-radius: 6px;
           font-size: 12px;
+        }
+        .fp-utility-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 10px;
+          padding: 8px 10px;
+          background: var(--ha-card);
+          border: 1px solid var(--ha-divider);
+          border-radius: 10px;
+        }
+        .fp-utility-group {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .fp-lock-btn.locked {
+          background: rgba(100, 116, 139, 0.12);
+          border-color: var(--ha-divider);
+          color: var(--ha-text);
+          font-weight: 600;
+        }
+        .fp-lock-btn.unlocked {
+          background: rgba(217, 119, 6, 0.14);
+          border-color: #d97706;
+          color: var(--ha-warning-text);
+          font-weight: 700;
+        }
+        .fp-save-badge {
+          font-size: 11px;
+          font-weight: 600;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid var(--ha-divider);
+        }
+        .fp-save-badge.saved {
+          color: var(--ha-success-text);
+          background: rgba(22, 163, 74, 0.1);
+          border-color: rgba(22, 163, 74, 0.35);
+        }
+        .fp-save-badge.dirty {
+          color: var(--ha-warning-text);
+          background: rgba(217, 119, 6, 0.12);
+          border-color: rgba(217, 119, 6, 0.4);
+        }
+        .fp-canvas-wrap {
+          position: relative;
+          background: #f8fafc;
+          color: #0f172a;
+          border: 1px solid var(--ha-divider);
+          border-radius: 10px;
+          padding: 10px;
+          overflow: hidden;
+          touch-action: none;
+        }
+        .fp-live-hud {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 6px;
+          padding: 5px 10px;
+          border-radius: 7px;
+          background: rgba(15, 23, 42, 0.05);
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          font-size: 11.5px;
+          color: #334155;
+        }
+        .fp-quick-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-top: 10px;
+          padding: 10px 12px;
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-radius: 10px;
+        }
+        .fp-quick-fields {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .fp-quick-field {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          min-width: 62px;
+        }
+        .fp-quick-field small {
+          font-size: 10.5px;
+          color: var(--ha-muted);
+          font-weight: 600;
+        }
+        .fp-quick-field input {
+          width: 68px;
+          padding: 4px 6px;
+          font-size: 12px;
+          font-family: var(--ha-mono);
+        }
+        .fp-nudge-group {
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+        }
+        .fp-nudge-group .btn {
+          padding: 3px 6px;
+          font-size: 11px;
+          min-width: 28px;
+        }
+        .fp-hit-target {
+          fill: transparent;
+          stroke: transparent;
+          pointer-events: all;
+        }
+        .fp-handle-group:hover .fp-handle-visible {
+          transform-box: fill-box;
+          transform-origin: center;
+          transform: scale(1.22);
+          filter: drop-shadow(0 0 3px rgba(2, 132, 199, 0.45));
         }
         .bayesian-table {
           width: 100%;
@@ -4709,39 +5115,30 @@ action:
     )} A ${r.toFixed(1)},${r.toFixed(1)} 0 ${largeArc},1 ${x2.toFixed(1)},${y2.toFixed(1)} Z`;
   }
 
-  _renderFloorplanPane(selRoom) {
+  _getActiveFloorContext(selRoom) {
     const fp = this._floorplan || this._overview?.floorplan;
-    const compiled = this._compiledTopology || this._overview?.compiled_topology || {};
-    if (!fp || !Array.isArray(fp.floors)) {
-      return `<div class="ha-card">Loading floorplan...</div>`;
-    }
-    const floors = fp.floors;
+    const floors = fp?.floors || [];
     const activeFloor = floors.find((f) => f.id === this._selectedFloorId) || floors[1] || floors[0];
-    this._selectedFloorId = activeFloor.id;
+    if (activeFloor) this._selectedFloorId = activeFloor.id;
+    const allFpRooms = fp?.rooms || [];
+    const allFpConns = fp?.connections || [];
+    const allFpCams = fp?.cameras || [];
+    const allFpSensors = fp?.sensors || [];
+    const allFpProxies = fp?.ble_proxies || [];
 
-    const liveRoomsByName = {};
-    ((this._overview && this._overview.rooms) || []).forEach((r) => {
-      liveRoomsByName[r.room_name] = r;
-    });
-
-    const allFpRooms = fp.rooms || [];
-    const allFpConns = fp.connections || [];
-    const allFpCams = fp.cameras || [];
-    const allFpSensors = fp.sensors || [];
-    const allFpProxies = fp.ble_proxies || [];
-
-    const fRooms =
-      activeFloor.rooms || allFpRooms.filter((r) => r.floor === activeFloor.id);
+    const fRooms = activeFloor
+      ? activeFloor.rooms || allFpRooms.filter((r) => r.floor === activeFloor.id)
+      : [];
     const floorRoomNames = new Set(fRooms.map((r) => r.name || r.room_name));
-    const fConns =
-      activeFloor.connections ||
-      allFpConns.filter(
-        (c) => floorRoomNames.has(c.from_room) || floorRoomNames.has(c.to_room)
-      );
-    const fCams =
-      activeFloor.cameras || allFpCams.filter((c) => c.floor === activeFloor.id);
-    const fSensors = allFpSensors.filter((s) => s.floor === activeFloor.id);
-    const fProxies = allFpProxies.filter((p) => p.floor === activeFloor.id);
+    const fConns = activeFloor
+      ? activeFloor.connections ||
+        allFpConns.filter((c) => floorRoomNames.has(c.from_room) || floorRoomNames.has(c.to_room))
+      : [];
+    const fCams = activeFloor
+      ? activeFloor.cameras || allFpCams.filter((c) => c.floor === activeFloor.id)
+      : [];
+    const fSensors = activeFloor ? allFpSensors.filter((s) => s.floor === activeFloor.id) : [];
+    const fProxies = activeFloor ? allFpProxies.filter((p) => p.floor === activeFloor.id) : [];
 
     if (
       fSensors.length > 0 &&
@@ -4759,9 +5156,16 @@ action:
       this._selectedCamEntity = fCams[0].id || fCams[0].camera_entity;
     }
     const selCam =
-      fCams.find((c) => (c.id || c.camera_entity) === this._selectedCamEntity) ||
-      fCams[0] ||
-      null;
+      fCams.find((c) => (c.id || c.camera_entity) === this._selectedCamEntity) || fCams[0] || null;
+
+    if (
+      fProxies.length > 0 &&
+      (!this._selectedBleProxyId || !fProxies.some((p) => p.id === this._selectedBleProxyId))
+    ) {
+      this._selectedBleProxyId = fProxies[0].id;
+    }
+    const selBleProxy =
+      fProxies.find((p) => p.id === this._selectedBleProxyId) || fProxies[0] || null;
 
     const selBox =
       fRooms.find(
@@ -4774,6 +5178,190 @@ action:
     if (selBox) {
       this._selectedRoomBoxName = selBox.name || selBox.room_name;
     }
+
+    if (!this._selectedDeviceType) {
+      if (this._floorplanMode === "rooms") this._selectedDeviceType = "room";
+      else if (this._floorplanMode === "sensors") this._selectedDeviceType = selSensor ? "sensor" : selBleProxy ? "ble" : "room";
+      else if (selCam) this._selectedDeviceType = "camera";
+      else if (selSensor) this._selectedDeviceType = "sensor";
+      else if (selBleProxy) this._selectedDeviceType = "ble";
+      else this._selectedDeviceType = "room";
+    }
+
+    return {
+      fp,
+      floors,
+      activeFloor,
+      fRooms,
+      fConns,
+      fCams,
+      fSensors,
+      fProxies,
+      selSensor,
+      selCam,
+      selBleProxy,
+      selBox,
+    };
+  }
+
+  _buildLosAndConeHandlesSvg({
+    kind,
+    id,
+    x,
+    y,
+    headingDeg,
+    fovDeg,
+    rangePx,
+    color,
+    isDoorContact = false,
+  }) {
+    const cx = Number(x || 0);
+    const cy = Number(y || 0);
+    if (isDoorContact) return "";
+    const rad = (Number(headingDeg || 0) * Math.PI) / 180.0;
+    const fov = Math.max(10, Math.min(350, Number(fovDeg || 90)));
+    const reach = Math.max(25, Number(rangePx || 180));
+    const aimDist = reach >= 85 ? Math.max(42, Math.min(68, reach * 0.45)) : reach + 24;
+    const aimX = cx + Math.cos(rad) * aimDist;
+    const aimY = cy + Math.sin(rad) * aimDist;
+    const tipX = cx + Math.cos(rad) * reach;
+    const tipY = cy + Math.sin(rad) * reach;
+    const startRad = ((Number(headingDeg || 0) - fov / 2.0) * Math.PI) / 180.0;
+    const endRad = ((Number(headingDeg || 0) + fov / 2.0) * Math.PI) / 180.0;
+    const fovHandleDist = Math.min(118, Math.max(36, reach * 0.68));
+    const fov1X = cx + Math.cos(startRad) * fovHandleDist;
+    const fov1Y = cy + Math.sin(startRad) * fovHandleDist;
+    const fov2X = cx + Math.cos(endRad) * fovHandleDist;
+    const fov2Y = cy + Math.sin(endRad) * fovHandleDist;
+
+    const cls = kind === "camera" ? "fp-cam-handle" : "fp-sensor-handle";
+    const idAttr =
+      kind === "camera"
+        ? `data-cam-id="${this._escape(id)}"`
+        : `data-sensor-id="${this._escape(id)}"`;
+
+    const arrowTipBack1X = aimX - Math.cos(rad - 0.42) * 8;
+    const arrowTipBack1Y = aimY - Math.sin(rad - 0.42) * 8;
+    const arrowTipBack2X = aimX - Math.cos(rad + 0.42) * 8;
+    const arrowTipBack2Y = aimY - Math.sin(rad + 0.42) * 8;
+
+    return `
+      <line x1="${cx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${tipX.toFixed(1)}" y2="${tipY.toFixed(1)}" stroke="${color}" stroke-width="1.4" stroke-dasharray="4,3" opacity="0.65" style="pointer-events:none;" />
+      <line x1="${cx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${aimX.toFixed(1)}" y2="${aimY.toFixed(1)}" stroke="${color}" stroke-width="2.6" stroke-linecap="round" style="pointer-events:none;" />
+      <polyline points="${arrowTipBack1X.toFixed(1)},${arrowTipBack1Y.toFixed(1)} ${aimX.toFixed(1)},${aimY.toFixed(1)} ${arrowTipBack2X.toFixed(1)},${arrowTipBack2Y.toFixed(1)}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events:none;" />
+
+      <g class="fp-handle-group ${cls}" data-handle="heading" ${idAttr} style="cursor:grab;">
+        <title>Drag to rotate Line of Sight (${Math.round(Number(headingDeg || 0))}°) — Hold Shift to snap 15°</title>
+        <circle class="fp-hit-target" cx="${aimX.toFixed(1)}" cy="${aimY.toFixed(1)}" r="15" />
+        <circle class="fp-handle-visible" cx="${aimX.toFixed(1)}" cy="${aimY.toFixed(1)}" r="7" fill="#ffffff" stroke="${color}" stroke-width="2.5" style="pointer-events:none;" />
+      </g>
+
+      <g class="fp-handle-group ${cls}" data-handle="range" ${idAttr} style="cursor:ew-resize;">
+        <title>Drag to resize Range (${Math.round(reach)}px)</title>
+        <circle class="fp-hit-target" cx="${tipX.toFixed(1)}" cy="${tipY.toFixed(1)}" r="15" />
+        <rect class="fp-handle-visible" x="${(tipX - 5.5).toFixed(1)}" y="${(tipY - 5.5).toFixed(1)}" width="11" height="11" rx="3" fill="${color}" stroke="#ffffff" stroke-width="2" style="pointer-events:none;" />
+      </g>
+
+      <g class="fp-handle-group ${cls}" data-handle="fov_start" ${idAttr} style="cursor:ew-resize;">
+        <title>Drag to widen/narrow FOV (${Math.round(fov)}°)</title>
+        <circle class="fp-hit-target" cx="${fov1X.toFixed(1)}" cy="${fov1Y.toFixed(1)}" r="14" />
+        <circle class="fp-handle-visible" cx="${fov1X.toFixed(1)}" cy="${fov1Y.toFixed(1)}" r="5.5" fill="#ffffff" stroke="${color}" stroke-width="2" style="pointer-events:none;" />
+      </g>
+
+      <g class="fp-handle-group ${cls}" data-handle="fov_end" ${idAttr} style="cursor:ew-resize;">
+        <title>Drag to widen/narrow FOV (${Math.round(fov)}°)</title>
+        <circle class="fp-hit-target" cx="${fov2X.toFixed(1)}" cy="${fov2Y.toFixed(1)}" r="14" />
+        <circle class="fp-handle-visible" cx="${fov2X.toFixed(1)}" cy="${fov2Y.toFixed(1)}" r="5.5" fill="#ffffff" stroke="${color}" stroke-width="2" style="pointer-events:none;" />
+      </g>
+    `;
+  }
+
+  _buildFloorplanHudHtml(ctx) {
+    const mode = this._floorplanMode;
+    const drag = this._activeFpDrag;
+    const snapHint =
+      mode === "rooms"
+        ? "Hold Shift for 1px fine move"
+        : "Smooth 1°/1px · Hold Shift to snap 15°/10px";
+
+    if (drag) {
+      if (drag.type === "move_cam" || drag.type === "cam_handle") {
+        const cam = (this._floorplan?.cameras || []).find(
+          (c) => (c.id || c.camera_entity) === drag.camId
+        );
+        if (cam) {
+          return `<span><strong>📹 ${this._escape(cam.name || drag.camId)}</strong> · (${Math.round(cam.x)}, ${Math.round(cam.y)}) · Heading <strong>${Math.round(cam.heading_deg || 0)}°</strong> · FOV ${Math.round(cam.fov_deg || 90)}° · Range ${Math.round(cam.range_px || 180)}px</span><span>${snapHint}</span>`;
+        }
+      } else if (drag.type === "move_sensor" || drag.type === "sensor_handle") {
+        const sen = (this._floorplan?.sensors || []).find((s) => s.id === drag.sensorId);
+        if (sen) {
+          const stats =
+            sen.sensor_type === "door_contact"
+              ? `(${Math.round(sen.x)}, ${Math.round(sen.y)})`
+              : `(${Math.round(sen.x)}, ${Math.round(sen.y)}) · Heading <strong>${Math.round(sen.heading_deg || 0)}°</strong> · FOV ${Math.round(sen.fov_deg || 110)}° · Range ${Math.round(sen.range_px || 180)}px`;
+          return `<span><strong>${sen.sensor_type === "door_contact" ? "🚪" : "📡"} ${this._escape(sen.name || sen.id)}</strong> · ${stats}</span><span>${snapHint}</span>`;
+        }
+      } else if (drag.type === "move_ble" || drag.type === "ble_radius") {
+        const bp = (this._floorplan?.ble_proxies || []).find((p) => p.id === drag.proxyId);
+        if (bp) {
+          return `<span><strong>📶 ${this._escape(bp.name || bp.id)}</strong> · (${Math.round(bp.x)}, ${Math.round(bp.y)}) · Radius <strong>${Math.round(bp.radius_px || 200)}px</strong></span><span>${snapHint}</span>`;
+        }
+      } else if (drag.type === "move_subzone" || drag.type === "resize_subzone") {
+        const cam = (this._floorplan?.cameras || []).find(
+          (c) => (c.id || c.camera_entity) === drag.camId
+        );
+        const sz = (cam?.sub_zones || []).find((z) => z.id === drag.subZoneId);
+        if (sz) {
+          return `<span><strong>🎯 ${this._escape(sz.label || sz.id)}</strong> · (${Math.round(sz.x)}, ${Math.round(sz.y)}) · ${Math.round(sz.width)}×${Math.round(sz.height)}</span><span>${snapHint}</span>`;
+        }
+      } else if (drag.type === "move_room" || drag.type === "resize_room") {
+        const box = (this._floorplan?.rooms || []).find(
+          (b) => (b.name || b.room_name) === drag.roomName
+        );
+        if (box) {
+          return `<span><strong>🏠 ${this._escape(drag.roomName)}</strong> · (${Math.round(box.x)}, ${Math.round(box.y)}) · ${Math.round(box.width ?? box.w ?? 200)}×${Math.round(box.height ?? box.h ?? 150)}</span><span>${snapHint}</span>`;
+        }
+      }
+    }
+
+    if (mode === "rooms") {
+      if (this._roomsLocked) {
+        return `<span><strong>🏠 Rooms Locked</strong> — Click a room to inspect or adjust doors. Click <strong>🔓 Rooms Unlocked</strong> above to move/resize boxes.</span><span>Ctrl+Z to Undo</span>`;
+      }
+      return `<span><strong>🔓 Editing Room Boxes</strong> — Drag rooms or corners (polygons stay intact). Lock rooms again when finished.</span><span>${snapHint}</span>`;
+    }
+    if (mode === "cameras") {
+      return `<span><strong>📹 Camera Mode</strong> — Drag any camera pin, its <strong>LOS arrow</strong> (rotate), <strong>tip square</strong> (range), cone edges (FOV), or sub-zones.</span><span>Arrow keys nudge · [ ] rotate</span>`;
+    }
+    if (mode === "sensors") {
+      return `<span><strong>📡 Sensor Mode</strong> — Drag PIR, door, or BLE pins &amp; <strong>LOS vector handles</strong> freely; rooms cannot be moved here.</span><span>Arrow keys nudge · [ ] rotate</span>`;
+    }
+    return `<span><strong>🎯 Devices Mode (Rooms Locked)</strong> — Click any camera, PIR, door sensor, BLE proxy, or sub-zone to move or aim its <strong>LOS vector</strong>.</span><span>Arrow keys nudge · [ ] rotate</span>`;
+  }
+
+  _renderFloorplanSvgBundle(selRoom) {
+    const fp = this._floorplan || this._overview?.floorplan;
+    const compiled = this._compiledTopology || this._overview?.compiled_topology || {};
+    if (!fp || !Array.isArray(fp.floors)) return null;
+
+    const ctx = this._getActiveFloorContext(selRoom);
+    const {
+      activeFloor,
+      fRooms,
+      fConns,
+      fCams,
+      fSensors,
+      fProxies,
+      selSensor,
+      selCam,
+      selBleProxy,
+      selBox,
+    } = ctx;
+
+    const liveRoomsByName = {};
+    ((this._overview && this._overview.rooms) || []).forEach((r) => {
+      liveRoomsByName[r.room_name] = r;
+    });
 
     const roomBoxMap = {};
     fRooms.forEach((b) => {
@@ -4802,7 +5390,13 @@ action:
     const boxesOverlap = (a, b) =>
       Boolean(a && b && a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY);
 
-    // Precompute visibility polygons & bounding boxes for cameras and PIRs for exact overlap clipping
+    const mode = this._floorplanMode;
+    const isRoomMode = mode === "rooms";
+    const canDragRooms = isRoomMode && !this._roomsLocked;
+    const canEditCam = mode === "devices" || mode === "cameras";
+    const canEditSensor = mode === "devices" || mode === "sensors";
+    const canEditBle = mode === "devices" || mode === "sensors";
+
     const camGeoms = fCams.map((cam, idx) => {
       const poly = this._computeCameraVisibilityPolygon(cam, solidSegments);
       const pathD = this._coneSvgPath(cam, solidSegments);
@@ -4839,91 +5433,44 @@ action:
       };
     });
 
-    // 1. Cones & camera controls
-    const isCamMode = this._floorplanMode === "cameras";
-    const conesSvg = fCams
+    const camConesSvg = fCams
       .map((cam) => {
         const camId = cam.id || cam.camera_entity;
-        const camLabel = (cam.name || cam.label || camId).replace(" Camera", "");
-        const isSelectedCam = selCam && (selCam.id || selCam.camera_entity) === camId && isCamMode;
+        const isSelectedCam =
+          canEditCam &&
+          (this._selectedDeviceType === "camera" || mode === "cameras") &&
+          selCam &&
+          (selCam.id || selCam.camera_entity) === camId;
         const hasSpill =
           (Array.isArray(cam.spills_into) && cam.spills_into.length > 0) ||
           camAnalysis.some((ca) => ca.camera_id === camId && ca.has_multi_room_bleed);
         const coneColor = hasSpill ? "#d97706" : "#0284c7";
         const pathD = this._coneSvgPath(cam, solidSegments);
-        const rad = (Number(cam.heading_deg || 0) * Math.PI) / 180.0;
-        const labelDist = Math.min(125, Number(cam.range_px || 200) * 0.45);
-        const labelX = Math.max(70, Math.min(930, Number(cam.x) + Math.cos(rad) * labelDist));
-        const labelY = Math.max(20, Math.min(560, Number(cam.y) + Math.sin(rad) * labelDist));
-
-        // Interactive control handles for selected camera
-        let camHandlesSvg = "";
-        if (isSelectedCam && isCamMode) {
-          const aimDist = 45;
-          const aimX = Number(cam.x) + Math.cos(rad) * aimDist;
-          const aimY = Number(cam.y) + Math.sin(rad) * aimDist;
-          const fov = Number(cam.fov_deg || 90);
-          const reach = Number(cam.range_px || 200);
-          const startRad = ((Number(cam.heading_deg || 0) - fov / 2.0) * Math.PI) / 180.0;
-          const endRad = ((Number(cam.heading_deg || 0) + fov / 2.0) * Math.PI) / 180.0;
-          const fovHandleDist = Math.min(120, reach * 0.85);
-          const fov1X = Number(cam.x) + Math.cos(startRad) * fovHandleDist;
-          const fov1Y = Number(cam.y) + Math.sin(startRad) * fovHandleDist;
-          const fov2X = Number(cam.x) + Math.cos(endRad) * fovHandleDist;
-          const fov2Y = Number(cam.y) + Math.sin(endRad) * fovHandleDist;
-          const tipX = Number(cam.x) + Math.cos(rad) * reach;
-          const tipY = Number(cam.y) + Math.sin(rad) * reach;
-
-          camHandlesSvg = `
-            <line x1="${Number(cam.x).toFixed(1)}" y1="${Number(cam.y).toFixed(1)}" x2="${aimX.toFixed(1)}" y2="${aimY.toFixed(1)}" stroke="${coneColor}" stroke-width="2.5" stroke-linecap="round" />
-            <circle class="fp-cam-handle" data-handle="heading" data-cam-id="${this._escape(camId)}" cx="${aimX.toFixed(1)}" cy="${aimY.toFixed(1)}" r="6.5" fill="#ffffff" stroke="${coneColor}" stroke-width="2.5" style="cursor:crosshair;" />
-            <circle class="fp-cam-handle" data-handle="fov_start" data-cam-id="${this._escape(camId)}" cx="${fov1X.toFixed(1)}" cy="${fov1Y.toFixed(1)}" r="5.5" fill="#ffffff" stroke="${coneColor}" stroke-width="2" style="cursor:ew-resize;" />
-            <circle class="fp-cam-handle" data-handle="fov_end" data-cam-id="${this._escape(camId)}" cx="${fov2X.toFixed(1)}" cy="${fov2Y.toFixed(1)}" r="5.5" fill="#ffffff" stroke="${coneColor}" stroke-width="2" style="cursor:ew-resize;" />
-            <circle class="fp-cam-handle" data-handle="range" data-cam-id="${this._escape(camId)}" cx="${tipX.toFixed(1)}" cy="${tipY.toFixed(1)}" r="6" fill="${coneColor}" stroke="#ffffff" stroke-width="2" style="cursor:nwse-resize;" />
-          `;
-        }
-
         return `
-          <g class="fp-cam-group" data-cam-entity="${this._escape(camId)}" style="${isCamMode ? "" : "opacity:0.4;"}">
-            <title>${this._escape(camLabel)}</title>
-            <path
-              d="${pathD}"
-              fill="${hasSpill ? "rgba(217, 119, 6, 0.15)" : "rgba(2, 132, 199, 0.13)"}"
-              stroke="${coneColor}"
-              stroke-width="${isSelectedCam ? "2.4" : "1.2"}"
-              stroke-dasharray="${hasSpill ? "5,4" : "none"}"
-              style="pointer-events:none;"
-            />
-            <circle
-              class="fp-cam-origin"
-              data-cam-entity="${this._escape(camId)}"
-              cx="${Number(cam.x).toFixed(1)}"
-              cy="${Number(cam.y).toFixed(1)}"
-              r="${isSelectedCam ? "8" : "6"}"
-              fill="${coneColor}"
-              stroke="#ffffff"
-              stroke-width="2"
-              style="${isCamMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
-            />
-            ${camHandlesSvg}
-          </g>
+          <path
+            d="${pathD}"
+            fill="${hasSpill ? "rgba(217, 119, 6, 0.15)" : "rgba(2, 132, 199, 0.13)"}"
+            stroke="${coneColor}"
+            stroke-width="${isSelectedCam ? "2.4" : "1.2"}"
+            stroke-dasharray="${hasSpill ? "5,4" : "none"}"
+            opacity="${canEditCam ? "1" : "0.45"}"
+            style="pointer-events:none;"
+          />
         `;
       })
       .join("");
 
-    // 2. Rooms, entryways & resize handles
-    const isRoomMode = this._floorplanMode === "rooms";
     const roomsSvg = fRooms
       .map((box) => {
         const rName = box.name || box.room_name;
         const live = liveRoomsByName[rName];
-        const isSel = (selBox && (selBox.name || selBox.room_name) === rName && isRoomMode);
+        const isSel = selBox && (selBox.name || selBox.room_name) === rName && isRoomMode;
         const isOcc = live ? Boolean(live.is_present) : false;
         const isTransit = box.room_type === "transit" || Boolean(box.is_transit);
         const covPct = Number(roomCoverage[rName]?.max_coverage_pct ?? 100);
         const hasBlindSpot = !isTransit && covPct === 0;
 
-        let strokeColor = isSel ? "#0284c7" : "#0284c7";
+        let strokeColor = "#0284c7";
         let fillColor = isSel ? "rgba(2, 132, 199, 0.16)" : "rgba(2, 132, 199, 0.08)";
         if (isOcc) {
           strokeColor = "#16a34a";
@@ -4942,47 +5489,21 @@ action:
         const rh = Number(box.height ?? box.h ?? 150);
         const statusSummary = this._roomStatusSummary(live);
 
-        // Render entryways for this room
         const entryways = Array.isArray(box.entryways) ? box.entryways : [];
         const entrywaysSvg = entryways
           .map((ew) => {
             const isSelDoor = this._selectedDoorId === ew.id && isRoomMode;
             const offset = Math.max(0, Number(ew.offset || 0));
             const width = Math.max(10, Number(ew.width || 36));
-            let x1 = rx,
-              y1 = ry,
-              x2 = rx,
-              y2 = ry,
-              bx = rx,
-              by = ry;
+            let x1 = rx, y1 = ry, x2 = rx, y2 = ry, bx = rx, by = ry;
             if (ew.wall === "top") {
-              x1 = rx + offset;
-              y1 = ry;
-              x2 = x1 + width;
-              y2 = ry;
-              bx = x1 + width / 2;
-              by = ry;
+              x1 = rx + offset; y1 = ry; x2 = x1 + width; y2 = ry; bx = x1 + width / 2; by = ry;
             } else if (ew.wall === "bottom") {
-              x1 = rx + offset;
-              y1 = ry + rh;
-              x2 = x1 + width;
-              y2 = ry + rh;
-              bx = x1 + width / 2;
-              by = ry + rh;
+              x1 = rx + offset; y1 = ry + rh; x2 = x1 + width; y2 = ry + rh; bx = x1 + width / 2; by = ry + rh;
             } else if (ew.wall === "left") {
-              x1 = rx;
-              y1 = ry + offset;
-              x2 = rx;
-              y2 = y1 + width;
-              bx = rx;
-              by = y1 + width / 2;
+              x1 = rx; y1 = ry + offset; x2 = rx; y2 = y1 + width; bx = rx; by = y1 + width / 2;
             } else if (ew.wall === "right") {
-              x1 = rx + rw;
-              y1 = ry + offset;
-              x2 = rx + rw;
-              y2 = y1 + width;
-              bx = rx + rw;
-              by = y1 + width / 2;
+              x1 = rx + rw; y1 = ry + offset; x2 = rx + rw; y2 = y1 + width; bx = rx + rw; by = y1 + width / 2;
             }
             const isPassage = ew.type === "open_passage";
             const doorColor = isSelDoor ? "#0284c7" : isPassage ? "#64748b" : "#b45309";
@@ -5004,9 +5525,8 @@ action:
           })
           .join("");
 
-        // 8 Resize Handles when room is selected
         let resizeHandlesSvg = "";
-        if (isSel && isRoomMode) {
+        if (isSel && canDragRooms) {
           const handles = [
             { id: "nw", x: rx, y: ry, cursor: "nwse-resize" },
             { id: "n", x: rx + rw / 2, y: ry, cursor: "ns-resize" },
@@ -5032,12 +5552,18 @@ action:
               stroke="#0284c7"
               stroke-width="2"
               rx="2"
-              style="cursor:${h.cursor};"
+              style="cursor:${h.cursor};pointer-events:all;"
             />
           `
             )
             .join("");
         }
+
+        const roomPointerStyle = canDragRooms
+          ? "cursor:move;pointer-events:all;"
+          : isRoomMode
+          ? "cursor:pointer;pointer-events:all;"
+          : "pointer-events:none;";
 
         const roomShapeSvg = box.svg_path
           ? `<path
@@ -5048,7 +5574,7 @@ action:
               stroke="${strokeColor}"
               stroke-width="${isSel ? "2.5" : "1.6"}"
               stroke-dasharray="${isTransit ? "4,4" : "none"}"
-              style="${isRoomMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
+              style="${roomPointerStyle}"
             />`
           : `<rect
               class="fp-room-rect"
@@ -5062,7 +5588,7 @@ action:
               stroke="${strokeColor}"
               stroke-width="${isSel ? "2.5" : "1.6"}"
               stroke-dasharray="${isTransit ? "4,4" : "none"}"
-              style="${isRoomMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
+              style="${roomPointerStyle}"
             />`;
 
         const anchor = this._roomLabelAnchor(box);
@@ -5083,25 +5609,12 @@ action:
             ${roomShapeSvg}
             ${
               roomTitle
-                ? `<text
-              x="${(anchor.x + padX).toFixed(1)}"
-              y="${(anchor.y + 22).toFixed(1)}"
-              fill="#1e293b"
-              font-size="${titleFs}"
-              font-weight="600"
-              style="pointer-events:none;user-select:none;"
-            >${this._escape(roomTitle)}</text>`
+                ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 22).toFixed(1)}" fill="#1e293b" font-size="${titleFs}" font-weight="600" style="pointer-events:none;user-select:none;">${this._escape(roomTitle)}</text>`
                 : ""
             }
             ${
               roomSub
-                ? `<text
-              x="${(anchor.x + padX).toFixed(1)}"
-              y="${(anchor.y + 40).toFixed(1)}"
-              fill="${isOcc ? "#16a34a" : "#64748b"}"
-              font-size="11"
-              style="pointer-events:none;user-select:none;"
-            >${this._escape(roomSub)}</text>`
+                ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 40).toFixed(1)}" fill="${isOcc ? "#16a34a" : "#64748b"}" font-size="11" style="pointer-events:none;user-select:none;">${this._escape(roomSub)}</text>`
                 : ""
             }
             ${
@@ -5130,22 +5643,11 @@ action:
         const x2 = Number(bTo.x) + w2 / 2;
         const y2 = Number(bTo.y) + h2 / 2;
         return `
-          <line
-            x1="${x1.toFixed(1)}"
-            y1="${y1.toFixed(1)}"
-            x2="${x2.toFixed(1)}"
-            y2="${y2.toFixed(1)}"
-            stroke="#94a3b8"
-            stroke-width="1.5"
-            stroke-dasharray="4,4"
-            opacity="0.65"
-            style="pointer-events:none;"
-          />
+          <line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.65" style="pointer-events:none;" />
         `;
       })
       .join("");
 
-    // Blueprint Underlay for active floor
     let underlaySvg = "";
     const activeFloorId = activeFloor.id || "main";
     const underlayDef = typeof PDD_FLOOR_UNDERLAYS !== "undefined" ? PDD_FLOOR_UNDERLAYS[activeFloorId] : null;
@@ -5165,12 +5667,6 @@ action:
       `;
     }
 
-    const selBoxName = selBox ? selBox.name || selBox.room_name : selRoom?.room_name || "Room";
-    const selCamId = selCam ? selCam.id || selCam.camera_entity : "";
-    const selBoxEntryways = selBox && Array.isArray(selBox.entryways) ? selBox.entryways : [];
-    const isSensorMode = this._floorplanMode === "sensors";
-
-    // 3. Camera Sub-Zones (2D bounding boxes inside camera cones)
     const roomLabelBands = fRooms.map((b) => {
       const a = this._roomLabelAnchor(b);
       return { x1: a.x, x2: a.x + Math.min(a.w, 160), y1: a.y + 8, y2: a.y + 46 };
@@ -5185,8 +5681,11 @@ action:
             const sy = Number(sz.y || 0);
             const sw = Math.max(24, Number(sz.width || 60));
             const sh = Math.max(24, Number(sz.height || 60));
-            const isSelSz = this._selectedSubZoneId === sz.id && isCamMode;
-            const szLabelFit = isCamMode ? this._fitSvgLabel(sz.label || sz.id, sw - 8, 9.5) : "";
+            const isSelSz =
+              canEditCam &&
+              this._selectedDeviceType === "subzone" &&
+              this._selectedSubZoneId === sz.id;
+            const szLabelFit = canEditCam ? this._fitSvgLabel(sz.label || sz.id, sw - 8, 9.5) : "";
             let labelY = sy + sh / 2 + 3;
             if (szLabelFit) {
               const cx = sx + sw / 2;
@@ -5204,7 +5703,7 @@ action:
               placedSzLabels.push({ cx, y: labelY });
             }
             return `
-              <g class="fp-subzone-group" data-cam-id="${this._escape(camId)}" data-subzone-id="${this._escape(sz.id)}" style="${isCamMode ? "opacity:0.95;" : "opacity:0.55;pointer-events:none;"}">
+              <g class="fp-subzone-group" data-cam-id="${this._escape(camId)}" data-subzone-id="${this._escape(sz.id)}" style="${canEditCam ? "opacity:0.95;" : "opacity:0.55;pointer-events:none;"}">
                 <title>${this._escape(sz.label || sz.id)}</title>
                 <rect
                   class="fp-subzone-rect"
@@ -5217,21 +5716,21 @@ action:
                   rx="4"
                   fill="rgba(14, 165, 233, 0.14)"
                   stroke="${isSelSz ? "#0369a1" : "#0ea5e9"}"
-                  stroke-width="${isSelSz ? "2.2" : "1.3"}"
+                  stroke-width="${isSelSz ? "2.4" : "1.3"}"
                   stroke-dasharray="3,2"
-                  style="${isCamMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
+                  style="${canEditCam ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
                 />
                 ${
                   szLabelFit
-                    ? `<text
-                  x="${(sx + sw / 2).toFixed(1)}"
-                  y="${labelY.toFixed(1)}"
-                  text-anchor="middle"
-                  fill="#0369a1"
-                  font-size="9.5"
-                  font-weight="600"
-                  style="pointer-events:none;user-select:none;"
-                >${this._escape(szLabelFit)}</text>`
+                    ? `<text x="${(sx + sw / 2).toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle" fill="#0369a1" font-size="9.5" font-weight="600" style="pointer-events:none;user-select:none;">${this._escape(szLabelFit)}</text>`
+                    : ""
+                }
+                ${
+                  isSelSz
+                    ? `<g class="fp-handle-group fp-subzone-handle" data-cam-id="${this._escape(camId)}" data-subzone-id="${this._escape(sz.id)}" style="cursor:nwse-resize;">
+                         <circle class="fp-hit-target" cx="${(sx + sw).toFixed(1)}" cy="${(sy + sh).toFixed(1)}" r="12" />
+                         <rect class="fp-handle-visible" x="${(sx + sw - 5).toFixed(1)}" y="${(sy + sh - 5).toFixed(1)}" width="10" height="10" rx="2" fill="#ffffff" stroke="#0369a1" stroke-width="2" style="pointer-events:none;" />
+                       </g>`
                     : ""
                 }
               </g>
@@ -5241,35 +5740,26 @@ action:
       })
       .join("");
 
-    // 4. PIR Motion Cones, Door Contact Badges & BLE Proxy Anchors
-    const bleProxiesSvg = fProxies
+    const bleRingsSvg = fProxies
       .map((proxy) => {
         const px = Number(proxy.x || 0);
         const py = Number(proxy.y || 0);
         const rad = Number(proxy.radius_px || 230);
+        const isSelBle =
+          canEditBle &&
+          this._selectedDeviceType === "ble" &&
+          selBleProxy &&
+          selBleProxy.id === proxy.id;
         return `
-          <g class="fp-ble-group" data-proxy-id="${this._escape(proxy.id)}" style="${isSensorMode ? "opacity:0.95;" : "opacity:0.45;pointer-events:none;"}">
-            <title>🔊 ${this._escape(proxy.name || proxy.id)}</title>
-            <path
-              d="M ${(px - rad).toFixed(1)} ${py.toFixed(1)} a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 ${(rad * 2).toFixed(1)} 0 a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 -${(rad * 2).toFixed(1)} 0"
-              fill="rgba(13, 148, 136, 0.04)"
-              stroke="#0d9488"
-              stroke-width="1"
-              stroke-dasharray="4,4"
-              style="pointer-events:none;"
-            />
-            <circle
-              class="fp-ble-origin"
-              data-proxy-id="${this._escape(proxy.id)}"
-              cx="${px.toFixed(1)}"
-              cy="${py.toFixed(1)}"
-              r="7"
-              fill="#0d9488"
-              stroke="#ffffff"
-              stroke-width="2"
-              style="${isSensorMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
-            />
-          </g>
+          <path
+            d="M ${(px - rad).toFixed(1)} ${py.toFixed(1)} a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 ${(rad * 2).toFixed(1)} 0 a ${rad.toFixed(1)} ${rad.toFixed(1)} 0 1 0 -${(rad * 2).toFixed(1)} 0"
+            fill="rgba(13, 148, 136, 0.04)"
+            stroke="#0d9488"
+            stroke-width="${isSelBle ? "1.8" : "1"}"
+            stroke-dasharray="4,4"
+            opacity="${canEditBle ? "0.95" : "0.45"}"
+            style="pointer-events:none;"
+          />
         `;
       })
       .join("");
@@ -5277,75 +5767,28 @@ action:
     const doorSensorsList = fSensors.filter((s) => s.sensor_type === "door_contact");
     const pirSensorsList = fSensors.filter((s) => s.sensor_type !== "door_contact");
 
-    const doorSensorsSvg = doorSensorsList
+    const pirConesSvg = pirSensorsList
       .map((s) => {
-        const sx = Number(s.x || 0);
-        const sy = Number(s.y || 0);
-        const isSelSens = selSensor && selSensor.id === s.id && isSensorMode;
-        return `
-          <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:1;" : "opacity:0.85;pointer-events:none;"}">
-            <title>🚪 ${this._escape(s.name || s.id)}</title>
-            <rect
-              class="fp-sensor-origin"
-              data-sensor-id="${this._escape(s.id)}"
-              x="${(sx - 8).toFixed(1)}"
-              y="${(sy - 8).toFixed(1)}"
-              width="16"
-              height="16"
-              rx="4"
-              fill="#ea580c"
-              stroke="#ffffff"
-              stroke-width="${isSelSens ? "2.5" : "1.5"}"
-              style="${isSensorMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
-            />
-          </g>
-        `;
-      })
-      .join("");
-
-    const pirSensorsSvg = pirSensorsList
-      .map((s) => {
-        const sx = Number(s.x || 0);
-        const sy = Number(s.y || 0);
-        const isSelSens = selSensor && selSensor.id === s.id && isSensorMode;
+        const isSelSens =
+          canEditSensor &&
+          this._selectedDeviceType === "sensor" &&
+          selSensor &&
+          selSensor.id === s.id;
         const conePath = this._coneSvgPath(s, solidSegments);
-        const rad = (Number(s.heading_deg || 0) * Math.PI) / 180.0;
-        const aimX = sx + Math.cos(rad) * 38;
-        const aimY = sy + Math.sin(rad) * 38;
         return `
-          <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:0.95;" : "opacity:0.75;pointer-events:none;"}">
-            <title>📡 ${this._escape(s.name || s.id)} (${Number(s.fov_deg || 110)}° FOV)</title>
-            <path
-              d="${conePath}"
-              fill="rgba(147, 51, 234, 0.12)"
-              stroke="#9333ea"
-              stroke-width="${isSelSens ? "2.2" : "1.2"}"
-              stroke-dasharray="3,3"
-              style="pointer-events:none;"
-            />
-            <circle
-              class="fp-sensor-origin"
-              data-sensor-id="${this._escape(s.id)}"
-              cx="${sx.toFixed(1)}"
-              cy="${sy.toFixed(1)}"
-              r="${isSelSens ? "7.5" : "6"}"
-              fill="#9333ea"
-              stroke="#ffffff"
-              stroke-width="2"
-              style="${isSensorMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
-            />
-            ${
-              isSelSens && isSensorMode
-                ? `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${aimX.toFixed(1)}" y2="${aimY.toFixed(1)}" stroke="#9333ea" stroke-width="2" />
-                   <circle class="fp-sensor-handle" data-sensor-id="${this._escape(s.id)}" data-handle="heading" cx="${aimX.toFixed(1)}" cy="${aimY.toFixed(1)}" r="6" fill="#ffffff" stroke="#9333ea" stroke-width="2.2" style="cursor:crosshair;pointer-events:all;" />`
-                : ""
-            }
-          </g>
+          <path
+            d="${conePath}"
+            fill="rgba(147, 51, 234, 0.12)"
+            stroke="#9333ea"
+            stroke-width="${isSelSens ? "2.3" : "1.2"}"
+            stroke-dasharray="3,3"
+            opacity="${canEditSensor ? "0.95" : "0.65"}"
+            style="pointer-events:none;"
+          />
         `;
       })
       .join("");
 
-    // 4b. Multi-Sensor Overlap Intersections (exact SVG clipPath intersections)
     const clipDefs = [];
     const overlapShapes = [];
     const overlapCounts = { multiCam: 0, camPir: 0, camBle: 0, pirBle: 0 };
@@ -5413,14 +5856,13 @@ action:
 
     const totalOverlapPairs =
       overlapCounts.multiCam + overlapCounts.camPir + overlapCounts.camBle + overlapCounts.pirBle;
-    const subZoneCount = fCams.reduce((acc, c) => acc + ((c.sub_zones || []).length), 0);
+    const subZoneCount = fCams.reduce((acc, c) => acc + (c.sub_zones || []).length, 0);
     const blindRoomCount = fRooms.filter((b) => {
       const rName = b.name || b.room_name;
       const isT = b.room_type === "transit" || Boolean(b.is_transit);
       return !isT && Number(roomCoverage[rName]?.max_coverage_pct ?? 100) === 0;
     }).length;
 
-    // 5. Live Negative-Space & Positive Occupant Estimates on this floor
     const liveEstimates = (this._overview?.spatial_inference?.occupant_estimates || []).filter(
       (est) => est.floor === activeFloor.id
     );
@@ -5445,60 +5887,443 @@ action:
       })
       .join("");
 
+    const bleControlsSvg = layerOn("ble")
+      ? fProxies
+          .map((proxy) => {
+            const px = Number(proxy.x || 0);
+            const py = Number(proxy.y || 0);
+            const rad = Number(proxy.radius_px || 230);
+            const isSelBle =
+              canEditBle &&
+              this._selectedDeviceType === "ble" &&
+              selBleProxy &&
+              selBleProxy.id === proxy.id;
+            const angToCenter = Math.atan2(290 - py, 500 - px);
+            const hx = Math.max(14, Math.min(986, px + Math.cos(angToCenter) * rad));
+            const hy = Math.max(14, Math.min(566, py + Math.sin(angToCenter) * rad));
+            return `
+              <g class="fp-ble-group" data-proxy-id="${this._escape(proxy.id)}" style="${canEditBle ? "opacity:1;" : "opacity:0.45;pointer-events:none;"}">
+                <title>📶 ${this._escape(proxy.name || proxy.id)} (r=${Math.round(rad)}px)</title>
+                ${isSelBle ? `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="13" fill="rgba(13, 148, 136, 0.16)" stroke="#0d9488" stroke-width="1.5" style="pointer-events:none;" />` : ""}
+                <g class="fp-handle-group fp-ble-origin" data-proxy-id="${this._escape(proxy.id)}" style="${canEditBle ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}">
+                  <circle class="fp-hit-target" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="15" />
+                  <circle class="fp-handle-visible" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${isSelBle ? "8" : "6.5"}" fill="#0d9488" stroke="#ffffff" stroke-width="2" style="pointer-events:none;" />
+                </g>
+                ${
+                  isSelBle
+                    ? `<line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" stroke="#0d9488" stroke-width="1.5" stroke-dasharray="3,3" style="pointer-events:none;" />
+                       <g class="fp-handle-group fp-ble-handle" data-handle="ble_radius" data-proxy-id="${this._escape(proxy.id)}" style="cursor:ew-resize;pointer-events:all;">
+                         <title>Drag to resize BLE radius (${Math.round(rad)}px)</title>
+                         <circle class="fp-hit-target" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="14" />
+                         <circle class="fp-handle-visible" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="6" fill="#ffffff" stroke="#0d9488" stroke-width="2.2" style="pointer-events:none;" />
+                       </g>`
+                    : ""
+                }
+              </g>
+            `;
+          })
+          .join("")
+      : "";
+
+    const doorControlsSvg = layerOn("doors")
+      ? doorSensorsList
+          .map((s) => {
+            const sx = Number(s.x || 0);
+            const sy = Number(s.y || 0);
+            const isSelSens =
+              canEditSensor &&
+              this._selectedDeviceType === "sensor" &&
+              selSensor &&
+              selSensor.id === s.id;
+            return `
+              <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${canEditSensor ? "opacity:1;" : "opacity:0.6;pointer-events:none;"}">
+                <title>🚪 ${this._escape(s.name || s.id)}</title>
+                ${isSelSens ? `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="14" fill="rgba(234, 88, 12, 0.16)" stroke="#ea580c" stroke-width="1.5" style="pointer-events:none;" />` : ""}
+                <g class="fp-handle-group fp-sensor-origin" data-sensor-id="${this._escape(s.id)}" style="${canEditSensor ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}">
+                  <circle class="fp-hit-target" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="15" />
+                  <rect class="fp-handle-visible" x="${(sx - 8).toFixed(1)}" y="${(sy - 8).toFixed(1)}" width="16" height="16" rx="4" fill="#ea580c" stroke="#ffffff" stroke-width="${isSelSens ? "2.5" : "1.8"}" style="pointer-events:none;" />
+                </g>
+              </g>
+            `;
+          })
+          .join("")
+      : "";
+
+    const pirControlsSvg = layerOn("pir")
+      ? pirSensorsList
+          .map((s) => {
+            const sx = Number(s.x || 0);
+            const sy = Number(s.y || 0);
+            const isSelSens =
+              canEditSensor &&
+              this._selectedDeviceType === "sensor" &&
+              selSensor &&
+              selSensor.id === s.id;
+            const rad = (Number(s.heading_deg || 0) * Math.PI) / 180.0;
+            const previewLen = 28;
+            const px2 = sx + Math.cos(rad) * previewLen;
+            const py2 = sy + Math.sin(rad) * previewLen;
+            const handlesSvg = isSelSens
+              ? this._buildLosAndConeHandlesSvg({
+                  kind: "sensor",
+                  id: s.id,
+                  x: sx,
+                  y: sy,
+                  headingDeg: s.heading_deg || 0,
+                  fovDeg: s.fov_deg || 110,
+                  rangePx: s.range_px || 180,
+                  color: "#9333ea",
+                  isDoorContact: false,
+                })
+              : `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${px2.toFixed(1)}" y2="${py2.toFixed(1)}" stroke="#9333ea" stroke-width="1.8" opacity="0.7" style="pointer-events:none;" />`;
+            return `
+              <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${canEditSensor ? "opacity:1;" : "opacity:0.55;pointer-events:none;"}">
+                <title>📡 ${this._escape(s.name || s.id)} (${Number(s.fov_deg || 110)}° FOV, ${Math.round(Number(s.heading_deg || 0))}°)</title>
+                ${isSelSens ? `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="13" fill="rgba(147, 51, 234, 0.16)" stroke="#9333ea" stroke-width="1.5" style="pointer-events:none;" />` : ""}
+                ${handlesSvg}
+                <g class="fp-handle-group fp-sensor-origin" data-sensor-id="${this._escape(s.id)}" style="${canEditSensor ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}">
+                  <circle class="fp-hit-target" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="15" />
+                  <circle class="fp-handle-visible" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="${isSelSens ? "8" : "6.5"}" fill="#9333ea" stroke="#ffffff" stroke-width="2" style="pointer-events:none;" />
+                </g>
+              </g>
+            `;
+          })
+          .join("")
+      : "";
+
+    const camControlsSvg = layerOn("cameras")
+      ? fCams
+          .map((cam) => {
+            const camId = cam.id || cam.camera_entity;
+            const camLabel = (cam.name || cam.label || camId).replace(" Camera", "");
+            const isSelectedCam =
+              canEditCam &&
+              (this._selectedDeviceType === "camera" || mode === "cameras") &&
+              selCam &&
+              (selCam.id || selCam.camera_entity) === camId;
+            const hasSpill =
+              (Array.isArray(cam.spills_into) && cam.spills_into.length > 0) ||
+              camAnalysis.some((ca) => ca.camera_id === camId && ca.has_multi_room_bleed);
+            const coneColor = hasSpill ? "#d97706" : "#0284c7";
+            const cx = Number(cam.x || 0);
+            const cy = Number(cam.y || 0);
+            const rad = (Number(cam.heading_deg || 0) * Math.PI) / 180.0;
+            const previewLen = 30;
+            const px2 = cx + Math.cos(rad) * previewLen;
+            const py2 = cy + Math.sin(rad) * previewLen;
+            const camHandlesSvg = isSelectedCam
+              ? this._buildLosAndConeHandlesSvg({
+                  kind: "camera",
+                  id: camId,
+                  x: cx,
+                  y: cy,
+                  headingDeg: cam.heading_deg || 0,
+                  fovDeg: cam.fov_deg || 90,
+                  rangePx: cam.range_px || 180,
+                  color: coneColor,
+                  isDoorContact: false,
+                })
+              : `<line x1="${cx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${px2.toFixed(1)}" y2="${py2.toFixed(1)}" stroke="${coneColor}" stroke-width="2" opacity="0.75" style="pointer-events:none;" />`;
+
+            return `
+              <g class="fp-cam-group" data-cam-entity="${this._escape(camId)}" style="${canEditCam ? "opacity:1;" : "opacity:0.45;pointer-events:none;"}">
+                <title>📹 ${this._escape(camLabel)} (${Math.round(Number(cam.heading_deg || 0))}°, ${Math.round(Number(cam.fov_deg || 90))}° FOV)</title>
+                ${isSelectedCam ? `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="14" fill="rgba(2, 132, 199, 0.16)" stroke="${coneColor}" stroke-width="1.5" style="pointer-events:none;" />` : ""}
+                ${camHandlesSvg}
+                <g class="fp-handle-group fp-cam-origin" data-cam-entity="${this._escape(camId)}" style="${canEditCam ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}">
+                  <circle class="fp-hit-target" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="16" />
+                  <circle class="fp-handle-visible" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${isSelectedCam ? "8.5" : "6.5"}" fill="${coneColor}" stroke="#ffffff" stroke-width="2" style="pointer-events:none;" />
+                </g>
+              </g>
+            `;
+          })
+          .join("")
+      : "";
+
+    const svgInner = `
+      <defs>
+        <pattern id="pdd-pat-cam-pir" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="10" height="10" fill="rgba(124, 58, 237, 0.14)" />
+          <line x1="0" y1="0" x2="0" y2="10" stroke="#7c3aed" stroke-width="2.5" stroke-opacity="0.55" />
+          <line x1="5" y1="0" x2="5" y2="10" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.55" />
+        </pattern>
+        <pattern id="pdd-pat-multi-cam" width="10" height="10" patternUnits="userSpaceOnUse">
+          <rect width="10" height="10" fill="rgba(217, 119, 6, 0.16)" />
+          <path d="M 0,10 L 10,0 M -2,2 L 2,-2 M 8,12 L 12,8" stroke="#d97706" stroke-width="2" stroke-opacity="0.65" />
+          <path d="M 0,0 L 10,10" stroke="#0284c7" stroke-width="1.3" stroke-opacity="0.45" />
+        </pattern>
+        <pattern id="pdd-pat-cam-ble" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+          <rect width="10" height="10" fill="rgba(13, 148, 136, 0.14)" />
+          <line x1="0" y1="0" x2="0" y2="10" stroke="#0d9488" stroke-width="2.4" stroke-opacity="0.55" />
+          <line x1="5" y1="0" x2="5" y2="10" stroke="#0284c7" stroke-width="2.4" stroke-opacity="0.5" />
+        </pattern>
+        <pattern id="pdd-pat-pir-ble" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
+          <rect width="10" height="10" fill="rgba(147, 51, 234, 0.13)" />
+          <line x1="0" y1="0" x2="0" y2="10" stroke="#9333ea" stroke-width="2.2" stroke-opacity="0.5" />
+          <line x1="5" y1="0" x2="5" y2="10" stroke="#0d9488" stroke-width="2.2" stroke-opacity="0.55" />
+        </pattern>
+        ${clipDefs.join("")}
+      </defs>
+      ${underlaySvg}
+      ${layerOn("connections") ? connsSvg : ""}
+      ${layerOn("rooms") ? roomsSvg : ""}
+      ${layerOn("ble") ? bleRingsSvg : ""}
+      ${layerOn("cameras") ? camConesSvg : ""}
+      ${layerOn("overlaps") ? `<g class="fp-overlaps-layer" style="pointer-events:none;">${overlapShapes.join("")}</g>` : ""}
+      ${layerOn("subzones") ? subZonesSvg : ""}
+      ${layerOn("pir") ? pirConesSvg : ""}
+      ${layerOn("occupants") ? occupantsSvg : ""}
+      <g class="fp-controls-layer">
+        ${bleControlsSvg}
+        ${doorControlsSvg}
+        ${pirControlsSvg}
+        ${camControlsSvg}
+      </g>
+    `;
+
+    return {
+      ctx,
+      svgInner,
+      hudHtml: this._buildFloorplanHudHtml(ctx),
+      overlapCounts,
+      totalOverlapPairs,
+      subZoneCount,
+      blindRoomCount,
+      doorSensorsList,
+      pirSensorsList,
+      liveEstimates,
+      ambiguities,
+      connMap,
+    };
+  }
+
+  _renderQuickAdjustBar(ctx) {
+    const { selCam, selSensor, selBleProxy, selBox, fCams } = ctx;
+    const dtype = this._selectedDeviceType;
+
+    if (dtype === "camera" && selCam) {
+      const camId = selCam.id || selCam.camera_entity;
+      return `
+        <div class="fp-quick-bar" id="fp-quick-bar">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12.5px;font-weight:700;color:#0284c7;">📹 ${this._escape(selCam.name || camId)}</span>
+            <select class="select" id="fp-quick-cam-select" style="width:auto;padding:3px 8px;font-size:12px;">
+              ${fCams.map((c) => {
+                const cid = c.id || c.camera_entity;
+                return `<option value="${this._escape(cid)}" ${cid === camId ? "selected" : ""}>${this._escape(c.name || cid)}</option>`;
+              }).join("")}
+            </select>
+          </div>
+          <div class="fp-quick-fields">
+            <div class="fp-quick-field"><small>X</small><input type="number" class="input fp-quick-input" data-kind="camera" data-key="x" value="${Math.round(selCam.x || 0)}" /></div>
+            <div class="fp-quick-field"><small>Y</small><input type="number" class="input fp-quick-input" data-kind="camera" data-key="y" value="${Math.round(selCam.y || 0)}" /></div>
+            <div class="fp-quick-field">
+              <small>LOS Angle°</small>
+              <div class="fp-nudge-group">
+                <button type="button" class="btn btn-sm fp-nudge-ang" data-kind="camera" data-delta="-5" title="Rotate -5°">-5°</button>
+                <input type="number" class="input fp-quick-input" data-kind="camera" data-key="heading_deg" value="${Math.round(selCam.heading_deg || 0)}" style="width:54px;" />
+                <button type="button" class="btn btn-sm fp-nudge-ang" data-kind="camera" data-delta="5" title="Rotate +5°">+5°</button>
+              </div>
+            </div>
+            <div class="fp-quick-field"><small>FOV°</small><input type="number" class="input fp-quick-input" data-kind="camera" data-key="fov_deg" value="${Math.round(selCam.fov_deg || 90)}" /></div>
+            <div class="fp-quick-field"><small>Range</small><input type="number" class="input fp-quick-input" data-kind="camera" data-key="range_px" value="${Math.round(selCam.range_px || 180)}" /></div>
+          </div>
+        </div>
+      `;
+    }
+
+    if (dtype === "sensor" && selSensor) {
+      const isDoor = selSensor.sensor_type === "door_contact";
+      return `
+        <div class="fp-quick-bar" id="fp-quick-bar">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12.5px;font-weight:700;color:${isDoor ? "#ea580c" : "#9333ea"};">${isDoor ? "🚪" : "📡"} ${this._escape(selSensor.name || selSensor.id)}</span>
+            <select class="select" id="fp-quick-sensor-select" style="width:auto;padding:3px 8px;font-size:12px;">
+              ${ctx.fSensors.map((s) => `<option value="${this._escape(s.id)}" ${s.id === selSensor.id ? "selected" : ""}>${s.sensor_type === "door_contact" ? "🚪" : "📡"} ${this._escape(s.name || s.id)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="fp-quick-fields">
+            <div class="fp-quick-field"><small>X</small><input type="number" class="input fp-quick-input" data-kind="sensor" data-key="x" value="${Math.round(selSensor.x || 0)}" /></div>
+            <div class="fp-quick-field"><small>Y</small><input type="number" class="input fp-quick-input" data-kind="sensor" data-key="y" value="${Math.round(selSensor.y || 0)}" /></div>
+            ${
+              isDoor
+                ? ""
+                : `
+              <div class="fp-quick-field">
+                <small>LOS Angle°</small>
+                <div class="fp-nudge-group">
+                  <button type="button" class="btn btn-sm fp-nudge-ang" data-kind="sensor" data-delta="-5">-5°</button>
+                  <input type="number" class="input fp-quick-input" data-kind="sensor" data-key="heading_deg" value="${Math.round(selSensor.heading_deg || 0)}" style="width:54px;" />
+                  <button type="button" class="btn btn-sm fp-nudge-ang" data-kind="sensor" data-delta="5">+5°</button>
+                </div>
+              </div>
+              <div class="fp-quick-field"><small>FOV°</small><input type="number" class="input fp-quick-input" data-kind="sensor" data-key="fov_deg" value="${Math.round(selSensor.fov_deg || 110)}" /></div>
+              <div class="fp-quick-field"><small>Range</small><input type="number" class="input fp-quick-input" data-kind="sensor" data-key="range_px" value="${Math.round(selSensor.range_px || 180)}" /></div>
+            `
+            }
+          </div>
+        </div>
+      `;
+    }
+
+    if (dtype === "ble" && selBleProxy) {
+      return `
+        <div class="fp-quick-bar" id="fp-quick-bar">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12.5px;font-weight:700;color:#0d9488;">📶 ${this._escape(selBleProxy.name || selBleProxy.id)}</span>
+          </div>
+          <div class="fp-quick-fields">
+            <div class="fp-quick-field"><small>X</small><input type="number" class="input fp-quick-input" data-kind="ble" data-key="x" value="${Math.round(selBleProxy.x || 0)}" /></div>
+            <div class="fp-quick-field"><small>Y</small><input type="number" class="input fp-quick-input" data-kind="ble" data-key="y" value="${Math.round(selBleProxy.y || 0)}" /></div>
+            <div class="fp-quick-field"><small>Radius</small><input type="number" class="input fp-quick-input" data-kind="ble" data-key="radius_px" value="${Math.round(selBleProxy.radius_px || 200)}" /></div>
+          </div>
+        </div>
+      `;
+    }
+
+    if (dtype === "subzone" && this._selectedSubZoneId) {
+      const cam = fCams.find((c) => (c.id || c.camera_entity) === this._selectedCamEntity);
+      const sz = (cam?.sub_zones || []).find((z) => z.id === this._selectedSubZoneId);
+      if (sz) {
+        return `
+          <div class="fp-quick-bar" id="fp-quick-bar">
+            <span style="font-size:12.5px;font-weight:700;color:#0369a1;">🎯 Sub-Zone: ${this._escape(sz.label || sz.id)}</span>
+            <div class="fp-quick-fields">
+              <div class="fp-quick-field"><small>X</small><input type="number" class="input fp-quick-input" data-kind="subzone" data-key="x" value="${Math.round(sz.x || 0)}" /></div>
+              <div class="fp-quick-field"><small>Y</small><input type="number" class="input fp-quick-input" data-kind="subzone" data-key="y" value="${Math.round(sz.y || 0)}" /></div>
+              <div class="fp-quick-field"><small>Width</small><input type="number" class="input fp-quick-input" data-kind="subzone" data-key="width" value="${Math.round(sz.width || 60)}" /></div>
+              <div class="fp-quick-field"><small>Height</small><input type="number" class="input fp-quick-input" data-kind="subzone" data-key="height" value="${Math.round(sz.height || 60)}" /></div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    if (selBox) {
+      const rName = selBox.name || selBox.room_name;
+      return `
+        <div class="fp-quick-bar" id="fp-quick-bar">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12.5px;font-weight:700;">🏠 ${this._escape(rName)}</span>
+            <span style="font-size:11.5px;color:var(--ha-muted);">${this._roomsLocked ? "🔒 Locked against accidental drag" : "🔓 Unlocked"}</span>
+          </div>
+          <div class="fp-quick-fields">
+            <div class="fp-quick-field"><small>X</small><input type="number" class="input fp-quick-input" data-kind="room" data-key="x" value="${Math.round(selBox.x || 0)}" ${this._roomsLocked ? "disabled" : ""} /></div>
+            <div class="fp-quick-field"><small>Y</small><input type="number" class="input fp-quick-input" data-kind="room" data-key="y" value="${Math.round(selBox.y || 0)}" ${this._roomsLocked ? "disabled" : ""} /></div>
+            <div class="fp-quick-field"><small>Width</small><input type="number" class="input fp-quick-input" data-kind="room" data-key="width" value="${Math.round(selBox.width ?? 200)}" ${this._roomsLocked ? "disabled" : ""} /></div>
+            <div class="fp-quick-field"><small>Height</small><input type="number" class="input fp-quick-input" data-kind="room" data-key="height" value="${Math.round(selBox.height ?? 150)}" ${this._roomsLocked ? "disabled" : ""} /></div>
+            <button type="button" class="btn btn-sm" id="btn-fp-reset-selected-room" data-room="${this._escape(rName)}" title="Restore this room's exact default shape & position">↺ Restore Room</button>
+          </div>
+        </div>
+      `;
+    }
+    return "";
+  }
+
+  _renderFloorplanPane(selRoom) {
+    const bundle = this._renderFloorplanSvgBundle(selRoom);
+    if (!bundle) {
+      return `<div class="ha-card">Loading floorplan...</div>`;
+    }
+    const {
+      ctx,
+      svgInner,
+      hudHtml,
+      overlapCounts,
+      totalOverlapPairs,
+      subZoneCount,
+      blindRoomCount,
+      doorSensorsList,
+      pirSensorsList,
+      liveEstimates,
+      ambiguities,
+    } = bundle;
+    const { floors, activeFloor, fRooms, fConns, fCams, fSensors, fProxies, selSensor, selCam, selBox } = ctx;
+    const layers = this._fpLayers || {};
+    const layerOn = (k) => layers[k] !== false;
+    const selBoxName = selBox ? selBox.name || selBox.room_name : selRoom?.room_name || "Room";
+    const selCamId = selCam ? selCam.id || selCam.camera_entity : "";
+    const selBoxEntryways = selBox && Array.isArray(selBox.entryways) ? selBox.entryways : [];
+    const undoCount = (this._fpUndoStack || []).length;
+    const redoCount = (this._fpRedoStack || []).length;
+
     return `
       <div class="ha-card">
         <div class="card-head" style="flex-wrap:wrap;">
           <div>
             <h2 class="card-title" style="font-size:18px;">House Floorplan, Camera Sub-Zones &amp; Sensor Placement</h2>
             <div class="card-desc">
-              Switch between <strong>Rooms &amp; Doors</strong>, <strong>Cameras &amp; Sub-Zones</strong>, and <strong>PIR &amp; BLE Sensors</strong> to place and align all spatial layers. Live 🎯 markers show positive sub-zone and negative-space occupant localization.
+              Rooms are locked by default so clicking sensors never grabs a room. Drag any camera/PIR pin, aim its <strong>LOS vector</strong>, or switch modes anytime.
             </div>
           </div>
 
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <div class="seg-group" id="fp-mode-switcher" style="margin-top:0;">
-              <button class="seg-btn ${
-                this._floorplanMode === "rooms" ? "active" : ""
-              }" id="btn-fp-mode-rooms" style="padding:6px 12px;font-weight:600;">
+              <button class="seg-btn ${this._floorplanMode === "devices" ? "active" : ""}" id="btn-fp-mode-devices" style="padding:6px 10px;font-weight:600;" title="Move & aim any camera, PIR, door sensor, BLE proxy, or sub-zone">
+                🎯 Sensors &amp; Cameras
+              </button>
+              <button class="seg-btn ${this._floorplanMode === "cameras" ? "active" : ""}" id="btn-fp-mode-cameras" style="padding:6px 10px;font-weight:600;">
+                📹 Cameras Only
+              </button>
+              <button class="seg-btn ${this._floorplanMode === "sensors" ? "active" : ""}" id="btn-fp-mode-sensors" style="padding:6px 10px;font-weight:600;">
+                📡 PIR &amp; BLE Only
+              </button>
+              <button class="seg-btn ${this._floorplanMode === "rooms" ? "active" : ""}" id="btn-fp-mode-rooms" style="padding:6px 10px;font-weight:600;">
                 🏠 Rooms &amp; Doors
-              </button>
-              <button class="seg-btn ${
-                this._floorplanMode === "cameras" ? "active" : ""
-              }" id="btn-fp-mode-cameras" style="padding:6px 12px;font-weight:600;">
-                📹 Cameras &amp; Sub-Zones
-              </button>
-              <button class="seg-btn ${
-                this._floorplanMode === "sensors" ? "active" : ""
-              }" id="btn-fp-mode-sensors" style="padding:6px 12px;font-weight:600;">
-                📡 PIR &amp; BLE Sensors
               </button>
             </div>
             <div class="seg-group" style="margin-top:0;">
               ${floors
                 .map(
                   (fl) => `
-                <button class="seg-btn ${
-                  fl.id === activeFloor.id ? "active" : ""
-                }" data-floor-id="${this._escape(fl.id)}" style="padding:6px 12px;">
+                <button class="seg-btn ${fl.id === activeFloor.id ? "active" : ""}" data-floor-id="${this._escape(fl.id)}" style="padding:6px 10px;">
                   ${this._escape(fl.name.replace(/\s*\(.*\)/, ""))}
                 </button>`
                 )
                 .join("")}
             </div>
-            <div style="display:flex;align-items:center;gap:6px;background:var(--ha-subtle);padding:3px 10px;border-radius:6px;border:1px solid var(--ha-divider);font-size:12px;">
+          </div>
+        </div>
+
+        <!-- Toolbar: Lock Rooms, Undo/Redo, Reset, Underlay, Save & Apply -->
+        <div class="fp-utility-bar">
+          <div class="fp-utility-group">
+            <button type="button" class="btn btn-sm fp-lock-btn ${this._roomsLocked ? "locked" : "unlocked"}" id="btn-fp-lock-rooms" title="${this._roomsLocked ? "Unlock to allow dragging/resizing room boxes" : "Lock room boxes so clicks never move rooms"}">
+              ${this._roomsLocked ? "🔒 Rooms Locked" : "🔓 Rooms Unlocked"}
+            </button>
+            <button type="button" class="btn btn-sm" id="btn-fp-undo" ${undoCount === 0 ? "disabled" : ""} title="Undo last edit (Ctrl+Z)">
+              ↩ Undo${undoCount > 0 ? ` (${undoCount})` : ""}
+            </button>
+            <button type="button" class="btn btn-sm" id="btn-fp-redo" ${redoCount === 0 ? "disabled" : ""} title="Redo edit (Ctrl+Shift+Z)">
+              ↪ Redo
+            </button>
+            <button type="button" class="btn btn-sm" id="btn-fp-reset-rooms" title="Restore exact default room boxes on this floor without moving your cameras or sensors">
+              ↺ Reset Floor Rooms
+            </button>
+            <button type="button" class="btn btn-sm" id="btn-fp-reset-all" title="Restore entire floorplan (rooms + sensors) to default">
+              ↺ Reset All
+            </button>
+          </div>
+
+          <div class="fp-utility-group">
+            <div style="display:flex;align-items:center;gap:6px;background:var(--ha-subtle);padding:3px 9px;border-radius:6px;border:1px solid var(--ha-divider);font-size:12px;">
               <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
                 <input type="checkbox" id="toggle-blueprint-underlay" ${layerOn("underlay") ? "checked" : ""} style="cursor:pointer;" />
                 <span>Blueprint</span>
               </label>
-              ${layerOn("underlay") ? `
-                <input type="range" id="blueprint-opacity-slider" min="5" max="100" step="5" value="${Math.round(this._underlayOpacity * 100)}" style="width:70px;cursor:pointer;" title="Underlay Opacity" />
-                <span style="font-size:11px;color:var(--ha-muted);min-width:24px;">${Math.round(this._underlayOpacity * 100)}%</span>
-              ` : ""}
+              ${
+                layerOn("underlay")
+                  ? `<input type="range" id="blueprint-opacity-slider" min="5" max="100" step="5" value="${Math.round(this._underlayOpacity * 100)}" style="width:68px;cursor:pointer;" title="Underlay Opacity" />
+                     <span style="font-size:11px;color:var(--ha-muted);min-width:24px;">${Math.round(this._underlayOpacity * 100)}%</span>`
+                  : ""
+              }
             </div>
-            <button class="btn btn-sm" id="btn-toggle-fp-inspector">
-              ${this._showFloorplanInspector ? "Hide Geometry &amp; Sensor Editor" : "Edit Boxes, Cameras &amp; Sensors"}
+            <span id="fp-save-state" class="fp-save-badge ${this._fpDirty ? "dirty" : "saved"}">${this._fpDirty ? "Unsaved" : "Saved ✓"}</span>
+            <button type="button" class="btn btn-sm" id="btn-fp-save-top">💾 Save</button>
+            <button type="button" class="btn btn-sm" id="btn-toggle-fp-inspector">
+              ${this._showFloorplanInspector ? "Hide Details" : "Edit Details &amp; Add"}
             </button>
-            <button class="btn btn-primary btn-sm" id="btn-fp-compile">Apply Connections to Rooms</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btn-fp-compile">Apply Connections to Rooms</button>
           </div>
         </div>
 
@@ -5539,43 +6364,14 @@ action:
           </div>
         </div>
 
-        <div style="background:#f8fafc;color:#0f172a;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;overflow:hidden;touch-action:none;">
+        <div class="fp-canvas-wrap">
+          <div id="fp-live-hud" class="fp-live-hud">${hudHtml}</div>
           <svg id="fp-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:420px;display:block;user-select:none;touch-action:none;">
-            <defs>
-              <pattern id="pdd-pat-cam-pir" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                <rect width="10" height="10" fill="rgba(124, 58, 237, 0.14)" />
-                <line x1="0" y1="0" x2="0" y2="10" stroke="#7c3aed" stroke-width="2.5" stroke-opacity="0.55" />
-                <line x1="5" y1="0" x2="5" y2="10" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.55" />
-              </pattern>
-              <pattern id="pdd-pat-multi-cam" width="10" height="10" patternUnits="userSpaceOnUse">
-                <rect width="10" height="10" fill="rgba(217, 119, 6, 0.16)" />
-                <path d="M 0,10 L 10,0 M -2,2 L 2,-2 M 8,12 L 12,8" stroke="#d97706" stroke-width="2" stroke-opacity="0.65" />
-                <path d="M 0,0 L 10,10" stroke="#0284c7" stroke-width="1.3" stroke-opacity="0.45" />
-              </pattern>
-              <pattern id="pdd-pat-cam-ble" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
-                <rect width="10" height="10" fill="rgba(13, 148, 136, 0.14)" />
-                <line x1="0" y1="0" x2="0" y2="10" stroke="#0d9488" stroke-width="2.4" stroke-opacity="0.55" />
-                <line x1="5" y1="0" x2="5" y2="10" stroke="#0284c7" stroke-width="2.4" stroke-opacity="0.5" />
-              </pattern>
-              <pattern id="pdd-pat-pir-ble" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
-                <rect width="10" height="10" fill="rgba(147, 51, 234, 0.13)" />
-                <line x1="0" y1="0" x2="0" y2="10" stroke="#9333ea" stroke-width="2.2" stroke-opacity="0.5" />
-                <line x1="5" y1="0" x2="5" y2="10" stroke="#0d9488" stroke-width="2.2" stroke-opacity="0.55" />
-              </pattern>
-              ${clipDefs.join("")}
-            </defs>
-            ${underlaySvg}
-            ${layerOn("connections") ? connsSvg : ""}
-            ${layerOn("rooms") ? roomsSvg : ""}
-            ${layerOn("ble") ? bleProxiesSvg : ""}
-            ${layerOn("cameras") ? conesSvg : ""}
-            ${layerOn("overlaps") ? `<g class="fp-overlaps-layer" style="pointer-events:none;">${overlapShapes.join("")}</g>` : ""}
-            ${layerOn("subzones") ? subZonesSvg : ""}
-            ${layerOn("pir") ? pirSensorsSvg : ""}
-            ${layerOn("doors") ? doorSensorsSvg : ""}
-            ${layerOn("occupants") ? occupantsSvg : ""}
+            ${svgInner}
           </svg>
         </div>
+
+        ${this._renderQuickAdjustBar(ctx)}
 
         <!-- Legend & Multi-Sensor Overlap Keys -->
         <div class="fp-legend-panel">
@@ -5638,7 +6434,7 @@ action:
                   <span><strong>Camera + PIR (${overlapCounts.camPir})</strong> — dual-verified vision &amp; motion</span>
                 </div>
                 <div class="fp-legend-item">
-                  <svg class="fp-swatch" viewBox="0 0 24 16"><defs><pattern id="lg-mc" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="rgba(217,119,6,0.18)"/><path d="M0,6 L6,0" stroke="#d97706" stroke-width="1.6"/><path d="M0,0 L6,6" stroke="#0284c7" stroke-width="1.2"/></pattern></defs><rect width="24" height="16" fill="url(#lg-mc)" stroke="#d97706" stroke-width="1"/></svg>
+                  <svg class="fp-swatch" viewBox="0 0 24 16"><defs><pattern id="lg-mc" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="rgba(217,119,6,0.16)"/><path d="M0,6 L6,0" stroke="#d97706" stroke-width="1.8"/><path d="M0,0 L6,6" stroke="#0284c7" stroke-width="1.1"/></pattern></defs><rect width="24" height="16" fill="url(#lg-mc)" stroke="#d97706" stroke-width="1"/></svg>
                   <span><strong>Multi-Camera (${overlapCounts.multiCam})</strong> — shared/bleed zone; tune sub-zones</span>
                 </div>
                 <div class="fp-legend-item">
@@ -6685,28 +7481,132 @@ action:
       el.addEventListener("click", () => {
         this._selectedFloorId = el.getAttribute("data-floor-id") || "main";
         this._selectedCamEntity = null;
+        this._selectedSensorId = null;
+        this._selectedBleProxyId = null;
+        this._selectedSubZoneId = null;
+        this._selectedRoomBoxName = null;
+        this._selectedDoorId = null;
+        this._selectedDeviceType = null;
         this.render();
       });
     });
+    root.querySelector("#btn-fp-mode-devices")?.addEventListener("click", () => {
+      this._floorplanMode = "devices";
+      this._selectedDoorId = null;
+      if (this._selectedDeviceType === "room") this._selectedDeviceType = null;
+      this.render();
+    });
     root.querySelector("#btn-fp-mode-rooms")?.addEventListener("click", () => {
       this._floorplanMode = "rooms";
-      this._selectedCamEntity = null;
+      this._selectedDeviceType = "room";
       this.render();
     });
     root.querySelector("#btn-fp-mode-cameras")?.addEventListener("click", () => {
       this._floorplanMode = "cameras";
-      this._selectedRoomBoxName = null;
+      this._selectedDeviceType = "camera";
       this._selectedDoorId = null;
       this.render();
     });
     root.querySelector("#btn-fp-mode-sensors")?.addEventListener("click", () => {
       this._floorplanMode = "sensors";
-      this._selectedRoomBoxName = null;
+      this._selectedDeviceType = "sensor";
       this._selectedDoorId = null;
       this.render();
     });
+    root.querySelector("#btn-fp-lock-rooms")?.addEventListener("click", () => {
+      this._roomsLocked = !this._roomsLocked;
+      if (!this._roomsLocked && this._floorplanMode !== "rooms") {
+        this._floorplanMode = "rooms";
+        this._selectedDeviceType = "room";
+      }
+      this.render();
+    });
+    root.querySelector("#btn-fp-undo")?.addEventListener("click", () => this._undoFp());
+    root.querySelector("#btn-fp-redo")?.addEventListener("click", () => this._redoFp());
+    root.querySelector("#btn-fp-reset-rooms")?.addEventListener("click", () =>
+      this._resetFloorplanRooms(true)
+    );
+    root.querySelector("#btn-fp-reset-all")?.addEventListener("click", () => {
+      this._pushFpUndo();
+      this.saveOrCompileFloorplan("reset");
+    });
+    root.querySelector("#btn-fp-save-top")?.addEventListener("click", () =>
+      this.saveOrCompileFloorplan("save")
+    );
+    root.querySelector("#btn-fp-reset-selected-room")?.addEventListener("click", (e) => {
+      const rName = e.currentTarget.getAttribute("data-room");
+      if (rName) this._resetFloorplanRooms(false, rName);
+    });
+    root.querySelector("#fp-quick-cam-select")?.addEventListener("change", (e) => {
+      this._selectedCamEntity = e.target.value;
+      this._selectedDeviceType = "camera";
+      this._cameraAlignmentResult = null;
+      this._cameraAlignmentError = null;
+      this.render();
+    });
+    root.querySelector("#fp-quick-sensor-select")?.addEventListener("change", (e) => {
+      this._selectedSensorId = e.target.value;
+      this._selectedDeviceType = "sensor";
+      this.render();
+    });
+    root.querySelectorAll(".fp-nudge-ang").forEach((el) => {
+      el.addEventListener("click", () => {
+        const delta = Number(el.getAttribute("data-delta") || 0);
+        const kind = el.getAttribute("data-kind");
+        if (kind === "camera") this._selectedDeviceType = "camera";
+        else if (kind === "sensor") this._selectedDeviceType = "sensor";
+        this._nudgeSelectedFloorplanItem(0, 0, delta);
+        this.render();
+      });
+    });
+    root.querySelectorAll(".fp-quick-input").forEach((el) => {
+      el.addEventListener("change", () => {
+        const kind = el.getAttribute("data-kind");
+        const key = el.getAttribute("data-key");
+        const val = Number(el.value);
+        if (!key || Number.isNaN(val) || !this._floorplan) return;
+        this._pushFpUndo();
+        if (kind === "camera") {
+          const cam = (this._floorplan.cameras || []).find(
+            (c) => (c.id || c.camera_entity) === this._selectedCamEntity
+          );
+          if (cam) cam[key] = key === "heading_deg" ? ((Math.round(val) % 360) + 360) % 360 : val;
+        } else if (kind === "sensor") {
+          const sen = (this._floorplan.sensors || []).find((s) => s.id === this._selectedSensorId);
+          if (sen) sen[key] = key === "heading_deg" ? ((Math.round(val) % 360) + 360) % 360 : val;
+        } else if (kind === "ble") {
+          const bp = (this._floorplan.ble_proxies || []).find((p) => p.id === this._selectedBleProxyId);
+          if (bp) bp[key] = key === "radius_px" ? Math.max(30, Math.min(450, val)) : val;
+        } else if (kind === "subzone") {
+          const cam = (this._floorplan.cameras || []).find(
+            (c) => (c.id || c.camera_entity) === this._selectedCamEntity
+          );
+          const sz = (cam?.sub_zones || []).find((z) => z.id === this._selectedSubZoneId);
+          if (sz) sz[key] = key === "width" || key === "height" ? Math.max(24, val) : val;
+        } else if (kind === "room" && !this._roomsLocked) {
+          const box = (this._floorplan.rooms || []).find(
+            (b) => (b.name || b.room_name) === this._selectedRoomBoxName
+          );
+          if (box) {
+            const sx = Number(box.x), sy = Number(box.y);
+            const sw = Number(box.width ?? box.w ?? 200), sh = Number(box.height ?? box.h ?? 150);
+            box[key] = val;
+            const nx = Number(box.x), ny = Number(box.y);
+            const nw = Math.max(40, Number(box.width ?? box.w ?? 200)), nh = Math.max(40, Number(box.height ?? box.h ?? 150));
+            box.width = nw; box.height = nh;
+            if (box.svg_path) {
+              box.svg_path = this._transformSvgPath(box.svg_path, sx, sy, sw, sh, nx, ny, nw, nh);
+            }
+          }
+        }
+        this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+        this._debounceSaveFloorplan();
+        this.render();
+      });
+    });
     root.querySelector("#fp-sensor-select")?.addEventListener("change", (e) => {
       this._selectedSensorId = e.target.value;
+      this._selectedDeviceType = "sensor";
       this.render();
     });
     root.querySelectorAll(".fp-sensor-field").forEach((el) => {
@@ -6715,6 +7615,7 @@ action:
         const sensors = this._floorplan?.sensors || [];
         const sen = sensors.find((s) => s.id === this._selectedSensorId);
         if (!sen || !key) return;
+        this._pushFpUndo();
         if (["x", "y", "heading_deg", "fov_deg", "range_px"].includes(key)) {
           sen[key] = Number(el.value);
         } else {
@@ -6727,6 +7628,7 @@ action:
     });
     root.querySelector("#btn-fp-add-pir-sensor")?.addEventListener("click", () => {
       if (!this._floorplan) return;
+      this._pushFpUndo();
       if (!Array.isArray(this._floorplan.sensors)) this._floorplan.sensors = [];
       const fRooms = (this._floorplan.rooms || []).filter(
         (r) => (r.floor || "main") === this._selectedFloorId
@@ -6749,13 +7651,17 @@ action:
         range_px: 180,
       });
       this._selectedSensorId = newId;
-      this._floorplanMode = "sensors";
+      this._selectedDeviceType = "sensor";
+      if (this._floorplanMode === "rooms" || this._floorplanMode === "cameras") {
+        this._floorplanMode = "devices";
+      }
       this._compiledTopology = this._compileFloorplanClient(this._floorplan);
       this._debounceSaveFloorplan();
       this.render();
     });
     root.querySelector("#btn-fp-add-door-sensor")?.addEventListener("click", () => {
       if (!this._floorplan) return;
+      this._pushFpUndo();
       if (!Array.isArray(this._floorplan.sensors)) this._floorplan.sensors = [];
       const fRooms = (this._floorplan.rooms || []).filter(
         (r) => (r.floor || "main") === this._selectedFloorId
@@ -6775,7 +7681,10 @@ action:
         y: ry,
       });
       this._selectedSensorId = newId;
-      this._floorplanMode = "sensors";
+      this._selectedDeviceType = "sensor";
+      if (this._floorplanMode === "rooms" || this._floorplanMode === "cameras") {
+        this._floorplanMode = "devices";
+      }
       this._compiledTopology = this._compileFloorplanClient(this._floorplan);
       this._debounceSaveFloorplan();
       this.render();
@@ -6785,6 +7694,7 @@ action:
       const sensors = this._floorplan?.sensors || [];
       const idx = sensors.findIndex((s) => s.id === sid);
       if (idx >= 0) {
+        this._pushFpUndo();
         sensors.splice(idx, 1);
         this._selectedSensorId = null;
         this._compiledTopology = this._compileFloorplanClient(this._floorplan);
@@ -6811,6 +7721,7 @@ action:
     );
     root.querySelector("#fp-cam-select")?.addEventListener("change", (e) => {
       this._selectedCamEntity = e.target.value;
+      this._selectedDeviceType = "camera";
       this._cameraAlignmentResult = null;
       this._cameraAlignmentError = null;
       this.render();
@@ -6829,6 +7740,7 @@ action:
         (c) => (c.id || c.camera_entity) === selCamId
       );
       if (!cam) return;
+      this._pushFpUndo();
       if (preset) {
         cam.model_preset = preset.id;
         cam.fov_deg = Number(preset.fov_deg);
@@ -6855,6 +7767,7 @@ action:
         fSensors[0]?.id;
       const sen = (this._floorplan?.sensors || []).find((s) => s.id === selSenId);
       if (!sen) return;
+      this._pushFpUndo();
       if (preset) {
         sen.model_preset = preset.id;
         if (preset.fov_deg) {
@@ -6904,6 +7817,7 @@ action:
         (c) => (c.id || c.camera_entity) === selCamId
       );
       if (cam) {
+        this._pushFpUndo();
         cam.heading_deg = Math.round(res.recommended_heading_deg);
         this._compiledTopology = this._compileFloorplanClient(this._floorplan);
         this._scheduleCanvasRender();
@@ -6920,6 +7834,7 @@ action:
       const boxes = this._floorplan?.rooms || [];
       const box = boxes.find((b) => (b.name || b.room_name) === rname);
       if (!box) return;
+      this._pushFpUndo();
       if (!Array.isArray(box.entryways)) box.entryways = [];
       const newDoorId = "door_" + Math.random().toString(36).substring(2, 9);
       const rw = Number(box.width ?? box.w ?? 200);
@@ -6950,6 +7865,7 @@ action:
         if (!box || !Array.isArray(box.entryways)) return;
         const idx = box.entryways.findIndex((ew) => ew.id === doorId);
         if (idx >= 0) {
+          this._pushFpUndo();
           box.entryways.splice(idx, 1);
           if (this._selectedDoorId === doorId) this._selectedDoorId = null;
           this._compiledTopology = this._compileFloorplanClient(this._floorplan);
@@ -6967,6 +7883,7 @@ action:
         for (const box of boxes) {
           const ew = (box.entryways || []).find((d) => d.id === doorId);
           if (ew && key) {
+            this._pushFpUndo();
             ew[key] = key === "offset" || key === "width" ? Number(el.value) : el.value;
             this._compiledTopology = this._compileFloorplanClient(this._floorplan);
             this._debounceSaveFloorplan();
@@ -6983,6 +7900,7 @@ action:
         const cams = this._floorplan?.cameras || [];
         const cam = cams.find((c) => (c.id || c.camera_entity) === this._selectedCamEntity);
         if (!cam || !key) return;
+        this._pushFpUndo();
         cam[key] = Number(el.value);
         this._compiledTopology = this._compileFloorplanClient(this._floorplan);
         this._debounceSaveFloorplan();
@@ -6997,106 +7915,188 @@ action:
         const boxes = this._floorplan?.rooms || [];
         const box = boxes.find((b) => (b.name || b.room_name) === rname);
         if (!box || !key) return;
+        this._pushFpUndo();
+        const sx = Number(box.x), sy = Number(box.y);
+        const sw = Number(box.width ?? box.w ?? 200), sh = Number(box.height ?? box.h ?? 150);
         box[key] = Number(el.value);
-        delete box.svg_path;
+        const nx = Number(box.x), ny = Number(box.y);
+        const nw = Math.max(40, Number(box.width ?? box.w ?? 200)), nh = Math.max(40, Number(box.height ?? box.h ?? 150));
+        box.width = nw;
+        box.height = nh;
+        if (box.svg_path) {
+          box.svg_path = this._transformSvgPath(box.svg_path, sx, sy, sw, sh, nx, ny, nw, nh);
+        }
         this._compiledTopology = this._compileFloorplanClient(this._floorplan);
         this._debounceSaveFloorplan();
         this.render();
       });
     });
 
-    // Interactive Canvas Pointer Dragging & Snapping
+    // Interactive Canvas Pointer Dragging & Smooth Snapping
     const svgCanvas = root.querySelector("#fp-svg-canvas");
     if (svgCanvas) {
+      const startFpDrag = (e, dragObj) => {
+        dragObj.snapshotBefore = this._floorplan ? JSON.stringify(this._floorplan) : null;
+        dragObj.undoPushed = false;
+        this._activeFpDrag = dragObj;
+        try {
+          svgCanvas.setPointerCapture(e.pointerId);
+        } catch (_e) {}
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
       svgCanvas.addEventListener("pointerdown", (e) => {
-        const resizeHandle = e.target.closest(".fp-resize-handle");
         const camHandle = e.target.closest(".fp-cam-handle");
-        const camOrigin = e.target.closest(".fp-cam-origin");
-        const subzoneRect = e.target.closest(".fp-subzone-rect");
         const sensorHandle = e.target.closest(".fp-sensor-handle");
+        const bleHandle = e.target.closest(".fp-ble-handle");
+        const subzoneHandle = e.target.closest(".fp-subzone-handle");
+        const camOrigin = e.target.closest(".fp-cam-origin");
         const sensorOrigin = e.target.closest(".fp-sensor-origin");
         const bleOrigin = e.target.closest(".fp-ble-origin");
         const doorTab = e.target.closest(".fp-door-tab");
         const doorHandle = e.target.closest(".fp-door-handle");
+        const subzoneRect = e.target.closest(".fp-subzone-rect");
+        const resizeHandle = e.target.closest(".fp-resize-handle");
         const roomBox = e.target.closest(".fp-room-box");
 
-        // Enforce active floorplan tool mode isolation
-        if (this._floorplanMode === "rooms" && (camHandle || camOrigin || subzoneRect || sensorHandle || sensorOrigin || bleOrigin)) {
-          return;
-        }
-        if (this._floorplanMode === "cameras" && (resizeHandle || doorTab || doorHandle || roomBox || sensorHandle || sensorOrigin || bleOrigin)) {
-          return;
-        }
-        if (this._floorplanMode === "sensors" && (resizeHandle || doorTab || doorHandle || roomBox || camHandle || camOrigin || subzoneRect)) {
-          return;
-        }
-
+        const mode = this._floorplanMode;
+        const allowRooms = mode === "rooms";
+        const allowCams = mode === "devices" || mode === "cameras";
+        const allowSensors = mode === "devices" || mode === "sensors";
         const startPt = this._getSvgPoint(e, svgCanvas);
 
-        if (sensorHandle) {
+        if (allowSensors && sensorHandle) {
           const handle = sensorHandle.getAttribute("data-handle");
           const senId = sensorHandle.getAttribute("data-sensor-id");
           const sen = (this._floorplan?.sensors || []).find((s) => s.id === senId);
           if (sen) {
             this._selectedSensorId = senId;
-            this._activeFpDrag = {
+            this._selectedDeviceType = "sensor";
+            startFpDrag(e, {
               type: "sensor_handle",
               handle,
               sensorId: senId,
               hasMoved: false,
               startPt,
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
+            });
           }
           return;
         }
 
-        if (sensorOrigin) {
+        if (allowCams && camHandle) {
+          const handle = camHandle.getAttribute("data-handle");
+          const camId = camHandle.getAttribute("data-cam-id");
+          const cam = (this._floorplan?.cameras || []).find(
+            (c) => (c.id || c.camera_entity) === camId
+          );
+          if (cam) {
+            this._selectedCamEntity = camId;
+            this._selectedDeviceType = "camera";
+            startFpDrag(e, {
+              type: "cam_handle",
+              handle,
+              camId,
+              hasMoved: false,
+              startPt,
+            });
+          }
+          return;
+        }
+
+        if (allowSensors && bleHandle) {
+          const proxyId = bleHandle.getAttribute("data-proxy-id");
+          const bp = (this._floorplan?.ble_proxies || []).find((p) => p.id === proxyId);
+          if (bp) {
+            this._selectedBleProxyId = proxyId;
+            this._selectedDeviceType = "ble";
+            startFpDrag(e, {
+              type: "ble_radius",
+              proxyId,
+              hasMoved: false,
+              startPt,
+            });
+          }
+          return;
+        }
+
+        if (allowCams && subzoneHandle) {
+          const camId = subzoneHandle.getAttribute("data-cam-id");
+          const szId = subzoneHandle.getAttribute("data-subzone-id");
+          const cam = (this._floorplan?.cameras || []).find(
+            (c) => (c.id || c.camera_entity) === camId
+          );
+          const sz = (cam?.sub_zones || []).find((z) => z.id === szId);
+          if (cam && sz) {
+            this._selectedCamEntity = camId;
+            this._selectedSubZoneId = szId;
+            this._selectedDeviceType = "subzone";
+            startFpDrag(e, {
+              type: "resize_subzone",
+              camId,
+              subZoneId: szId,
+              hasMoved: false,
+              startPt,
+              startSize: { width: Number(sz.width || 60), height: Number(sz.height || 60) },
+            });
+          }
+          return;
+        }
+
+        if (allowSensors && sensorOrigin) {
           const senId = sensorOrigin.getAttribute("data-sensor-id");
           const sen = (this._floorplan?.sensors || []).find((s) => s.id === senId);
           if (sen) {
             this._selectedSensorId = senId;
-            this._activeFpDrag = {
+            this._selectedDeviceType = "sensor";
+            startFpDrag(e, {
               type: "move_sensor",
               sensorId: senId,
               hasMoved: false,
               startPt,
               startPos: { x: Number(sen.x), y: Number(sen.y) },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
+            });
           }
           return;
         }
 
-        if (bleOrigin) {
+        if (allowCams && camOrigin) {
+          const camId = camOrigin.getAttribute("data-cam-entity");
+          const cam = (this._floorplan?.cameras || []).find(
+            (c) => (c.id || c.camera_entity) === camId
+          );
+          if (cam) {
+            this._selectedCamEntity = camId;
+            this._selectedDeviceType = "camera";
+            startFpDrag(e, {
+              type: "move_cam",
+              camId,
+              hasMoved: false,
+              startPt,
+              startCam: { x: Number(cam.x), y: Number(cam.y) },
+            });
+          }
+          return;
+        }
+
+        if (allowSensors && bleOrigin) {
           const proxyId = bleOrigin.getAttribute("data-proxy-id");
           const bp = (this._floorplan?.ble_proxies || []).find((p) => p.id === proxyId);
           if (bp) {
-            this._activeFpDrag = {
+            this._selectedBleProxyId = proxyId;
+            this._selectedDeviceType = "ble";
+            startFpDrag(e, {
               type: "move_ble",
               proxyId,
               hasMoved: false,
               startPt,
               startPos: { x: Number(bp.x), y: Number(bp.y) },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
+            });
           }
           return;
         }
 
-        if (subzoneRect) {
+        if (allowCams && subzoneRect) {
           const camId = subzoneRect.getAttribute("data-cam-id");
           const szId = subzoneRect.getAttribute("data-subzone-id");
           const cam = (this._floorplan?.cameras || []).find(
@@ -7106,109 +8106,20 @@ action:
           if (cam && sz) {
             this._selectedCamEntity = camId;
             this._selectedSubZoneId = szId;
-            this._activeFpDrag = {
+            this._selectedDeviceType = "subzone";
+            startFpDrag(e, {
               type: "move_subzone",
               camId,
               subZoneId: szId,
               hasMoved: false,
               startPt,
               startPos: { x: Number(sz.x), y: Number(sz.y) },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
+            });
           }
           return;
         }
 
-        if (resizeHandle) {
-          const handle = resizeHandle.getAttribute("data-handle");
-          const rname = resizeHandle.getAttribute("data-room-name");
-          const box = (this._floorplan?.rooms || []).find((b) => (b.name || b.room_name) === rname);
-          if (box) {
-            this._selectedRoomBoxName = rname;
-            this._activeFpDrag = {
-              type: "resize_room",
-              handle,
-              roomName: rname,
-              hasMoved: false,
-              startPt,
-              startBox: {
-                x: Number(box.x),
-                y: Number(box.y),
-                width: Number(box.width ?? box.w ?? 200),
-                height: Number(box.height ?? box.h ?? 150),
-              },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
-          }
-          return;
-        }
-
-        if (camHandle) {
-          const handle = camHandle.getAttribute("data-handle");
-          const camId = camHandle.getAttribute("data-cam-id");
-          const cam = (this._floorplan?.cameras || []).find(
-            (c) => (c.id || c.camera_entity) === camId
-          );
-          if (cam) {
-            this._selectedCamEntity = camId;
-            this._activeFpDrag = {
-              type: "cam_handle",
-              handle,
-              camId,
-              hasMoved: false,
-              startPt,
-              startCam: {
-                x: Number(cam.x),
-                y: Number(cam.y),
-                heading_deg: Number(cam.heading_deg || 0),
-                fov_deg: Number(cam.fov_deg || 90),
-                range_px: Number(cam.range_px || 180),
-              },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
-          }
-          return;
-        }
-
-        if (camOrigin) {
-          const camId = camOrigin.getAttribute("data-cam-entity");
-          const cam = (this._floorplan?.cameras || []).find(
-            (c) => (c.id || c.camera_entity) === camId
-          );
-          if (cam) {
-            this._selectedCamEntity = camId;
-            this._activeFpDrag = {
-              type: "move_cam",
-              camId,
-              hasMoved: false,
-              startPt,
-              startCam: {
-                x: Number(cam.x),
-                y: Number(cam.y),
-              },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
-          }
-          return;
-        }
-
-        if (doorTab) {
+        if (allowRooms && doorTab) {
           const tab = doorTab.getAttribute("data-tab");
           const doorId = doorTab.getAttribute("data-door-id");
           const rname = doorTab.getAttribute("data-room-name");
@@ -7217,7 +8128,8 @@ action:
           if (box && ew) {
             this._selectedDoorId = doorId;
             this._selectedRoomBoxName = rname;
-            this._activeFpDrag = {
+            this._selectedDeviceType = "room";
+            startFpDrag(e, {
               type: "resize_door",
               tab,
               doorId,
@@ -7227,23 +8139,12 @@ action:
               startOffset: Number(ew.offset || 0),
               startWidth: Number(ew.width || 36),
               wall: ew.wall,
-              boxGeometry: {
-                x: Number(box.x),
-                y: Number(box.y),
-                width: Number(box.width ?? box.w ?? 200),
-                height: Number(box.height ?? box.h ?? 150),
-              },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
+            });
           }
           return;
         }
 
-        if (doorHandle) {
+        if (allowRooms && doorHandle) {
           const doorId = doorHandle.getAttribute("data-door-id");
           const rname = doorHandle.getAttribute("data-room-name");
           const box = (this._floorplan?.rooms || []).find((b) => (b.name || b.room_name) === rname);
@@ -7251,7 +8152,8 @@ action:
           if (box && ew) {
             this._selectedDoorId = doorId;
             this._selectedRoomBoxName = rname;
-            this._activeFpDrag = {
+            this._selectedDeviceType = "room";
+            startFpDrag(e, {
               type: "move_door",
               doorId,
               roomName: rname,
@@ -7260,50 +8162,65 @@ action:
               startOffset: Number(ew.offset || 0),
               startWidth: Number(ew.width || 36),
               wall: ew.wall,
-              boxGeometry: {
-                x: Number(box.x),
-                y: Number(box.y),
-                width: Number(box.width ?? box.w ?? 200),
-                height: Number(box.height ?? box.h ?? 150),
-              },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
-            e.stopPropagation();
+            });
           }
           return;
         }
 
-        if (roomBox) {
-          const rname = roomBox.getAttribute("data-room-name");
+        if (allowRooms && !this._roomsLocked && resizeHandle) {
+          const handle = resizeHandle.getAttribute("data-handle");
+          const rname = resizeHandle.getAttribute("data-room-name");
           const box = (this._floorplan?.rooms || []).find((b) => (b.name || b.room_name) === rname);
           if (box) {
             this._selectedRoomBoxName = rname;
-            const room = (this._overview?.rooms || []).find((r) => r.room_name === rname);
-            if (room) this._selectRoomObject(room, false);
-            this._activeFpDrag = {
-              type: "move_room",
+            this._selectedDeviceType = "room";
+            startFpDrag(e, {
+              type: "resize_room",
+              handle,
               roomName: rname,
               hasMoved: false,
               startPt,
+              startSvgPath: box.svg_path || null,
               startBox: {
                 x: Number(box.x),
                 y: Number(box.y),
                 width: Number(box.width ?? box.w ?? 200),
                 height: Number(box.height ?? box.h ?? 150),
               },
-            };
-            try {
-              svgCanvas.setPointerCapture(e.pointerId);
-            } catch (_e) {}
-            e.preventDefault();
+            });
           }
           return;
         }
 
-        // Empty canvas click
+        if (allowRooms && roomBox) {
+          const rname = roomBox.getAttribute("data-room-name");
+          const box = (this._floorplan?.rooms || []).find((b) => (b.name || b.room_name) === rname);
+          if (box) {
+            this._selectedRoomBoxName = rname;
+            this._selectedDeviceType = "room";
+            const room = (this._overview?.rooms || []).find((r) => r.room_name === rname);
+            if (room) this._selectRoomObject(room, false);
+            if (this._roomsLocked) {
+              this.render();
+              return;
+            }
+            startFpDrag(e, {
+              type: "move_room",
+              roomName: rname,
+              hasMoved: false,
+              startPt,
+              startSvgPath: box.svg_path || null,
+              startBox: {
+                x: Number(box.x),
+                y: Number(box.y),
+                width: Number(box.width ?? box.w ?? 200),
+                height: Number(box.height ?? box.h ?? 150),
+              },
+            });
+          }
+          return;
+        }
+
         this._selectedDoorId = null;
       });
 
@@ -7314,8 +8231,13 @@ action:
         const dx = pt.x - drag.startPt.x;
         const dy = pt.y - drag.startPt.y;
 
-        if (!drag.hasMoved && Math.hypot(dx, dy) > 2) {
+        if (!drag.hasMoved) {
+          if (Math.hypot(dx, dy) < 4) return;
           drag.hasMoved = true;
+          if (!drag.undoPushed && drag.snapshotBefore) {
+            this._pushFpUndo(drag.snapshotBefore);
+            drag.undoPushed = true;
+          }
         }
 
         if (drag.type === "move_room") {
@@ -7327,13 +8249,25 @@ action:
           let ny = drag.startBox.y + dy;
           nx = Math.max(0, Math.min(1000 - drag.startBox.width, nx));
           ny = Math.max(0, Math.min(580 - drag.startBox.height, ny));
-          box.x = nx;
-          box.y = ny;
+          box.x = Math.round(nx);
+          box.y = Math.round(ny);
           box.width = drag.startBox.width;
           box.height = drag.startBox.height;
-          if (drag.hasMoved) delete box.svg_path;
           if (!e.shiftKey) {
             this._snapRoomGeometry(box, this._floorplan?.rooms || [], 10);
+          }
+          if (drag.startSvgPath) {
+            box.svg_path = this._transformSvgPath(
+              drag.startSvgPath,
+              drag.startBox.x,
+              drag.startBox.y,
+              drag.startBox.width,
+              drag.startBox.height,
+              box.x,
+              box.y,
+              box.width,
+              box.height
+            );
           }
           this._compiledTopology = this._compileFloorplanClient(this._floorplan);
           this._scheduleCanvasRender();
@@ -7367,11 +8301,23 @@ action:
             width = this._snapValue(width, 10);
             height = this._snapValue(height, 10);
           }
-          box.x = Math.max(0, x);
-          box.y = Math.max(0, y);
-          box.width = Math.max(50, width);
-          box.height = Math.max(50, height);
-          if (drag.hasMoved) delete box.svg_path;
+          box.x = Math.round(Math.max(0, x));
+          box.y = Math.round(Math.max(0, y));
+          box.width = Math.round(Math.max(50, width));
+          box.height = Math.round(Math.max(50, height));
+          if (drag.startSvgPath) {
+            box.svg_path = this._transformSvgPath(
+              drag.startSvgPath,
+              drag.startBox.x,
+              drag.startBox.y,
+              drag.startBox.width,
+              drag.startBox.height,
+              box.x,
+              box.y,
+              box.width,
+              box.height
+            );
+          }
           this._compiledTopology = this._compileFloorplanClient(this._floorplan);
           this._scheduleCanvasRender();
         } else if (drag.type === "move_cam") {
@@ -7381,9 +8327,9 @@ action:
           if (!cam) return;
           let nx = drag.startCam.x + dx;
           let ny = drag.startCam.y + dy;
-          if (!e.shiftKey) {
-            nx = this._snapValue(nx, 5);
-            ny = this._snapValue(ny, 5);
+          if (e.shiftKey) {
+            nx = this._snapValue(nx, 10);
+            ny = this._snapValue(ny, 10);
           }
           cam.x = Math.max(10, Math.min(990, Math.round(nx)));
           cam.y = Math.max(10, Math.min(570, Math.round(ny)));
@@ -7399,20 +8345,20 @@ action:
           if (drag.handle === "heading") {
             let deg = (Math.atan2(pt.y - cy, pt.x - cx) * 180) / Math.PI;
             if (deg < 0) deg += 360;
-            if (!e.shiftKey) deg = Math.round(deg / 5) * 5;
-            cam.heading_deg = Math.round(deg) % 360;
+            if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+            cam.heading_deg = ((Math.round(deg) % 360) + 360) % 360;
           } else if (drag.handle === "range") {
             const dist = Math.hypot(pt.x - cx, pt.y - cy);
             let r = Math.max(40, Math.min(700, Math.round(dist)));
-            if (!e.shiftKey) r = Math.round(r / 5) * 5;
+            if (e.shiftKey) r = Math.round(r / 10) * 10;
             cam.range_px = r;
           } else if (drag.handle === "fov_start" || drag.handle === "fov_end") {
             let pointerAngle = (Math.atan2(pt.y - cy, pt.x - cx) * 180) / Math.PI;
             if (pointerAngle < 0) pointerAngle += 360;
             const heading = Number(cam.heading_deg || 0);
             const angleDiff = Math.abs(((pointerAngle - heading + 540) % 360) - 180);
-            let newFov = Math.max(15, Math.min(160, Math.round(angleDiff * 2)));
-            if (!e.shiftKey) newFov = Math.round(newFov / 5) * 5;
+            let newFov = Math.max(15, Math.min(180, Math.round(angleDiff * 2)));
+            if (e.shiftKey) newFov = Math.round(newFov / 5) * 5;
             cam.fov_deg = newFov;
           }
           this._compiledTopology = this._compileFloorplanClient(this._floorplan);
@@ -7422,9 +8368,9 @@ action:
           if (!sen) return;
           let nx = drag.startPos.x + dx;
           let ny = drag.startPos.y + dy;
-          if (!e.shiftKey) {
-            nx = this._snapValue(nx, 5);
-            ny = this._snapValue(ny, 5);
+          if (e.shiftKey) {
+            nx = this._snapValue(nx, 10);
+            ny = this._snapValue(ny, 10);
           }
           sen.x = Math.max(10, Math.min(990, Math.round(nx)));
           sen.y = Math.max(10, Math.min(570, Math.round(ny)));
@@ -7435,14 +8381,25 @@ action:
           if (!sen) return;
           const sx = Number(sen.x);
           const sy = Number(sen.y);
-          let deg = (Math.atan2(pt.y - sy, pt.x - sx) * 180) / Math.PI;
-          if (deg < 0) deg += 360;
-          if (!e.shiftKey) deg = Math.round(deg / 5) * 5;
-          sen.heading_deg = Math.round(deg) % 360;
-          const dist = Math.hypot(pt.x - sx, pt.y - sy);
-          let r = Math.max(40, Math.min(450, Math.round(dist)));
-          if (!e.shiftKey) r = Math.round(r / 5) * 5;
-          sen.range_px = r;
+          if (drag.handle === "heading") {
+            let deg = (Math.atan2(pt.y - sy, pt.x - sx) * 180) / Math.PI;
+            if (deg < 0) deg += 360;
+            if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+            sen.heading_deg = ((Math.round(deg) % 360) + 360) % 360;
+          } else if (drag.handle === "range") {
+            const dist = Math.hypot(pt.x - sx, pt.y - sy);
+            let r = Math.max(35, Math.min(450, Math.round(dist)));
+            if (e.shiftKey) r = Math.round(r / 10) * 10;
+            sen.range_px = r;
+          } else if (drag.handle === "fov_start" || drag.handle === "fov_end") {
+            let pointerAngle = (Math.atan2(pt.y - sy, pt.x - sx) * 180) / Math.PI;
+            if (pointerAngle < 0) pointerAngle += 360;
+            const heading = Number(sen.heading_deg || 0);
+            const angleDiff = Math.abs(((pointerAngle - heading + 540) % 360) - 180);
+            let newFov = Math.max(15, Math.min(180, Math.round(angleDiff * 2)));
+            if (e.shiftKey) newFov = Math.round(newFov / 5) * 5;
+            sen.fov_deg = newFov;
+          }
           this._compiledTopology = this._compileFloorplanClient(this._floorplan);
           this._scheduleCanvasRender();
         } else if (drag.type === "move_ble") {
@@ -7450,12 +8407,21 @@ action:
           if (!bp) return;
           let nx = drag.startPos.x + dx;
           let ny = drag.startPos.y + dy;
-          if (!e.shiftKey) {
-            nx = this._snapValue(nx, 5);
-            ny = this._snapValue(ny, 5);
+          if (e.shiftKey) {
+            nx = this._snapValue(nx, 10);
+            ny = this._snapValue(ny, 10);
           }
           bp.x = Math.max(10, Math.min(990, Math.round(nx)));
           bp.y = Math.max(10, Math.min(570, Math.round(ny)));
+          this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+          this._scheduleCanvasRender();
+        } else if (drag.type === "ble_radius") {
+          const bp = (this._floorplan?.ble_proxies || []).find((p) => p.id === drag.proxyId);
+          if (!bp) return;
+          const dist = Math.hypot(pt.x - Number(bp.x || 0), pt.y - Number(bp.y || 0));
+          let r = Math.max(40, Math.min(450, Math.round(dist)));
+          if (e.shiftKey) r = Math.round(r / 10) * 10;
+          bp.radius_px = r;
           this._compiledTopology = this._compileFloorplanClient(this._floorplan);
           this._scheduleCanvasRender();
         } else if (drag.type === "move_subzone") {
@@ -7466,12 +8432,28 @@ action:
           if (!sz) return;
           let nx = drag.startPos.x + dx;
           let ny = drag.startPos.y + dy;
-          if (!e.shiftKey) {
-            nx = this._snapValue(nx, 5);
-            ny = this._snapValue(ny, 5);
+          if (e.shiftKey) {
+            nx = this._snapValue(nx, 10);
+            ny = this._snapValue(ny, 10);
           }
           sz.x = Math.max(0, Math.min(960, Math.round(nx)));
           sz.y = Math.max(0, Math.min(540, Math.round(ny)));
+          this._compiledTopology = this._compileFloorplanClient(this._floorplan);
+          this._scheduleCanvasRender();
+        } else if (drag.type === "resize_subzone") {
+          const cam = (this._floorplan?.cameras || []).find(
+            (c) => (c.id || c.camera_entity) === drag.camId
+          );
+          const sz = (cam?.sub_zones || []).find((z) => z.id === drag.subZoneId);
+          if (!sz) return;
+          let nw = drag.startSize.width + dx;
+          let nh = drag.startSize.height + dy;
+          if (e.shiftKey) {
+            nw = this._snapValue(nw, 10);
+            nh = this._snapValue(nh, 10);
+          }
+          sz.width = Math.max(24, Math.min(400, Math.round(nw)));
+          sz.height = Math.max(24, Math.min(400, Math.round(nh)));
           this._compiledTopology = this._compileFloorplanClient(this._floorplan);
           this._scheduleCanvasRender();
         } else if (drag.type === "move_door") {
@@ -7543,13 +8525,16 @@ action:
 
       const onPointerUp = (e) => {
         if (!this._activeFpDrag) return;
+        const wasMoved = this._activeFpDrag.hasMoved;
         try {
           if (svgCanvas.hasPointerCapture(e.pointerId)) {
             svgCanvas.releasePointerCapture(e.pointerId);
           }
         } catch (_e) {}
         this._activeFpDrag = null;
-        this._debounceSaveFloorplan();
+        if (wasMoved) {
+          this._debounceSaveFloorplan();
+        }
         this.render();
       };
 
