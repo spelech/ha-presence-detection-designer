@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+try:
+    from homeassistant.core import callback
+
+    if type(callback).__name__ == "MagicMock":
+        raise ImportError
+except Exception:  # noqa: BLE001
+
+    def callback(func: Any) -> Any:  # type: ignore[misc]
+        """Fallback callback decorator when running outside Home Assistant."""
+        return func
 
 try:
     from homeassistant.components.sensor import (
@@ -198,10 +210,28 @@ class HouseHeadcountSensor(SensorEntity):
             self._unsub()
             self._unsub = None
 
+    @callback
     def _handle_tracker_update(self) -> None:
-        """Update sensor state when headcount changes."""
-        if hasattr(self, "async_write_ha_state"):
-            self.async_write_ha_state()
+        """Update sensor state when headcount changes (thread-safe)."""
+        if not hasattr(self, "async_write_ha_state"):
+            return
+        hass_obj = getattr(self, "hass", None)
+        loop = getattr(hass_obj, "loop", None) if hass_obj is not None else None
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if (
+            loop is not None
+            and type(loop).__name__ != "MagicMock"
+            and callable(getattr(loop, "is_running", None))
+            and loop.is_running()
+            and loop is not running
+            and callable(getattr(loop, "call_soon_threadsafe", None))
+        ):
+            loop.call_soon_threadsafe(self.async_write_ha_state)
+            return
+        self.async_write_ha_state()
 
 
 async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:

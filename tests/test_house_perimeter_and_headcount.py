@@ -631,3 +631,84 @@ def test_unconfigured_door_does_not_require_exterior_corroboration(mock_hass):
     assert rec is not None
     assert rec.vector == "egress"
     assert tracker.state.count == 0
+
+
+@pytest.mark.asyncio
+async def test_async_setup_subscribes_perimeter_doors_and_persists_digest(
+    mock_hass, monkeypatch: pytest.MonkeyPatch
+):
+    """async_setup subscribes to all configured perimeter doors, seeds state, ignores unavailable, and persists/updates Slack."""
+    from types import SimpleNamespace
+
+    _install_global_settings(mock_hass, house_occupant_count=0)
+    tracker = HousePerimeterTracker(mock_hass)
+    assert tracker.state.count == 0
+
+    subscribed: list[tuple[list[str], Any]] = []
+    unsub_calls = 0
+
+    def _fake_track(hass_arg, entities, cb):
+        subscribed.append((list(entities), cb))
+
+        def _unsub():
+            nonlocal unsub_calls
+            unsub_calls += 1
+
+        return _unsub
+
+    mock_hass.states.get = lambda eid: SimpleNamespace(
+        state="on" if eid == "binary_sensor.back_door" else "off"
+    )
+    digest_calls: list[bool] = []
+    monkeypatch.setattr(
+        "homeassistant.helpers.event.async_track_state_change_event",
+        _fake_track,
+    )
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer.slack_blocks.schedule_slack_daily_digest_update",
+        lambda _h, force=False: digest_calls.append(force),
+    )
+
+    await tracker.async_setup()
+    # Re-running async_setup must clean up previous listeners
+    await tracker.async_setup()
+    assert unsub_calls == 2
+    assert tracker._door_is_open["binary_sensor.back_door"] is True
+    assert tracker._door_is_open["binary_sensor.front_door"] is False
+
+    door_entities, door_cb = subscribed[-2]
+    assert "binary_sensor.front_door" in door_entities
+    assert "binary_sensor.back_door" in door_entities
+
+    # Unavailable/unknown transitions must be ignored
+    door_cb(
+        SimpleNamespace(
+            data={
+                "entity_id": "binary_sensor.front_door",
+                "new_state": SimpleNamespace(state="unavailable"),
+            }
+        )
+    )
+    assert tracker.state.count == 0
+
+    # Real open -> close cycle on front_door (with no room boundary_entities) increments headcount & persists
+    door_cb(
+        SimpleNamespace(
+            data={
+                "entity_id": "binary_sensor.front_door",
+                "new_state": SimpleNamespace(state="on"),
+            }
+        )
+    )
+    door_cb(
+        SimpleNamespace(
+            data={
+                "entity_id": "binary_sensor.front_door",
+                "new_state": SimpleNamespace(state="off"),
+            }
+        )
+    )
+    assert tracker.state.count == 1
+    assert tracker.state.mode == "single_occupant"
+    assert mock_hass.data[DOMAIN][DATA_STORE].global_settings["house_occupant_count"] == 1
+    assert len(digest_calls) == 1
