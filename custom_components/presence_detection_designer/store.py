@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import datetime
 import logging
@@ -114,6 +115,7 @@ class PDDStore:
         self._store: Any = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._data: dict[str, Any] = _default_store_data()
         self._loaded: bool = False
+        self._save_locks: dict[int, asyncio.Lock] = {}
 
     async def async_load(self) -> dict[str, Any]:
         """Load .storage data and synchronize any existing ConfigEntries."""
@@ -136,12 +138,21 @@ class PDDStore:
             await self.async_save()
         return self._data
 
+    def _get_save_lock(self) -> asyncio.Lock:
+        loop_id = id(asyncio.get_running_loop())
+        lock = self._save_locks.get(loop_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._save_locks[loop_id] = lock
+        return lock
+
     async def async_save(self) -> None:
         """Persist current store state to .storage."""
-        try:
-            await self._store.async_save(self._data)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Failed to save .storage/%s: %s", STORAGE_KEY, err)
+        async with self._get_save_lock():
+            try:
+                await self._store.async_save(self._data)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Failed to save .storage/%s: %s", STORAGE_KEY, err)
 
     @property
     def global_settings(self) -> dict[str, Any]:
@@ -329,6 +340,13 @@ class PDDStore:
         """Persist daily thread timestamp for a channel."""
         self._data.setdefault("daily_threads", {})[channel] = copy.deepcopy(data)
         await self.async_save()
+
+    async def async_delete_daily_thread(self, channel: str) -> None:
+        """Remove cached daily thread metadata for a channel."""
+        threads = self._data.setdefault("daily_threads", {})
+        if channel in threads:
+            threads.pop(channel, None)
+            await self.async_save()
 
     def get_floorplan(self) -> dict[str, Any]:
         """Return a deep copy of the stored 2D spatial floorplan and camera view cones."""

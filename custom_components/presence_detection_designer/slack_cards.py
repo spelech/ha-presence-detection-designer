@@ -1,147 +1,48 @@
-"""Slack Block Kit Cards & Daily Presence Digest Management."""
+"""Slack Daily Thread Manager for persistent self-updating presence cards."""
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
-import time
-import urllib.request
+import urllib.parse
 from datetime import datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
 from .const import DATA_STORE, DOMAIN
+from .slack_blocks import (
+    _mrkdwn,
+    _section,
+    build_daily_digest_blocks,
+    build_transition_card_blocks,
+    call_slack_web_api_sync,
+    cancel_startup_slack_digest_sync,
+    collect_room_states,
+    extract_slack_token_from_hass,
+    get_extra_digest_status,
+    is_slack_channel_id,
+    now_local,
+    schedule_startup_slack_digest_sync,
+)
+
+__all__ = [
+    "SlackDailyThreadManager",
+    "_mrkdwn",
+    "_section",
+    "build_daily_digest_blocks",
+    "build_transition_card_blocks",
+    "cancel_startup_slack_digest_sync",
+    "get_slack_daily_thread_manager",
+    "schedule_startup_slack_digest_sync",
+]
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _mrkdwn(text: str) -> dict[str, str]:
-    return {"type": "mrkdwn", "text": text}
-
-
-def _section(text: str) -> dict[str, Any]:
-    return {"type": "section", "text": _mrkdwn(text)}
-
-
-def build_transition_card_blocks(
-    attribution: Any,
-    verbosity: str = "compact",
-    include_snapshot: bool = False,
-    snapshot_url: str | None = None,
-) -> list[dict[str, Any]]:
-    """Build a structured Slack Block Kit card for a presence transition."""
-    is_occ = attribution.to_state == "occupied"
-    status_icon, status_text = ("🟢", "Occupied") if is_occ else ("⚪", "Cleared")
-    hdr = f"{status_icon} {attribution.room_name} → {status_text}"[:150]
-    blocks: list[dict[str, Any]] = [
-        {"type": "header", "text": {"type": "plain_text", "text": hdr, "emoji": True}}
-    ]
-    ctx: list[dict[str, Any]] = []
-    if is_occ:
-        ctx.extend(
-            [
-                _mrkdwn(f"*Confidence:* {attribution.confidence_pct:.0f}%"),
-                _mrkdwn(f"*Threshold:* {attribution.threshold_pct:.0f}%"),
-            ]
-        )
-        if attribution.arrival_context:
-            ctx.append(_mrkdwn(f"*From:* {attribution.arrival_context}"))
-    else:
-        if attribution.duration_occupied_str:
-            ctx.append(_mrkdwn(f"*Occupied for:* {attribution.duration_occupied_str}"))
-        ctx.append(_mrkdwn(f"*Final Belief:* {attribution.confidence_pct:.0f}%"))
-    if ctx:
-        blocks.append({"type": "context", "elements": ctx[:10]})
-
-    fields: list[dict[str, Any]] = [_mrkdwn(f"*Driver:*\n`{attribution.primary_driver}`")]
-    if is_occ:
-        if attribution.active_sensors:
-            s_str = ", ".join(f"`{s.split('.')[-1]}`" for s in attribution.active_sensors[:3])
-            fields.append(_mrkdwn(f"*Active Sensors:*\n{s_str}"))
-        if attribution.sustaining_conditions:
-            fields.append(
-                _mrkdwn(
-                    f"*Sustaining:*\n{', '.join(f'`{s}`' for s in attribution.sustaining_conditions[:2])}"
-                )
-            )
-        if attribution.inferred_location:
-            fields.append(_mrkdwn(f"*Location:*\n{attribution.inferred_location}"))
-        if attribution.negative_space_evidence:
-            fields.append(_mrkdwn(f"*Exclusion:*\n{attribution.negative_space_evidence[0][:80]}"))
-    else:
-        fields.append(_mrkdwn(f"*Clearance:*\n{attribution.primary_driver}"))
-
-    sec: dict[str, Any] = {"type": "section", "fields": fields[:10]}
-    if include_snapshot and snapshot_url:
-        sec["accessory"] = {
-            "type": "image",
-            "image_url": snapshot_url,
-            "alt_text": f"{attribution.room_name} snapshot",
-        }
-    blocks.append(sec)
-    if str(verbosity).lower().strip() == "full":
-        blocks.append({"type": "divider"})
-    return blocks
-
-
-def build_daily_digest_blocks(
-    date_display: str,
-    occupied_rooms: list[dict[str, Any]],
-    clear_rooms: list[str],
-    transition_count: int,
-    last_updated_time: str,
-    house_headcount: int | None = None,
-    occupancy_mode: str | None = None,
-    notify_transitions: bool = False,
-) -> list[dict[str, Any]]:
-    """Build the main top-level daily dashboard message for Slack."""
-    blocks: list[dict[str, Any]] = [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"🏠 Presence Dashboard — {date_display}"[:150],
-                "emoji": True,
-            },
-        }
-    ]
-    if occupied_rooms:
-        lines = []
-        for r in occupied_rooms[:12]:
-            dur = f" _(since {r['duration_str']})_" if r.get("duration_str") else ""
-            drv = f" via `{r['driver']}`" if r.get("driver") else ""
-            lines.append(f"🟢 *{r.get('name', 'Unknown')}*{dur}{drv}")
-        occ_text = "\n".join(lines)
-    else:
-        occ_text = "_⚪ All rooms currently clear._"
-
-    clear_text = ", ".join(clear_rooms[:20]) if clear_rooms else "_None_"
-    blocks.extend(
-        [
-            _section(f"*Currently Occupied ({len(occupied_rooms)}):*\n{occ_text}"),
-            _section(f"*Cleared ({len(clear_rooms)}):*\n{clear_text}"),
-            {"type": "divider"},
-        ]
-    )
-    ctx = [
-        _mrkdwn(f"⏱️ *Updated:* {last_updated_time}"),
-        _mrkdwn(f"🔄 *Today's Transitions:* {transition_count}"),
-    ]
-    if house_headcount is not None:
-        mode_str = f" ({occupancy_mode.replace('_', ' ')})" if occupancy_mode else ""
-        icon = "👤" if house_headcount == 1 else ("👥" if house_headcount > 1 else "⚪")
-        ctx.append(_mrkdwn(f"{icon} *Headcount:* {house_headcount}{mode_str}"))
-    subtext = (
-        "🧵 _Transitions logged below_"
-        if notify_transitions
-        else "⚡ _Live dashboard • Transitions muted_"
-    )
-    ctx.append(_mrkdwn(subtext))
-    blocks.append({"type": "context", "elements": ctx[:10]})
-    return blocks
-
-
+_STALE_ERRORS = frozenset(
+    {"message_not_found", "thread_not_found", "cant_update_message", "channel_not_found"}
+)
 _SLACK_DAILY_THREAD_MGR_SINGLETON: SlackDailyThreadManager | None = None
 
 
@@ -155,7 +56,6 @@ def get_slack_daily_thread_manager(hass: Any = None) -> SlackDailyThreadManager:
             dom_data["slack_daily_mgr"] = mgr
             _SLACK_DAILY_THREAD_MGR_SINGLETON = mgr
         return dom_data["slack_daily_mgr"]
-
     if _SLACK_DAILY_THREAD_MGR_SINGLETON is None:
         _SLACK_DAILY_THREAD_MGR_SINGLETON = SlackDailyThreadManager()
     return _SLACK_DAILY_THREAD_MGR_SINGLETON
@@ -170,90 +70,122 @@ class SlackDailyThreadManager:
         self._channel_ids: dict[str, str] = {}
         self._verified_channels: set[str] = set()
         self._cached_token: str | None = None
+        self._locks: dict[tuple[int, str], asyncio.Lock] = {}
+        self._digest_in_flight: set[tuple[int, str]] = set()
+        self._digest_queued: set[tuple[int, str]] = set()
+        self._last_sent_digest: dict[str, tuple[str, str]] = {}
+
+    def _get_lock(self, key: str) -> asyncio.Lock:
+        lk_key = (id(asyncio.get_running_loop()), key)
+        lock = self._locks.get(lk_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[lk_key] = lock
+        return lock
 
     def call_slack_web_api(
-        self,
-        url: str,
-        token: str,
-        payload: dict[str, Any] | None = None,
+        self, url: str, token: str, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Invoke a Slack Web API endpoint synchronously."""
-        headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
-        data_bytes: bytes | None = None
-        if payload is not None:
-            headers["Content-Type"] = "application/json; charset=utf-8"
-            data_bytes = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data_bytes, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        return call_slack_web_api_sync(url, token, payload)
 
     def get_slack_token(self, hass: Any) -> str | None:
-        """Extract Slack bot API token from Home Assistant config entries or storage."""
+        """Extract Slack bot API token from Home Assistant config entries or fallback storage."""
         if self._cached_token:
             return self._cached_token
-        if (
-            hass
-            and hasattr(hass, "config_entries")
-            and hasattr(hass.config_entries, "async_entries")
-        ):
-            for entry in hass.config_entries.async_entries("slack") or []:
-                cand = getattr(entry, "data", {}).get("api_key")
-                if isinstance(cand, str) and cand.startswith("xox"):
-                    self._cached_token = cand
-                    return cand
-        import os
+        token = extract_slack_token_from_hass(hass)
+        if token:
+            self._cached_token = token
+        return token
 
-        for path in (
-            "/config/.storage/core.config_entries",
-            "/ha/823SCD-Docker/.storage/core.config_entries",
-        ):
+    async def _async_fetch_channels(self, hass: Any, token: str, api_fn: Any) -> bool:
+        """Populate channel name -> ID cache via paginated conversations.list."""
+        cursor = ""
+        ok_any = False
+        for _ in range(5):
+            url = "https://slack.com/api/conversations.list?types=public_channel,private_channel&limit=200"
+            if cursor:
+                url += f"&cursor={urllib.parse.quote(cursor)}"
+            res = await hass.async_add_executor_job(api_fn, url, token, None)
+            if not isinstance(res, dict) or not res.get("ok"):
+                break
+            ok_any = True
+            for ch in res.get("channels") or []:
+                if isinstance(ch, dict):
+                    c_id, c_name = ch.get("id"), str(ch.get("name", "")).lower()
+                    if c_id and c_name:
+                        self._channel_ids[c_name] = c_id
+                        self._verified_channels.add(c_name)
+            cursor = str((res.get("response_metadata") or {}).get("next_cursor") or "").strip()
+            if not cursor:
+                break
+        return ok_any
+
+    async def async_ensure_slack_channel(
+        self, hass: Any, channel: str, token: str, call_api_fn: Any = None
+    ) -> str:
+        """Ensure target Slack channel exists; create if missing and share cache."""
+        raw = str(channel or "").strip()
+        if is_slack_channel_id(raw):
+            return raw.upper()
+        clean = raw.lstrip("#").strip().lower()
+        if not clean or clean in self._verified_channels or not token:
+            return channel
+        if not hasattr(hass, "async_add_executor_job"):
+            return channel
+        api_fn = call_api_fn or self.call_slack_web_api
+        async with self._get_lock(f"resolve:{clean}"):
+            if clean in self._verified_channels:
+                return channel
             try:
-                if not os.path.isfile(path):
-                    continue
-                with open(path, encoding="utf-8") as f:
-                    for entry in json.load(f).get("data", {}).get("entries", []):
-                        cand = (
-                            entry.get("data", {}).get("api_key")
-                            if entry.get("domain") == "slack"
-                            else None
-                        )
-                        if isinstance(cand, str) and cand.startswith("xox"):
-                            self._cached_token = cand
-                            return cand
-            except Exception:  # noqa: BLE001
-                pass
-        return None
+                ok = await self._async_fetch_channels(hass, token, api_fn)
+                if clean in self._verified_channels:
+                    return channel
+                if ok:
+                    cres = await hass.async_add_executor_job(
+                        api_fn,
+                        "https://slack.com/api/conversations.create",
+                        token,
+                        {"name": clean, "is_private": False},
+                    )
+                    if isinstance(cres, dict) and cres.get("ok"):
+                        _LOGGER.info("Auto-created missing Slack channel #%s", clean)
+                        ch_obj = cres.get("channel") or {}
+                        if isinstance(ch_obj, dict) and ch_obj.get("id"):
+                            self._channel_ids[clean] = str(ch_obj["id"])
+                        self._verified_channels.add(clean)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Slack channel auto-provisioning skipped for %s: %s", channel, err)
+        return channel
 
     async def async_resolve_channel_id(
-        self,
-        hass: HomeAssistant,
-        channel: str,
-        token: str,
-        call_api_fn: Any = None,
+        self, hass: HomeAssistant, channel: str, token: str, call_api_fn: Any = None
     ) -> str:
         """Resolve a channel name (e.g. #presence-alerts) to a channel ID (e.g. C0CBX319XHV)."""
-        clean = channel.lstrip("#").strip().lower()
+        raw = str(channel or "").strip()
+        if is_slack_channel_id(raw):
+            cid = raw.upper()
+            self._channel_ids[cid.lower()] = cid
+            return cid
+        clean = raw.lstrip("#").strip().lower()
         if not clean:
             return channel
-        if clean.startswith(("c", "g")) and len(clean) >= 9:
-            self._channel_ids[clean] = clean.upper()
-            return clean.upper()
         if clean in self._channel_ids:
             return self._channel_ids[clean]
         api_fn = call_api_fn or self.call_slack_web_api
-        try:
-            url = "https://slack.com/api/conversations.list?types=public_channel,private_channel&limit=200"
-            list_res = await hass.async_add_executor_job(api_fn, url, token, None)
-            if isinstance(list_res, dict) and list_res.get("ok"):
-                for ch in list_res.get("channels") or []:
-                    if isinstance(ch, dict):
-                        c_id, c_name = ch.get("id"), str(ch.get("name", "")).lower()
-                        if c_id and c_name:
-                            self._channel_ids[c_name] = c_id
-                            if c_name == clean:
-                                return c_id
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Channel ID lookup skipped: %s", err)
+        async with self._get_lock(f"resolve:{clean}"):
+            if clean in self._channel_ids:
+                return self._channel_ids[clean]
+            try:
+                await self._async_fetch_channels(hass, token, api_fn)
+                if clean in self._channel_ids:
+                    return self._channel_ids[clean]
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Channel ID lookup skipped for %s: %s", channel, err)
+        stored_id = self._find_stored_channel_id(hass, clean)
+        if stored_id:
+            self._channel_ids[clean] = stored_id
+            return stored_id
         return clean
 
     @staticmethod
@@ -262,102 +194,75 @@ class SlackDailyThreadManager:
             return hass.data.get(DOMAIN, {}).get(DATA_STORE)
         return None
 
-    def _get_entry(self, hass: Any, channel_id: str) -> dict[str, Any] | None:
-        """Look up thread metadata in memory or from persistent PDDStore."""
-        if channel_id in self._daily_threads:
-            return self._daily_threads[channel_id]
+    def _all_stored_threads(self, hass: Any) -> dict[str, dict[str, Any]]:
+        merged: dict[str, dict[str, Any]] = {}
         store = self._get_store(hass)
         if store and hasattr(store, "get_daily_threads"):
-            stored = store.get_daily_threads().get(channel_id)
-            if isinstance(stored, dict):
-                self._daily_threads[channel_id] = stored
-                return stored
-        return None
+            raw = store.get_daily_threads()
+            if isinstance(raw, dict):
+                merged.update({str(k): v for k, v in raw.items() if isinstance(v, dict)})
+        merged.update({str(k): v for k, v in self._daily_threads.items() if isinstance(v, dict)})
+        return merged
 
-    def _persist_entry(self, hass: Any, channel_id: str, entry: dict[str, Any]) -> None:
-        """Persist thread metadata in memory and store."""
+    def _find_stored_channel_id(self, hass: Any, clean_name: str) -> str | None:
+        threads = self._all_stored_threads(hass)
+        for key, entry in threads.items():
+            if is_slack_channel_id(key) and entry.get("channel_name") == clean_name:
+                return key
+        today = now_local().strftime("%Y-%m-%d")
+        legacy = [
+            key
+            for key, entry in threads.items()
+            if is_slack_channel_id(key)
+            and not entry.get("channel_name")
+            and entry.get("date_str") == today
+            and entry.get("thread_ts")
+        ]
+        return legacy[0] if len(legacy) == 1 else None
+
+    def _get_entry(
+        self, hass: Any, channel_id: str, channel_name: str | None = None
+    ) -> tuple[str, dict[str, Any]] | tuple[None, None]:
+        threads = self._all_stored_threads(hass)
+        if channel_id in threads:
+            self._daily_threads[channel_id] = threads[channel_id]
+            return channel_id, threads[channel_id]
+        if channel_name:
+            for key, entry in threads.items():
+                if entry.get("channel_name") == channel_name:
+                    self._daily_threads[key] = entry
+                    return key, entry
+        return None, None
+
+    async def _async_persist_entry(
+        self, hass: Any, channel_id: str, entry: dict[str, Any], old_key: str | None = None
+    ) -> None:
         self._daily_threads[channel_id] = entry
+        if old_key and old_key != channel_id:
+            self._daily_threads.pop(old_key, None)
         store = self._get_store(hass)
-        if (
-            store
-            and hasattr(store, "async_save_daily_thread")
-            and hasattr(hass, "async_create_task")
-        ):
-            coro = store.async_save_daily_thread(channel_id, entry)
-            hass.async_create_task(coro)
-            if type(hass.async_create_task).__name__ == "MagicMock" and hasattr(coro, "close"):
-                coro.close()
+        if not store:
+            return
+        if old_key and old_key != channel_id and hasattr(store, "async_delete_daily_thread"):
+            if inspect.isawaitable(dres := store.async_delete_daily_thread(old_key)):
+                await dres
+        if hasattr(store, "async_save_daily_thread"):
+            if inspect.isawaitable(sres := store.async_save_daily_thread(channel_id, entry)):
+                await sres
+
+    async def _async_evict_entry(self, hass: Any, channel_id: str) -> None:
+        self._daily_threads.pop(channel_id, None)
+        self._last_sent_digest.pop(channel_id, None)
+        store = self._get_store(hass)
+        if store and hasattr(store, "async_delete_daily_thread"):
+            if inspect.isawaitable(res := store.async_delete_daily_thread(channel_id)):
+                await res
 
     def collect_room_states(
         self, hass: HomeAssistant, format_duration_fn: Any
     ) -> tuple[list[dict[str, Any]], list[str]]:
         """Collect current occupied and clear rooms from coordinator data."""
-        occupied: list[dict[str, Any]] = []
-        clear: list[str] = []
-        if not hass or not hasattr(hass, "data") or DOMAIN not in hass.data:
-            return occupied, clear
-        for _key, coord in hass.data[DOMAIN].items():
-            if not hasattr(coord, "room_name") or not hasattr(coord, "state_machine"):
-                continue
-            name = coord.room_name
-            is_occ = bool(
-                getattr(coord, "is_present", False)
-                or getattr(coord.state_machine, "is_present", False)
-            )
-            if is_occ:
-                dur_str = None
-                raw_occ = getattr(coord, "_occupied_start_time", None)
-                if not isinstance(raw_occ, (int, float)):
-                    raw_occ = getattr(coord.state_machine, "last_occupied_time", None)
-                if isinstance(raw_occ, (int, float)) and format_duration_fn:
-                    dur_str = format_duration_fn(time.time() - float(raw_occ))
-                sm = coord.state_machine
-                rem = getattr(sm, "cooling_remaining_sec", 0)
-                if (
-                    getattr(sm, "is_cooling_down", False) is True
-                    and isinstance(rem, (int, float))
-                    and rem > 0
-                ):
-                    driver = f"Cooling ({sm.cooling_remaining_sec}s)"
-                elif getattr(sm, "last_trigger_entity", None):
-                    driver = sm.last_trigger_entity.split(".")[-1].replace("_", " ").title()
-                elif getattr(sm, "active_conditions", None):
-                    driver = sm.active_conditions[0]
-                elif getattr(coord, "last_spatial_estimate", None) and isinstance(
-                    coord.last_spatial_estimate, dict
-                ):
-                    driver = coord.last_spatial_estimate.get(
-                        "occupant_label"
-                    ) or coord.last_spatial_estimate.get("spatial_method")
-                else:
-                    driver = "Sensor Fusion"
-                occupied.append({"name": name, "duration_str": dur_str, "driver": driver})
-            else:
-                clear.append(name)
-        occupied.sort(key=lambda x: str(x.get("name", "")))
-        clear.sort()
-        return occupied, clear
-
-    def _get_extra_status(self, hass: Any) -> tuple[int | None, str | None, bool]:
-        """Retrieve house headcount, mode, and notify_transitions flag."""
-        headcount, mode, notify_trans = None, None, False
-        if not hass or not hasattr(hass, "data") or not isinstance(hass.data, dict):
-            return headcount, mode, notify_trans
-        try:
-            from .house_perimeter import get_house_perimeter_tracker
-
-            tracker = get_house_perimeter_tracker(hass)
-            headcount, mode = tracker.state.count, tracker.state.mode
-        except Exception:  # noqa: BLE001
-            pass
-
-        store = self._get_store(hass)
-        if store and hasattr(store, "global_settings"):
-            notify_trans = bool(
-                (store.global_settings or {}).get("slack_notify_transitions", False)
-            )
-
-        return headcount, mode, notify_trans
+        return collect_room_states(hass, format_duration_fn)
 
     def _build_digest_payload(
         self,
@@ -366,10 +271,10 @@ class SlackDailyThreadManager:
         now_dt: datetime,
         format_duration_fn: Any,
         transition_count: int,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], str]:
         date_display = now_dt.strftime("%A, %b %d, %Y")
         occupied_rooms, clear_rooms = self.collect_room_states(hass, format_duration_fn)
-        headcount, mode, notify_trans = self._get_extra_status(hass)
+        headcount, mode, notify_trans = get_extra_digest_status(hass)
         blocks = build_daily_digest_blocks(
             date_display=date_display,
             occupied_rooms=occupied_rooms,
@@ -380,11 +285,67 @@ class SlackDailyThreadManager:
             occupancy_mode=mode,
             notify_transitions=notify_trans,
         )
-        return {
+        payload = {
             "channel": channel_id,
             "text": f"🏠 Presence Dashboard — {date_display}",
             "blocks": blocks,
         }
+        return payload, json.dumps(blocks, sort_keys=True)
+
+    async def _get_or_create_daily_thread_locked(
+        self,
+        hass: HomeAssistant,
+        channel_id: str,
+        channel_name: str,
+        token: str,
+        format_duration_fn: Any,
+        api_fn: Any,
+        *,
+        increment_count: bool = True,
+    ) -> tuple[str | None, str, bool]:
+        now_dt = now_local()
+        date_str = now_dt.strftime("%Y-%m-%d")
+        found_key, entry = self._get_entry(hass, channel_id, channel_name=channel_name)
+        if entry and entry.get("date_str") == date_str and entry.get("thread_ts"):
+            if channel_name and not entry.get("channel_name"):
+                entry["channel_name"] = channel_name
+            if increment_count:
+                entry["transition_count"] = int(entry.get("transition_count", 0) or 0) + 1
+            target_key = (
+                channel_id if is_slack_channel_id(channel_id) else (found_key or channel_id)
+            )
+            old_key = found_key if found_key and found_key != target_key else None
+            await self._async_persist_entry(hass, target_key, entry, old_key=old_key)
+            return str(entry["thread_ts"]), target_key, False
+
+        post_payload, sig = self._build_digest_payload(
+            hass, channel_id, now_dt, format_duration_fn, 1
+        )
+        try:
+            res = await hass.async_add_executor_job(
+                api_fn, "https://slack.com/api/chat.postMessage", token, post_payload
+            )
+            if isinstance(res, dict) and res.get("ok") and res.get("ts"):
+                thread_ts = str(res["ts"])
+                actual_ch = str(res.get("channel") or channel_id)
+                if channel_name and is_slack_channel_id(actual_ch):
+                    self._channel_ids[channel_name] = actual_ch
+                new_entry = {
+                    "date_str": date_str,
+                    "thread_ts": thread_ts,
+                    "transition_count": 1,
+                    "channel_name": channel_name,
+                }
+                old_key = found_key if found_key and found_key != actual_ch else None
+                await self._async_persist_entry(hass, actual_ch, new_entry, old_key=old_key)
+                self._last_sent_digest[actual_ch] = (thread_ts, sig)
+                _LOGGER.info("Initialized daily Slack thread in %s (ts=%s)", actual_ch, thread_ts)
+                return thread_ts, actual_ch, True
+            if isinstance(res, dict) and not res.get("ok"):
+                _LOGGER.warning("Slack postMessage error on %s: %s", channel_id, res.get("error"))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not create daily Slack thread in %s: %s", channel_id, err)
+        return None, channel_id, False
 
     async def async_get_or_create_daily_thread(
         self,
@@ -396,39 +357,13 @@ class SlackDailyThreadManager:
     ) -> str | None:
         """Get today's daily dashboard thread timestamp, creating parent post if needed."""
         api_fn = call_api_fn or self.call_slack_web_api
+        clean = str(channel or "").lstrip("#").strip().lower()
         channel_id = await self.async_resolve_channel_id(hass, channel, token, call_api_fn=api_fn)
-        now_dt = datetime.now()
-        date_str = now_dt.strftime("%Y-%m-%d")
-
-        entry = self._get_entry(hass, channel_id)
-        if entry and entry.get("date_str") == date_str and entry.get("thread_ts"):
-            entry["transition_count"] = entry.get("transition_count", 0) + 1
-            self._persist_entry(hass, channel_id, entry)
-            return str(entry["thread_ts"])
-
-        post_payload = self._build_digest_payload(hass, channel_id, now_dt, format_duration_fn, 1)
-
-        try:
-            res = await hass.async_add_executor_job(
-                api_fn, "https://slack.com/api/chat.postMessage", token, post_payload
+        async with self._get_lock(f"thread:{channel_id}"):
+            thread_ts, _cid, _created = await self._get_or_create_daily_thread_locked(
+                hass, channel_id, clean, token, format_duration_fn, api_fn, increment_count=True
             )
-            if isinstance(res, dict) and res.get("ok") and res.get("ts"):
-                thread_ts = str(res["ts"])
-                new_entry = {
-                    "date_str": date_str,
-                    "thread_ts": thread_ts,
-                    "transition_count": 1,
-                }
-                self._persist_entry(hass, channel_id, new_entry)
-                _LOGGER.info(
-                    "Initialized daily Slack presence thread in %s (ts=%s)",
-                    channel_id,
-                    thread_ts,
-                )
-                return thread_ts
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Could not create daily Slack thread in %s: %s", channel_id, err)
-        return None
+            return thread_ts
 
     async def async_post_thread_reply(
         self,
@@ -442,6 +377,7 @@ class SlackDailyThreadManager:
     ) -> bool:
         """Post a transition alert directly inside the daily thread via Slack Web API."""
         api_fn = call_api_fn or self.call_slack_web_api
+        clean = str(channel or "").lstrip("#").strip().lower()
         channel_id = await self.async_resolve_channel_id(hass, channel, token, call_api_fn=api_fn)
         reply_payload: dict[str, Any] = {
             "channel": channel_id,
@@ -454,10 +390,25 @@ class SlackDailyThreadManager:
             res = await hass.async_add_executor_job(
                 api_fn, "https://slack.com/api/chat.postMessage", token, reply_payload
             )
-            return bool(isinstance(res, dict) and res.get("ok"))
+            if isinstance(res, dict) and res.get("ok"):
+                return True
+            err_code = str(res.get("error") or "") if isinstance(res, dict) else ""
+            _LOGGER.warning("Slack thread reply error on %s: %s", channel_id, err_code or res)
+            if err_code in ("thread_not_found", "message_not_found"):
+                async with self._get_lock(f"thread:{channel_id}"):
+                    await self._async_evict_entry(hass, channel_id)
+                    new_ts, actual_ch, _ = await self._get_or_create_daily_thread_locked(
+                        hass, channel_id, clean, token, None, api_fn, increment_count=False
+                    )
+                    if new_ts:
+                        retry_payload = {**reply_payload, "channel": actual_ch, "thread_ts": new_ts}
+                        retry_res = await hass.async_add_executor_job(
+                            api_fn, "https://slack.com/api/chat.postMessage", token, retry_payload
+                        )
+                        return bool(isinstance(retry_res, dict) and retry_res.get("ok"))
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Could not post threaded Slack reply to %s: %s", channel_id, err)
-            return False
+        return False
 
     async def async_update_daily_digest(
         self,
@@ -466,34 +417,81 @@ class SlackDailyThreadManager:
         token: str,
         format_duration_fn: Any,
         call_api_fn: Any = None,
+        *,
+        force: bool = False,
     ) -> None:
         """Update today's parent Slack post with the latest live room states."""
         api_fn = call_api_fn or self.call_slack_web_api
+        clean = str(channel or "").lstrip("#").strip().lower()
         channel_id = await self.async_resolve_channel_id(hass, channel, token, call_api_fn=api_fn)
-        now_dt = datetime.now()
-        date_str = now_dt.strftime("%Y-%m-%d")
-
-        entry = self._get_entry(hass, channel_id)
-        if not entry or entry.get("date_str") != date_str or not entry.get("thread_ts"):
-            thread_ts = await self.async_get_or_create_daily_thread(
-                hass, channel, token, format_duration_fn, call_api_fn=api_fn
-            )
-            if not thread_ts:
+        loop_key = (id(asyncio.get_running_loop()), channel_id)
+        if not force and loop_key in self._digest_in_flight:
+            if loop_key in self._digest_queued:
                 return
-            entry = self._get_entry(hass, channel_id)
-            if not entry or not entry.get("thread_ts"):
-                return
+            self._digest_queued.add(loop_key)
 
-        update_payload = self._build_digest_payload(
-            hass, channel_id, now_dt, format_duration_fn, entry.get("transition_count", 1)
-        )
-        update_payload["ts"] = entry["thread_ts"]
+        async with self._get_lock(f"thread:{channel_id}"):
+            self._digest_in_flight.add(loop_key)
+            self._digest_queued.discard(loop_key)
+            try:
+                now_dt = now_local()
+                date_str = now_dt.strftime("%Y-%m-%d")
+                found_key, entry = self._get_entry(hass, channel_id, channel_name=clean)
+                if not entry or entry.get("date_str") != date_str or not entry.get("thread_ts"):
+                    thread_ts, _cid, created_new = await self._get_or_create_daily_thread_locked(
+                        hass,
+                        channel_id,
+                        clean,
+                        token,
+                        format_duration_fn,
+                        api_fn,
+                        increment_count=False,
+                    )
+                    if not thread_ts or created_new:
+                        return
+                    found_key, entry = self._get_entry(hass, channel_id, channel_name=clean)
+                    if not entry or not entry.get("thread_ts"):
+                        return
 
-        try:
-            res = await hass.async_add_executor_job(
-                api_fn, "https://slack.com/api/chat.update", token, update_payload
-            )
-            if isinstance(res, dict) and not res.get("ok"):
-                _LOGGER.warning("Slack chat.update error on %s: %s", channel_id, res.get("error"))
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Could not update daily Slack digest: %s", err)
+                target_ch = (
+                    channel_id if is_slack_channel_id(channel_id) else (found_key or channel_id)
+                )
+                if found_key and found_key != target_ch:
+                    await self._async_persist_entry(hass, target_ch, entry, old_key=found_key)
+                thread_ts = str(entry["thread_ts"])
+                tcount = int(entry.get("transition_count", 1) or 1)
+                update_payload, sig = self._build_digest_payload(
+                    hass, target_ch, now_dt, format_duration_fn, tcount
+                )
+                update_payload["ts"] = thread_ts
+                if not force and self._last_sent_digest.get(target_ch) == (thread_ts, sig):
+                    return
+
+                res = await hass.async_add_executor_job(
+                    api_fn, "https://slack.com/api/chat.update", token, update_payload
+                )
+                if isinstance(res, dict) and res.get("ok"):
+                    self._last_sent_digest[target_ch] = (thread_ts, sig)
+                elif isinstance(res, dict) and not res.get("ok"):
+                    err_code = str(res.get("error") or "")
+                    _LOGGER.warning("Slack chat.update error on %s: %s", target_ch, err_code)
+                    if err_code in _STALE_ERRORS:
+                        await self._async_evict_entry(hass, target_ch)
+                        if err_code == "channel_not_found":
+                            self._channel_ids.pop(clean, None)
+                            channel_id = await self.async_resolve_channel_id(
+                                hass, channel, token, call_api_fn=api_fn
+                            )
+                        await self._get_or_create_daily_thread_locked(
+                            hass,
+                            channel_id,
+                            clean,
+                            token,
+                            format_duration_fn,
+                            api_fn,
+                            increment_count=False,
+                        )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Could not update daily Slack digest: %s", err)
+            finally:
+                self._digest_in_flight.discard(loop_key)
