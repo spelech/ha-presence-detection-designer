@@ -15,7 +15,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._hass = null;
     this._panel = null;
-    this._panelVersion = "0.3.2";
+    this._panelVersion = "0.3.3";
     this._overview = null;
     this._selectedRoomId = null;
     this._draftConfig = null;
@@ -33,6 +33,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._yamlDraft = "";
     this._revisionNote = "";
     this._showGlobalModal = false;
+    this._settingsTab = "interface"; // "interface" | "detection" | "ai" | "notifications"
     this._globalDraft = null;
     this._floorplan = this._loadLocalOrDefaultFloorplan();
     this._compiledTopology = this._compileFloorplanClient(this._floorplan);
@@ -52,8 +53,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._activeFpDrag = null;
     this._saveFpTimeout = null;
     this._canvasRenderRaf = null;
-    this._showBlueprintUnderlay = true;
+    this._fpLayers = this._loadFpLayers();
+    this._showBlueprintUnderlay = this._fpLayers.underlay !== false;
     this._underlayOpacity = 0.88;
+    this._containerBp = "full";
+    this._resizeObserver = null;
     this._floorplanMode = "rooms"; // "rooms" | "cameras" | "sensors"
     this._selectedSensorId = null;
     this._selectedSubZoneId = null;
@@ -98,13 +102,97 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     }
   }
 
+  _loadFpLayers() {
+    const defaults = {
+      underlay: true,
+      rooms: true,
+      cameras: true,
+      subzones: true,
+      pir: true,
+      doors: true,
+      ble: false,
+      connections: false,
+      overlaps: true,
+      occupants: true,
+    };
+    try {
+      const raw = localStorage.getItem("pdd_fp_layers_v1");
+      if (raw) {
+        return { ...defaults, ...JSON.parse(raw) };
+      }
+    } catch (_e) {}
+    return defaults;
+  }
+
+  _saveFpLayers() {
+    try {
+      localStorage.setItem("pdd_fp_layers_v1", JSON.stringify(this._fpLayers || {}));
+    } catch (_e) {}
+  }
+
+  _loadLocalAdvancedMode() {
+    try {
+      return localStorage.getItem("pdd_ui_advanced_mode") === "true";
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  _saveLocalAdvancedMode(val) {
+    try {
+      localStorage.setItem("pdd_ui_advanced_mode", val ? "true" : "false");
+    } catch (_e) {}
+  }
+
+  _isAdvancedMode() {
+    if (this._globalDraft && typeof this._globalDraft.ui_advanced_mode === "boolean") {
+      return this._globalDraft.ui_advanced_mode;
+    }
+    if (this._overview?.global_settings && typeof this._overview.global_settings.ui_advanced_mode === "boolean") {
+      return this._overview.global_settings.ui_advanced_mode;
+    }
+    return this._loadLocalAdvancedMode();
+  }
+
+  _computeContainerBp(width) {
+    const w = Number(width || 0);
+    if (w > 0 && w < 680) return "mobile";
+    if (w > 0 && w < 1080) return "tablet";
+    if (w > 0 && w < 1460) return "compact";
+    return "full";
+  }
+
+  _updateContainerBp() {
+    const rectW = this.clientWidth || this.getBoundingClientRect?.().width || window.innerWidth || 1440;
+    const next = this._computeContainerBp(rectW);
+    if (next !== this._containerBp) {
+      this._containerBp = next;
+      const shell = this.shadowRoot?.querySelector(".pdd-shell");
+      if (shell) {
+        shell.setAttribute("data-bp", next);
+      }
+    }
+  }
+
   connectedCallback() {
+    this._updateContainerBp();
+    if (typeof ResizeObserver !== "undefined" && !this._resizeObserver) {
+      this._resizeObserver = new ResizeObserver(() => this._updateContainerBp());
+      this._resizeObserver.observe(this);
+    }
     if (!this._initialized) {
       this._initialized = true;
       this.render();
       if (this._hass || window.__PDD_MOCK_API__) {
         this.loadOverview();
       }
+    }
+  }
+
+  disconnectedCallback() {
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
     }
   }
 
@@ -1246,6 +1334,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         "/api/presence_detection_designer/global_settings",
         this._globalDraft
       );
+      if (typeof this._globalDraft?.ui_advanced_mode === "boolean") {
+        this._saveLocalAdvancedMode(this._globalDraft.ui_advanced_mode);
+      }
       if (res && res.global_settings && this._overview) {
         this._overview.global_settings = res.global_settings;
       }
@@ -1518,16 +1609,30 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           cursor: pointer;
         }
 
+        .pdd-shell {
+          container-type: inline-size;
+          container-name: pdd;
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          height: 100%;
+          min-width: 0;
+          overflow: hidden;
+          position: relative;
+        }
+
         /* Clean Home Assistant Top App Bar */
         .app-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0 24px;
+          padding: 0 20px;
+          min-height: 56px;
           height: 56px;
           flex-shrink: 0;
           width: 100%;
           max-width: 100%;
+          gap: 12px;
           background: var(--ha-card);
           border-bottom: 1px solid var(--ha-divider);
           position: relative;
@@ -1544,33 +1649,39 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         .header-left {
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 10px;
           min-width: 0;
+          flex-shrink: 0;
         }
         .header-title {
           font-size: 18px;
           font-weight: 500;
           margin: 0;
           color: var(--ha-text);
+          white-space: nowrap;
+          flex-shrink: 0;
         }
         .header-summary {
-          font-size: 13px;
+          font-size: 12.5px;
           color: var(--ha-muted);
+          white-space: nowrap;
         }
         .nav-tabs {
           display: flex;
+          align-items: stretch;
           height: 56px;
-          gap: 4px;
+          gap: 2px;
+          min-width: 0;
         }
         .nav-tab {
           flex-shrink: 0;
           background: none;
           border: none;
           border-bottom: 2px solid transparent;
-          padding: 0 16px;
+          padding: 0 14px;
           min-height: 24px;
           min-width: 24px;
-          font-size: 14px;
+          font-size: 13.5px;
           font-weight: 500;
           color: var(--ha-muted);
           white-space: nowrap;
@@ -1587,7 +1698,8 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         .header-actions {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
+          flex-shrink: 0;
         }
 
         /* Standard Buttons & Inputs */
@@ -1677,18 +1789,175 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         .workspace {
           display: grid;
           grid-template-columns: 260px minmax(0, 1fr);
-          gap: 24px;
+          gap: 22px;
           width: 100%;
           min-width: 0;
-          max-width: 1380px;
+          max-width: 1460px;
           margin: 0 auto;
-          padding: 20px 24px 48px;
+          padding: 18px 20px 48px;
           align-items: start;
         }
-        @media (max-width: 1100px) {
-          .workspace {
-            grid-template-columns: minmax(0, 1fr);
-          }
+        .workspace.no-sidebar {
+          grid-template-columns: minmax(0, 1fr);
+          max-width: 1580px;
+          gap: 14px;
+        }
+
+        /* Compact Room Badge Strip for Non-Rooms Tabs */
+        .room-badge-strip {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          background: var(--ha-card);
+          border: 1px solid var(--ha-divider);
+          border-radius: 12px;
+          padding: 10px 14px;
+          min-width: 0;
+        }
+        .room-badge-strip-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .room-badge-list {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          min-width: 0;
+        }
+        .room-badge-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 999px;
+          border: 1px solid var(--ha-divider);
+          background: var(--ha-subtle);
+          color: var(--ha-text);
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: border-color 0.12s, background 0.12s;
+        }
+        .room-badge-pill:hover {
+          border-color: var(--ha-primary-text);
+        }
+        .room-badge-pill.selected {
+          background: rgba(3, 105, 161, 0.14);
+          border-color: var(--ha-primary-text);
+          color: var(--ha-primary-text);
+          font-weight: 600;
+        }
+        .room-badge-pill.occupied:not(.selected) {
+          border-color: rgba(22, 163, 74, 0.45);
+          background: rgba(22, 163, 74, 0.08);
+        }
+
+        /* Floorplan Layer Bar & Overlap Legend */
+        .fp-layer-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 10px 12px;
+          margin-bottom: 10px;
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-radius: 10px;
+        }
+        .fp-layer-chips {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .fp-layer-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 4px 9px;
+          border-radius: 999px;
+          border: 1px solid var(--ha-divider);
+          background: var(--ha-card);
+          color: var(--ha-muted);
+          font-size: 11.5px;
+          font-weight: 500;
+          cursor: pointer;
+          white-space: nowrap;
+          opacity: 0.72;
+          transition: all 0.12s ease;
+        }
+        .fp-layer-chip:hover {
+          opacity: 1;
+          color: var(--ha-text);
+        }
+        .fp-layer-chip.active {
+          opacity: 1;
+          color: var(--ha-text);
+          border-color: var(--ha-primary-text);
+          background: rgba(3, 105, 161, 0.1);
+          font-weight: 600;
+        }
+        .fp-layer-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+        .fp-layer-presets {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          flex-wrap: wrap;
+        }
+        .fp-legend-panel {
+          margin-top: 12px;
+          padding: 12px 14px;
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-radius: 10px;
+        }
+        .fp-legend-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px;
+        }
+        .fp-legend-heading {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--ha-text);
+          margin-bottom: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .fp-legend-list {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+          gap: 7px 12px;
+        }
+        .fp-legend-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          font-size: 11.5px;
+          line-height: 1.35;
+          color: var(--ha-text);
+        }
+        .fp-swatch {
+          width: 24px;
+          height: 16px;
+          border-radius: 4px;
+          flex-shrink: 0;
+          margin-top: 1px;
+          border: 1px solid rgba(15, 23, 42, 0.25);
         }
 
         /* Left Sidebar Room List */
@@ -2039,14 +2308,15 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           resize: vertical;
         }
 
-        /* Modal */
+        /* Modal & Multipane Side-Tab Settings */
         .modal-backdrop {
           position: absolute;
           inset: 0;
-          background: rgba(15, 23, 42, 0.45);
+          background: rgba(15, 23, 42, 0.52);
           display: flex;
           align-items: center;
           justify-content: center;
+          padding: 16px;
           z-index: 30;
         }
         .modal-card {
@@ -2054,11 +2324,100 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           border: 1px solid var(--ha-divider);
           border-radius: 12px;
           width: 480px;
-          max-width: 92%;
+          max-width: 94%;
           max-height: 90vh;
           overflow-y: auto;
           padding: 20px;
-          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+        }
+        .modal-card.settings-modal {
+          width: min(860px, 96%);
+          max-height: min(680px, 90vh);
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .settings-modal-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 14px 20px;
+          border-bottom: 1px solid var(--ha-divider);
+          flex-shrink: 0;
+        }
+        .settings-shell {
+          display: grid;
+          grid-template-columns: 215px minmax(0, 1fr);
+          flex: 1;
+          min-height: 0;
+          overflow: hidden;
+        }
+        .settings-nav {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          padding: 12px;
+          background: var(--ha-subtle);
+          border-right: 1px solid var(--ha-divider);
+          overflow-y: auto;
+        }
+        .settings-nav-btn {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          text-align: left;
+          padding: 9px 11px;
+          border-radius: 8px;
+          border: 1px solid transparent;
+          background: transparent;
+          color: var(--ha-muted);
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.12s, color 0.12s;
+        }
+        .settings-nav-btn:hover {
+          background: var(--ha-card);
+          color: var(--ha-text);
+        }
+        .settings-nav-btn.active {
+          background: var(--ha-card);
+          border-color: var(--ha-primary-text);
+          color: var(--ha-primary-text);
+          font-weight: 600;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+        .settings-panes {
+          padding: 18px 20px;
+          overflow-y: auto;
+          min-width: 0;
+        }
+        .settings-pane {
+          display: none;
+        }
+        .settings-pane.active {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+        .settings-item {
+          padding: 12px 14px;
+          border: 1px solid var(--ha-divider);
+          border-radius: 10px;
+          background: var(--ha-subtle);
+        }
+        .settings-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 10px;
+          padding: 12px 20px;
+          border-top: 1px solid var(--ha-divider);
+          background: var(--ha-card);
+          flex-shrink: 0;
         }
 
         .add-obs-grid {
@@ -2200,12 +2559,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           opacity: 0.7;
         }
 
-        @media (max-width: 1430px) {
+        @container pdd (max-width: 1460px) {
           .app-header {
             height: auto;
-            min-height: 56px;
+            min-height: 54px;
             flex-wrap: wrap;
-            padding: 8px 16px;
+            padding: 8px 18px;
             gap: 6px 12px;
           }
           .header-left {
@@ -2228,16 +2587,93 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           .header-actions {
             flex-wrap: wrap;
             gap: 6px;
+            margin-left: auto;
           }
         }
+        .pdd-shell[data-bp="compact"] .app-header,
+        .pdd-shell[data-bp="tablet"] .app-header,
+        .pdd-shell[data-bp="mobile"] .app-header {
+          height: auto;
+          min-height: 54px;
+          flex-wrap: wrap;
+          padding: 8px 18px;
+          gap: 6px 12px;
+        }
+        .pdd-shell[data-bp="compact"] .header-left,
+        .pdd-shell[data-bp="tablet"] .header-left,
+        .pdd-shell[data-bp="mobile"] .header-left {
+          flex: 1 1 auto;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .pdd-shell[data-bp="compact"] .nav-tabs,
+        .pdd-shell[data-bp="tablet"] .nav-tabs,
+        .pdd-shell[data-bp="mobile"] .nav-tabs {
+          order: 3;
+          width: 100%;
+          height: auto;
+          flex-wrap: wrap;
+          gap: 4px;
+          border-top: 1px solid var(--ha-divider);
+          padding-top: 4px;
+        }
+        .pdd-shell[data-bp="compact"] .nav-tab,
+        .pdd-shell[data-bp="tablet"] .nav-tab,
+        .pdd-shell[data-bp="mobile"] .nav-tab {
+          padding: 7px 12px;
+        }
+        .pdd-shell[data-bp="compact"] .header-actions,
+        .pdd-shell[data-bp="tablet"] .header-actions,
+        .pdd-shell[data-bp="mobile"] .header-actions {
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-left: auto;
+        }
 
-        @media (max-width: 1100px) {
+        @container pdd (max-width: 1080px) {
+          .workspace {
+            grid-template-columns: minmax(0, 1fr);
+          }
           .timeline-split-grid {
             grid-template-columns: 1fr;
           }
+          .fp-legend-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        .pdd-shell[data-bp="tablet"] .workspace,
+        .pdd-shell[data-bp="mobile"] .workspace {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .pdd-shell[data-bp="tablet"] .timeline-split-grid,
+        .pdd-shell[data-bp="mobile"] .timeline-split-grid,
+        .pdd-shell[data-bp="tablet"] .fp-legend-grid,
+        .pdd-shell[data-bp="mobile"] .fp-legend-grid {
+          grid-template-columns: 1fr;
         }
 
-        @media (max-width: 720px) {
+        @container pdd (max-width: 850px) {
+          .sensor-row {
+            grid-template-columns: 1fr;
+          }
+          .settings-shell {
+            grid-template-columns: 1fr;
+          }
+          .settings-nav {
+            flex-direction: row;
+            flex-wrap: wrap;
+            border-right: none;
+            border-bottom: 1px solid var(--ha-divider);
+            padding: 8px 12px;
+          }
+          .settings-nav-btn {
+            width: auto;
+            padding: 6px 10px;
+            font-size: 12px;
+          }
+        }
+
+        @container pdd (max-width: 680px) {
           .workspace {
             padding: 12px 12px 32px;
             gap: 14px;
@@ -2250,6 +2686,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           }
           .header-actions {
             width: 100%;
+            margin-left: 0;
           }
           .nav-tab {
             padding: 6px 10px;
@@ -2305,8 +2742,38 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             min-height: 220px !important;
           }
         }
+        .pdd-shell[data-bp="mobile"] .workspace {
+          padding: 12px 12px 32px;
+          gap: 14px;
+        }
+        .pdd-shell[data-bp="mobile"] .ha-card {
+          padding: 14px;
+        }
+        .pdd-shell[data-bp="mobile"] .header-summary {
+          display: none;
+        }
+        .pdd-shell[data-bp="mobile"] .header-actions {
+          width: 100%;
+          margin-left: 0;
+        }
+        .pdd-shell[data-bp="mobile"] .settings-shell {
+          grid-template-columns: 1fr;
+        }
+        .pdd-shell[data-bp="mobile"] .settings-nav {
+          flex-direction: row;
+          flex-wrap: wrap;
+          border-right: none;
+          border-bottom: 1px solid var(--ha-divider);
+          padding: 8px 12px;
+        }
+        .pdd-shell[data-bp="mobile"] .settings-nav-btn {
+          width: auto;
+          padding: 6px 10px;
+          font-size: 12px;
+        }
       </style>
 
+      <div class="pdd-shell" data-bp="${this._escape(this._containerBp || "full")}">
       <div id="pdd-toast-container" style="position:absolute;bottom:20px;right:24px;z-index:40;"></div>
 
       <datalist id="pdd-all-entities">
@@ -2402,8 +2869,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       </div>
 
       <div class="panel-scroll-frame">
-        <div class="workspace">
-          <!-- LEFT SIDEBAR: Simple Room List -->
+        <div class="workspace ${this._studioView === "design" ? "" : "no-sidebar"}">
+          ${
+            this._studioView === "design"
+              ? `
+          <!-- LEFT SIDEBAR: Room List (Rooms tab only) -->
           <div class="sidebar-card">
             <div class="sidebar-top">
               <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
@@ -2457,7 +2927,52 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 })
                 .join("")}
             </div>
-          </div>
+          </div>`
+              : `
+          <!-- COMPACT ROOM BADGE STRIP (Non-Rooms tabs) -->
+          <div class="room-badge-strip">
+            <div class="room-badge-strip-head">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span style="font-size:12px;font-weight:600;color:var(--ha-muted);">Rooms (${occupiedCount}/${rooms.length} occupied)</span>
+                <div class="seg-group" style="margin-top:0;">
+                  ${[
+                    { id: "all", label: "All" },
+                    { id: "occupied", label: "Occupied" },
+                    { id: "vacant", label: "Clear" },
+                  ]
+                    .map(
+                      (f) => `
+                    <button class="seg-btn ${this._roomFilter === f.id ? "active" : ""}" data-filter="${f.id}" style="padding:3px 9px;min-height:22px;font-size:11.5px;">
+                      ${f.label}
+                    </button>`
+                    )
+                    .join("")}
+                </div>
+              </div>
+              <button class="btn-text" id="btn-jump-edit-selected-room" style="font-size:12px;padding:3px 8px;">
+                Edit Selected Room &rarr;
+              </button>
+            </div>
+            <div class="room-badge-list">
+              ${filteredRooms
+                .map((r) => {
+                  const st = this._roomStatusSummary(r);
+                  const isSel = r.entry_id === this._selectedRoomId;
+                  return `
+                    <button
+                      type="button"
+                      class="room-badge-pill ${st.dotClass} ${isSel ? "selected" : ""}"
+                      data-room-badge-id="${this._escape(r.entry_id)}"
+                      title="${this._escape(r.room_name)} — ${this._escape(st.label)}"
+                    >
+                      <span class="status-dot ${st.dotClass}"></span>
+                      <span>${this._escape(r.room_name)}</span>
+                    </button>`;
+                })
+                .join("")}
+            </div>
+          </div>`
+          }
 
           <!-- MAIN WORKSPACE -->
           ${
@@ -2488,170 +3003,223 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         this._showGlobalModal
           ? `
         <div class="modal-backdrop" id="global-modal-backdrop">
-          <div class="modal-card">
-            <div class="card-head">
-              <h3 class="card-title">Global AI &amp; Tracker Settings</h3>
+          <div class="modal-card settings-modal">
+            <div class="settings-modal-head">
+              <div>
+                <h3 class="card-title" style="margin:0;">Global Settings</h3>
+                <div style="font-size:12px;color:var(--ha-muted);margin-top:2px;">Interface complexity, spatial inference, AI vision &amp; Slack alerts</div>
+              </div>
               <button class="btn-text" id="btn-close-global">✕</button>
             </div>
-            <div style="display:flex;flex-direction:column;gap:12px;">
-              <div>
-                <div class="setting-label" style="margin-bottom:4px;">Vision AI Provider</div>
-                <select class="select" id="gl-provider">
-                  <option value="vision_api" ${
-                    (this._globalDraft?.llm_provider_type || "vision_api") === "vision_api"
-                      ? "selected"
-                      : ""
-                  }>OpenAI-Compatible Vision API (LiteLLM)</option>
-                  <option value="conversation" ${
-                    this._globalDraft?.llm_provider_type === "conversation" ? "selected" : ""
-                  }>Home Assistant Conversation Agent</option>
-                  <option value="ai_task" ${
-                    this._globalDraft?.llm_provider_type === "ai_task" ? "selected" : ""
-                  }>Home Assistant AI Task</option>
-                </select>
-              </div>
-              <div>
-                <div class="setting-label" style="margin-bottom:4px;">API Endpoint URL</div>
-                <input type="text" class="input" id="gl-api-url" value="${this._escape(
-                  this._globalDraft?.llm_api_url || ""
-                )}" placeholder="http://10.0.0.10:8448/v1/chat/completions" />
-              </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                <div>
-                  <div class="setting-label" style="margin-bottom:4px;">Model Name</div>
-                  <input type="text" class="input" id="gl-model" value="${this._escape(
-                    this._globalDraft?.llm_model || "gemini-2.5-flash"
-                  )}" />
-                </div>
-                <div>
-                  <div class="setting-label" style="margin-bottom:4px;">HA Conversation Agent</div>
-                  <input type="text" class="input" id="gl-agent-id" value="${this._escape(
-                    this._globalDraft?.llm_agent_id || ""
-                  )}" placeholder="conversation.google_ai_conversation" />
-                </div>
-              </div>
-              <div>
-                <div class="setting-label" style="margin-bottom:4px;">Household BLE Area Trackers</div>
-                <input type="text" class="input" id="gl-ble" value="${this._escape(
-                  (this._globalDraft?.ble_trackers || []).join(", ")
-                )}" />
+
+            <div class="settings-shell">
+              <div class="settings-nav" role="tablist" aria-label="Settings Categories">
+                ${[
+                  { id: "interface", icon: "🎛️", label: "Interface & Advanced" },
+                  { id: "detection", icon: "📡", label: "Detection & Inference" },
+                  { id: "ai", icon: "🤖", label: "AI & Vision" },
+                  { id: "notifications", icon: "🔔", label: "Slack Alerts" },
+                ]
+                  .map(
+                    (tab) => `
+                  <button
+                    type="button"
+                    class="settings-nav-btn ${this._settingsTab === tab.id ? "active" : ""}"
+                    data-settings-tab="${tab.id}"
+                  >
+                    <span>${tab.icon}</span>
+                    <span>${tab.label}</span>
+                  </button>`
+                  )
+                  .join("")}
               </div>
 
-              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                  <span class="setting-label" style="font-weight:600;">📱 Use BLE Position as Presence Decider</span>
-                  <input type="checkbox" id="gl-ble-decider-enabled" ${
-                    this._globalDraft?.ble_decider_enabled ? "checked" : ""
-                  } />
-                </div>
-                <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
-                  When enabled, Bermuda/proxy phone BLE areas act as active room occupancy triggers, negative-space localizers, and occupant pinning. When disabled (recommended until Google Home speakers and multi-proxy coverage are calibrated), BLE area positions are continuously collected, logged, and graphed for tuning without causing vertical bounce or false floor transitions.
-                </div>
-              </div>
-
-              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                  <span class="setting-label" style="font-weight:600;">🛡️ PIR Validation Gate (Corroborated Motion Entry)</span>
-                  <input type="checkbox" id="gl-pir-validation-enabled" ${
-                    this._globalDraft?.pir_validation_enabled !== false ? "checked" : ""
-                  } />
-                </div>
-                <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;margin-bottom:8px;">
-                  Holds raw PIR trips in a short candidate window unless corroborated by an adjacent occupied room, perimeter/interior door, camera/BLE confirmation, or sustained motion (rejecting standalone HVAC/sunlight/pet false triggers).
-                </div>
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                  <span style="font-size:12px;color:var(--ha-muted);">Default PIR Candidate Window (seconds)</span>
-                  <input type="number" min="3" max="120" step="1" class="input" id="gl-pir-candidate-window" style="width:90px;" value="${Number(
-                    this._globalDraft?.pir_candidate_window ?? 15
-                  )}" />
-                </div>
-              </div>
-
-              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                  <span class="setting-label" style="font-weight:600;">👥 Guest Mode (Multi-Occupant / Low-Compute Mode)</span>
-                  <input type="checkbox" id="gl-guest-mode-enabled" ${
-                    this._globalDraft?.guest_mode_enabled ? "checked" : ""
-                  } />
-                </div>
-                <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
-                  Pauses Negative-Space raycasting, blind-pocket trajectory conservation, connected-room handoff clearing, LLM camera snapshot checks, and per-room Slack transition notifications so rooms don't constantly fire or clear each other when guests are visiting.
-                </div>
-              </div>
-
-              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                  <span class="setting-label" style="font-weight:600;">🎯 Negative-Space Bayesian Inference ("Where It Isn't")</span>
-                  <input type="checkbox" id="gl-neg-space-enabled" ${
-                    this._globalDraft?.negative_space_enabled !== false ? "checked" : ""
-                  } />
-                </div>
-                <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
-                  Subtract active-clear camera cones and clear PIR cones to localize occupants into uncovered room regions and blind pockets (Master Bathroom, Guest Room, Basement Bathroom). Toggle off to revert to standard Bayesian evaluation.
-                </div>
-              </div>
-
-              <div style="border-top:1px solid var(--ha-divider, #e5e7eb);padding-top:12px;margin-top:4px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                  <span class="setting-label" style="font-weight:600;">Slack Presence Notifications</span>
-                  <input type="checkbox" id="gl-notify-enabled" ${
-                    this._globalDraft?.notifications_enabled !== false ? "checked" : ""
-                  } />
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                  <div>
-                    <div class="setting-label" style="margin-bottom:4px;">Notify Service</div>
-                    <input type="text" class="input" id="gl-slack-service" value="${this._escape(
-                      this._globalDraft?.slack_notify_service || "notify.scdbots"
-                    )}" placeholder="notify.scdbots" />
-                  </div>
-                  <div>
-                    <div class="setting-label" style="margin-bottom:4px;">Target Channel</div>
-                    <input type="text" class="input" id="gl-slack-channel" value="${this._escape(
-                      this._globalDraft?.slack_channel || "#presence-alerts"
-                    )}" placeholder="#presence-alerts" />
+              <div class="settings-panes">
+                <!-- Pane 1: Interface & Advanced -->
+                <div class="settings-pane ${this._settingsTab === "interface" ? "active" : ""}" data-settings-pane="interface">
+                  <div class="settings-item">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;">
+                      <span class="setting-label" style="font-weight:600;">🔬 Show Advanced Room &amp; Bayesian Controls</span>
+                      <input type="checkbox" id="gl-ui-advanced-mode" ${
+                        this._isAdvancedMode() ? "checked" : ""
+                      } />
+                    </div>
+                    <div style="font-size:12px;color:var(--ha-muted);line-height:1.45;">
+                      When OFF (recommended for everyday use), the Rooms tab stays focused on HA Area, inactivity clear time, sensors, rules, doors, and state lifecycle. Turn ON to unlock Bounded Max Hold Timeout, per-room PIR Validation Gate overrides, Bayesian priors &amp; probability tables, Combination Truth Table, Automations &amp; Blueprints, YAML editor, and Saved Revisions.
+                    </div>
                   </div>
                 </div>
-                <div style="margin-top:10px;">
-                  <div class="setting-label" style="margin-bottom:4px;">Alert Verbosity</div>
-                  <select class="input" id="gl-slack-verbosity" style="width:100%;height:36px;background:var(--card-background-color,#fff);color:var(--primary-text-color,#111);border:1px solid var(--ha-divider,#ccc);border-radius:4px;padding:0 8px;">
-                    <option value="minimal" ${this._globalDraft?.slack_verbosity === "minimal" ? "selected" : ""}>Minimal (1-line badge: 🟢 Room occupied 95% via motion)</option>
-                    <option value="compact" ${(!this._globalDraft?.slack_verbosity || this._globalDraft?.slack_verbosity === "compact") ? "selected" : ""}>Compact (2-line summary: State + Driver / Localization)</option>
-                    <option value="full" ${this._globalDraft?.slack_verbosity === "full" ? "selected" : ""}>Full Diagnostic (Detailed 8-point card)</option>
-                  </select>
-                </div>
-                <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
-                  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
-                    <input type="checkbox" id="gl-slack-daily-thread" ${this._globalDraft?.slack_daily_thread !== false ? "checked" : ""} style="margin-top:2px;" />
-                    <div>
-                      <strong>Daily Presence Thread</strong>
-                      <div style="font-size:11px;color:var(--secondary-text-color,#777);margin-top:2px;">Maintain one live status dashboard per day in Slack, threading all room transitions underneath it.</div>
+
+                <!-- Pane 2: Detection & Inference -->
+                <div class="settings-pane ${this._settingsTab === "detection" ? "active" : ""}" data-settings-pane="detection">
+                  <div class="settings-item">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
+                      <span class="setting-label" style="font-weight:600;">🎯 Negative-Space Bayesian Inference ("Where It Isn't")</span>
+                      <input type="checkbox" id="gl-neg-space-enabled" ${
+                        this._globalDraft?.negative_space_enabled !== false ? "checked" : ""
+                      } />
                     </div>
-                  </label>
-                  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
-                    <input type="checkbox" id="gl-include-camera-snapshot" ${this._globalDraft?.include_camera_snapshot ? "checked" : ""} style="margin-top:2px;" />
-                    <div>
-                      <strong>Detection Capture Review (Camera Snapshots)</strong>
-                      <div style="font-size:11px;color:var(--secondary-text-color,#777);margin-top:2px;">Support attaching Frigate detection captures to cards for review of light vs person/pet (defaults to OFF).</div>
+                    <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
+                      Subtract active-clear camera cones and clear PIR cones to localize occupants into uncovered room regions and blind pockets. Toggle off to revert to standard Bayesian evaluation.
                     </div>
-                  </label>
+                  </div>
+
+                  <div class="settings-item">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
+                      <span class="setting-label" style="font-weight:600;">🛡️ PIR Validation Gate (Corroborated Motion Entry)</span>
+                      <input type="checkbox" id="gl-pir-validation-enabled" ${
+                        this._globalDraft?.pir_validation_enabled !== false ? "checked" : ""
+                      } />
+                    </div>
+                    <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;margin-bottom:8px;">
+                      Holds raw PIR trips in a short candidate window unless corroborated by an adjacent occupied room, door contact, camera/BLE confirmation, or sustained motion (rejecting standalone HVAC/sunlight/pet false triggers).
+                    </div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                      <span style="font-size:12px;color:var(--ha-muted);">Default PIR Candidate Window (seconds)</span>
+                      <input type="number" min="3" max="120" step="1" class="input" id="gl-pir-candidate-window" style="width:90px;" value="${Number(
+                        this._globalDraft?.pir_candidate_window ?? 15
+                      )}" />
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
+                      <span class="setting-label" style="font-weight:600;">👥 Guest Mode (Multi-Occupant / Low-Compute Mode)</span>
+                      <input type="checkbox" id="gl-guest-mode-enabled" ${
+                        this._globalDraft?.guest_mode_enabled ? "checked" : ""
+                      } />
+                    </div>
+                    <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
+                      Pauses Negative-Space raycasting, blind-pocket holds, connected-room handoff clearing, LLM camera snapshot checks, and per-room Slack transition alerts when guests are visiting.
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <div class="setting-label" style="font-weight:600;margin-bottom:6px;">Household BLE Area Trackers</div>
+                    <input type="text" class="input" id="gl-ble" value="${this._escape(
+                      (this._globalDraft?.ble_trackers || []).join(", ")
+                    )}" style="margin-bottom:10px;" />
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
+                      <span class="setting-label" style="font-weight:600;">📱 Use BLE Position as Presence Decider</span>
+                      <input type="checkbox" id="gl-ble-decider-enabled" ${
+                        this._globalDraft?.ble_decider_enabled ? "checked" : ""
+                      } />
+                    </div>
+                    <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
+                      When enabled, Bermuda/proxy phone BLE areas act as active occupancy triggers and occupant pinning. When disabled, BLE positions are logged and graphed for calibration without vertical floor bounce.
+                    </div>
+                  </div>
                 </div>
-                <div style="margin-top:10px;display:flex;justify-content:flex-end;">
-                  <button class="btn btn-secondary" id="btn-test-slack-alert" style="font-size:12px;">
-                    🔔 Send Test Alert to Slack
-                  </button>
+
+                <!-- Pane 3: AI & Vision -->
+                <div class="settings-pane ${this._settingsTab === "ai" ? "active" : ""}" data-settings-pane="ai">
+                  <div class="settings-item" style="display:flex;flex-direction:column;gap:10px;">
+                    <div>
+                      <div class="setting-label" style="margin-bottom:4px;">Vision AI Provider</div>
+                      <select class="select" id="gl-provider">
+                        <option value="vision_api" ${
+                          (this._globalDraft?.llm_provider_type || "vision_api") === "vision_api"
+                            ? "selected"
+                            : ""
+                        }>OpenAI-Compatible Vision API (LiteLLM)</option>
+                        <option value="conversation" ${
+                          this._globalDraft?.llm_provider_type === "conversation" ? "selected" : ""
+                        }>Home Assistant Conversation Agent</option>
+                        <option value="ai_task" ${
+                          this._globalDraft?.llm_provider_type === "ai_task" ? "selected" : ""
+                        }>Home Assistant AI Task</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div class="setting-label" style="margin-bottom:4px;">API Endpoint URL</div>
+                      <input type="text" class="input" id="gl-api-url" value="${this._escape(
+                        this._globalDraft?.llm_api_url || ""
+                      )}" placeholder="http://10.0.0.10:8448/v1/chat/completions" />
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                      <div>
+                        <div class="setting-label" style="margin-bottom:4px;">Model Name</div>
+                        <input type="text" class="input" id="gl-model" value="${this._escape(
+                          this._globalDraft?.llm_model || "gemini-2.5-flash"
+                        )}" />
+                      </div>
+                      <div>
+                        <div class="setting-label" style="margin-bottom:4px;">HA Conversation Agent</div>
+                        <input type="text" class="input" id="gl-agent-id" value="${this._escape(
+                          this._globalDraft?.llm_agent_id || ""
+                        )}" placeholder="conversation.google_ai_conversation" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Pane 4: Notifications (Slack) -->
+                <div class="settings-pane ${this._settingsTab === "notifications" ? "active" : ""}" data-settings-pane="notifications">
+                  <div class="settings-item" style="display:flex;flex-direction:column;gap:10px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                      <span class="setting-label" style="font-weight:600;">Slack Presence Notifications</span>
+                      <input type="checkbox" id="gl-notify-enabled" ${
+                        this._globalDraft?.notifications_enabled !== false ? "checked" : ""
+                      } />
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                      <div>
+                        <div class="setting-label" style="margin-bottom:4px;">Notify Service</div>
+                        <input type="text" class="input" id="gl-slack-service" value="${this._escape(
+                          this._globalDraft?.slack_notify_service || "notify.scdbots"
+                        )}" placeholder="notify.scdbots" />
+                      </div>
+                      <div>
+                        <div class="setting-label" style="margin-bottom:4px;">Target Channel</div>
+                        <input type="text" class="input" id="gl-slack-channel" value="${this._escape(
+                          this._globalDraft?.slack_channel || "#presence-alerts"
+                        )}" placeholder="#presence-alerts" />
+                      </div>
+                    </div>
+                    <div>
+                      <div class="setting-label" style="margin-bottom:4px;">Alert Verbosity</div>
+                      <select class="select" id="gl-slack-verbosity">
+                        <option value="minimal" ${this._globalDraft?.slack_verbosity === "minimal" ? "selected" : ""}>Minimal (1-line badge: 🟢 Room occupied 95% via motion)</option>
+                        <option value="compact" ${(!this._globalDraft?.slack_verbosity || this._globalDraft?.slack_verbosity === "compact") ? "selected" : ""}>Compact (2-line summary: State + Driver / Localization)</option>
+                        <option value="full" ${this._globalDraft?.slack_verbosity === "full" ? "selected" : ""}>Full Diagnostic (Detailed 8-point card)</option>
+                      </select>
+                    </div>
+                    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
+                      <input type="checkbox" id="gl-slack-daily-thread" ${this._globalDraft?.slack_daily_thread !== false ? "checked" : ""} style="margin-top:2px;" />
+                      <div>
+                        <strong>Daily Presence Thread</strong>
+                        <div style="font-size:11px;color:var(--ha-muted);margin-top:2px;">Maintain one live status dashboard per day in Slack, threading all room transitions underneath it.</div>
+                      </div>
+                    </label>
+                    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
+                      <input type="checkbox" id="gl-include-camera-snapshot" ${this._globalDraft?.include_camera_snapshot ? "checked" : ""} style="margin-top:2px;" />
+                      <div>
+                        <strong>Detection Capture Review (Camera Snapshots)</strong>
+                        <div style="font-size:11px;color:var(--ha-muted);margin-top:2px;">Support attaching Frigate detection captures to cards for review of light vs person/pet (defaults to OFF).</div>
+                      </div>
+                    </label>
+                    <div style="display:flex;justify-content:flex-end;">
+                      <button class="btn" id="btn-test-slack-alert" style="font-size:12px;">
+                        🔔 Send Test Alert to Slack
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
+            </div>
 
-              <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+            <div class="settings-footer">
+              <span style="font-size:12px;color:var(--ha-muted);">Changes apply across all rooms once saved.</span>
+              <div style="display:flex;gap:8px;margin-left:auto;">
                 <button class="btn" id="btn-cancel-global">Cancel</button>
-                <button class="btn btn-primary" id="btn-save-global">Save</button>
+                <button class="btn btn-primary" id="btn-save-global">Save Settings</button>
               </div>
             </div>
           </div>
         </div>`
           : ""
       }
+      </div>
     `;
 
     this.shadowRoot
@@ -2705,7 +3273,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const occLabel = spEst.occupant_label || "";
     const occType = spEst.occupant_type || "";
     const isPinned = Boolean(spEst.definitive_tracker_pinned);
-    const editorTab = this._editorTab || "setup";
+    const isAdv = this._isAdvancedMode();
+    const rawTab = this._editorTab || "setup";
+    const editorTab = !isAdv && rawTab === "diagnostics" ? "setup" : rawTab;
 
     return `
       <!-- 1. Compact Status & Action Header Card -->
@@ -2734,6 +3304,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   : ""
               }
               ${
+                (isAdv || selRoom.pir_validation_state === "suppressed") &&
                 selRoom.pir_validation_state &&
                 selRoom.pir_validation_state !== "idle" &&
                 selRoom.pir_validation_state !== "disabled"
@@ -2850,9 +3421,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       </div>
 
       <!-- 2. Editor Navigation Tabs -->
-      <div class="editor-tabs-bar">
+      <div class="editor-tabs-bar" style="align-items:center;">
         <button class="editor-tab-btn ${editorTab === "setup" ? "active" : ""}" data-editor-tab="setup">
-          ⚙️ Quick Setup
+          ⚙️ Room Setup
         </button>
         <button class="editor-tab-btn ${editorTab === "rules" ? "active" : ""}" data-editor-tab="rules">
           ⚡ Sensors &amp; Rules
@@ -2860,9 +3431,16 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         <button class="editor-tab-btn ${editorTab === "state_machine" ? "active" : ""}" data-editor-tab="state_machine">
           🔀 State Machine
         </button>
-        <button class="editor-tab-btn ${editorTab === "diagnostics" ? "active" : ""}" data-editor-tab="diagnostics">
-          🔬 Advanced &amp; Diagnostics
-        </button>
+        ${
+          isAdv
+            ? `<button class="editor-tab-btn ${editorTab === "diagnostics" ? "active" : ""}" data-editor-tab="diagnostics">
+                 🔬 Advanced &amp; Diagnostics
+               </button>`
+            : `<div style="flex:1;"></div>
+               <button type="button" class="btn-text" id="btn-open-adv-settings-link" style="font-size:12px;">
+                 🔬 Enable Advanced Controls
+               </button>`
+        }
       </div>
 
       <!-- 3. Tab Contents -->
@@ -2924,6 +3502,27 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
             <div class="setting-row">
               <div>
+                <div class="setting-label">Primary AI Vision Camera (optional)</div>
+                <div class="setting-help">Frigate or HA camera used to visually confirm or verify room occupancy.</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;min-width:240px;">
+                <input
+                  type="text"
+                  class="input"
+                  id="cfg-camera-entity"
+                  list="pdd-all-entities"
+                  value="${this._escape(cfg.camera_entity || "")}"
+                  placeholder="camera.living_room"
+                />
+                <button class="btn btn-sm" id="btn-room-verify" title="Run AI Vision Check now">Check</button>
+              </div>
+            </div>
+
+            ${
+              isAdv
+                ? `
+            <div class="setting-row">
+              <div>
                 <div class="setting-label">Bounded max hold timeout</div>
                 <div class="setting-help">Maximum time <code>occupied_holding</code> can remain active on secondary signals (Bayesian/condition/blind-pocket) before cooling down (${this._formatDuration(Number(cfg.max_hold_timeout ?? selRoom.max_hold_timeout ?? 1800))}).</div>
               </div>
@@ -2969,7 +3568,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   <span style="font-size:12.5px;color:var(--ha-muted);">s</span>
                 </div>
               </div>
-            </div>
+            </div>`
+                : `
+            <div style="padding-top:10px;font-size:12px;color:var(--ha-muted);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <span>Expert timing (Max Hold Timeout &amp; per-room PIR Gate overrides) and Bayesian probability tables are hidden in clean mode.</span>
+              <button type="button" class="btn btn-sm" id="btn-open-adv-settings-card">⚙️ Advanced Settings</button>
+            </div>`
+            }
           </div>
         </div>
 
@@ -3125,12 +3730,12 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                         isHuman ? "var(--ha-success-text)" : "var(--ha-muted)"
                       };">${isHuman ? "Person-coupled" : "Supporting only"}</span>
                               ${
-                                cooldownSec > 0
+                                isAdv && cooldownSec > 0
                                   ? `<span style="padding:1px 6px;border-radius:999px;font-size:10.5px;background:var(--ha-subtle);border:1px solid var(--ha-divider);color:var(--ha-muted);">${cooldownSec}s cooldown</span>`
                                   : ""
                               }
                               ${
-                                pirReq
+                                isAdv && pirReq
                                   ? `<span style="padding:1px 6px;border-radius:999px;font-size:10.5px;background:var(--ha-accent-amber-bg);color:var(--ha-accent-amber-text);">PIR Gate</span>`
                                   : ""
                               }
@@ -4180,7 +4785,59 @@ action:
     const connMap = compiled.connected_rooms_map || {};
     const roomCoverage = compiled.room_coverage || {};
 
+    const layers = this._fpLayers || {};
+    const layerOn = (k) => layers[k] !== false;
     const solidSegments = this._extractFloorWallSegments(fRooms);
+    const polyBbox = (pts) => {
+      if (!Array.isArray(pts) || pts.length === 0) return null;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const pt of pts) {
+        if (pt[0] < minX) minX = pt[0];
+        if (pt[1] < minY) minY = pt[1];
+        if (pt[0] > maxX) maxX = pt[0];
+        if (pt[1] > maxY) maxY = pt[1];
+      }
+      return { minX, minY, maxX, maxY };
+    };
+    const boxesOverlap = (a, b) =>
+      Boolean(a && b && a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY);
+
+    // Precompute visibility polygons & bounding boxes for cameras and PIRs for exact overlap clipping
+    const camGeoms = fCams.map((cam, idx) => {
+      const poly = this._computeCameraVisibilityPolygon(cam, solidSegments);
+      const pathD = this._coneSvgPath(cam, solidSegments);
+      const cx = Number(cam.x || 0), cy = Number(cam.y || 0), r = Math.max(20, Number(cam.range_px || 180));
+      return {
+        idx,
+        id: cam.id || cam.camera_entity || `cam_${idx}`,
+        pathD,
+        bbox: poly ? polyBbox(poly) : { minX: cx - r, minY: cy - r, maxX: cx + r, maxY: cy + r },
+      };
+    });
+    const pirGeoms = fSensors
+      .filter((s) => s.sensor_type !== "door_contact")
+      .map((s, idx) => {
+        const poly = this._computeCameraVisibilityPolygon(s, solidSegments);
+        const pathD = this._coneSvgPath(s, solidSegments);
+        const cx = Number(s.x || 0), cy = Number(s.y || 0), r = Math.max(20, Number(s.range_px || 160));
+        return {
+          idx,
+          id: s.id || `pir_${idx}`,
+          pathD,
+          bbox: poly ? polyBbox(poly) : { minX: cx - r, minY: cy - r, maxX: cx + r, maxY: cy + r },
+        };
+      });
+    const bleGeoms = fProxies.map((proxy, idx) => {
+      const px = Number(proxy.x || 0), py = Number(proxy.y || 0), rad = Number(proxy.radius_px || 230);
+      return {
+        idx,
+        id: proxy.id || `ble_${idx}`,
+        px,
+        py,
+        rad,
+        bbox: { minX: px - rad, minY: py - rad, maxX: px + rad, maxY: py + rad },
+      };
+    });
 
     // 1. Cones & camera controls
     const isCamMode = this._floorplanMode === "cameras";
@@ -4492,7 +5149,7 @@ action:
     let underlaySvg = "";
     const activeFloorId = activeFloor.id || "main";
     const underlayDef = typeof PDD_FLOOR_UNDERLAYS !== "undefined" ? PDD_FLOOR_UNDERLAYS[activeFloorId] : null;
-    if (underlayDef && this._showBlueprintUnderlay) {
+    if (underlayDef && layerOn("underlay")) {
       underlaySvg = `
         <image
           id="fp-blueprint-underlay"
@@ -4617,43 +5274,52 @@ action:
       })
       .join("");
 
-    const sensorsSvg = fSensors
+    const doorSensorsList = fSensors.filter((s) => s.sensor_type === "door_contact");
+    const pirSensorsList = fSensors.filter((s) => s.sensor_type !== "door_contact");
+
+    const doorSensorsSvg = doorSensorsList
       .map((s) => {
         const sx = Number(s.x || 0);
         const sy = Number(s.y || 0);
         const isSelSens = selSensor && selSensor.id === s.id && isSensorMode;
-        if (s.sensor_type === "door_contact") {
-          return `
-            <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:1;" : "opacity:0.75;pointer-events:none;"}">
-              <title>🚪 ${this._escape(s.name || s.id)}</title>
-              <rect
-                class="fp-sensor-origin"
-                data-sensor-id="${this._escape(s.id)}"
-                x="${(sx - 8).toFixed(1)}"
-                y="${(sy - 8).toFixed(1)}"
-                width="16"
-                height="16"
-                rx="4"
-                fill="#ea580c"
-                stroke="#ffffff"
-                stroke-width="${isSelSens ? "2.5" : "1.5"}"
-                style="${isSensorMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
-              />
-            </g>
-          `;
-        }
+        return `
+          <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:1;" : "opacity:0.85;pointer-events:none;"}">
+            <title>🚪 ${this._escape(s.name || s.id)}</title>
+            <rect
+              class="fp-sensor-origin"
+              data-sensor-id="${this._escape(s.id)}"
+              x="${(sx - 8).toFixed(1)}"
+              y="${(sy - 8).toFixed(1)}"
+              width="16"
+              height="16"
+              rx="4"
+              fill="#ea580c"
+              stroke="#ffffff"
+              stroke-width="${isSelSens ? "2.5" : "1.5"}"
+              style="${isSensorMode ? "cursor:move;pointer-events:all;" : "pointer-events:none;"}"
+            />
+          </g>
+        `;
+      })
+      .join("");
+
+    const pirSensorsSvg = pirSensorsList
+      .map((s) => {
+        const sx = Number(s.x || 0);
+        const sy = Number(s.y || 0);
+        const isSelSens = selSensor && selSensor.id === s.id && isSensorMode;
         const conePath = this._coneSvgPath(s, solidSegments);
         const rad = (Number(s.heading_deg || 0) * Math.PI) / 180.0;
         const aimX = sx + Math.cos(rad) * 38;
         const aimY = sy + Math.sin(rad) * 38;
         return `
-          <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:0.95;" : "opacity:0.42;pointer-events:none;"}">
-            <title>📡 ${this._escape(s.name || s.id)}</title>
+          <g class="fp-sensor-group" data-sensor-id="${this._escape(s.id)}" style="${isSensorMode ? "opacity:0.95;" : "opacity:0.75;pointer-events:none;"}">
+            <title>📡 ${this._escape(s.name || s.id)} (${Number(s.fov_deg || 110)}° FOV)</title>
             <path
               d="${conePath}"
               fill="rgba(147, 51, 234, 0.12)"
               stroke="#9333ea"
-              stroke-width="${isSelSens ? "2.2" : "1.1"}"
+              stroke-width="${isSelSens ? "2.2" : "1.2"}"
               stroke-dasharray="3,3"
               style="pointer-events:none;"
             />
@@ -4678,6 +5344,81 @@ action:
         `;
       })
       .join("");
+
+    // 4b. Multi-Sensor Overlap Intersections (exact SVG clipPath intersections)
+    const clipDefs = [];
+    const overlapShapes = [];
+    const overlapCounts = { multiCam: 0, camPir: 0, camBle: 0, pirBle: 0 };
+    const safeClipPrefix = `pdd-clip-${activeFloorId.replace(/[^a-z0-9_-]/gi, "_")}`;
+
+    if (layerOn("overlaps")) {
+      if (layerOn("cameras") && camGeoms.length >= 2) {
+        camGeoms.forEach((cg, i) => {
+          clipDefs.push(`<clipPath id="${safeClipPrefix}-cam-${i}"><path d="${cg.pathD}" /></clipPath>`);
+          for (let j = i + 1; j < camGeoms.length; j++) {
+            if (boxesOverlap(cg.bbox, camGeoms[j].bbox)) {
+              overlapCounts.multiCam++;
+              overlapShapes.push(
+                `<g clip-path="url(#${safeClipPrefix}-cam-${i})"><path d="${camGeoms[j].pathD}" fill="url(#pdd-pat-multi-cam)" stroke="#d97706" stroke-width="1" stroke-opacity="0.7" /></g>`
+              );
+            }
+          }
+        });
+      } else if (layerOn("cameras")) {
+        camGeoms.forEach((cg, i) => {
+          clipDefs.push(`<clipPath id="${safeClipPrefix}-cam-${i}"><path d="${cg.pathD}" /></clipPath>`);
+        });
+      }
+
+      if (layerOn("cameras") && layerOn("pir")) {
+        camGeoms.forEach((cg, i) => {
+          pirGeoms.forEach((pg) => {
+            if (boxesOverlap(cg.bbox, pg.bbox)) {
+              overlapCounts.camPir++;
+              overlapShapes.push(
+                `<g clip-path="url(#${safeClipPrefix}-cam-${i})"><path d="${pg.pathD}" fill="url(#pdd-pat-cam-pir)" stroke="#7c3aed" stroke-width="1" stroke-opacity="0.75" /></g>`
+              );
+            }
+          });
+        });
+      }
+
+      if (layerOn("cameras") && layerOn("ble")) {
+        camGeoms.forEach((cg, i) => {
+          bleGeoms.forEach((bg) => {
+            if (boxesOverlap(cg.bbox, bg.bbox)) {
+              overlapCounts.camBle++;
+              overlapShapes.push(
+                `<g clip-path="url(#${safeClipPrefix}-cam-${i})"><circle cx="${bg.px.toFixed(1)}" cy="${bg.py.toFixed(1)}" r="${bg.rad.toFixed(1)}" fill="url(#pdd-pat-cam-ble)" /></g>`
+              );
+            }
+          });
+        });
+      }
+
+      if (layerOn("pir") && layerOn("ble")) {
+        pirGeoms.forEach((pg, i) => {
+          clipDefs.push(`<clipPath id="${safeClipPrefix}-pir-${i}"><path d="${pg.pathD}" /></clipPath>`);
+          bleGeoms.forEach((bg) => {
+            if (boxesOverlap(pg.bbox, bg.bbox)) {
+              overlapCounts.pirBle++;
+              overlapShapes.push(
+                `<g clip-path="url(#${safeClipPrefix}-pir-${i})"><circle cx="${bg.px.toFixed(1)}" cy="${bg.py.toFixed(1)}" r="${bg.rad.toFixed(1)}" fill="url(#pdd-pat-pir-ble)" /></g>`
+              );
+            }
+          });
+        });
+      }
+    }
+
+    const totalOverlapPairs =
+      overlapCounts.multiCam + overlapCounts.camPir + overlapCounts.camBle + overlapCounts.pirBle;
+    const subZoneCount = fCams.reduce((acc, c) => acc + ((c.sub_zones || []).length), 0);
+    const blindRoomCount = fRooms.filter((b) => {
+      const rName = b.name || b.room_name;
+      const isT = b.room_type === "transit" || Boolean(b.is_transit);
+      return !isT && Number(roomCoverage[rName]?.max_coverage_pct ?? 100) === 0;
+    }).length;
 
     // 5. Live Negative-Space & Positive Occupant Estimates on this floor
     const liveEstimates = (this._overview?.spatial_inference?.occupant_estimates || []).filter(
@@ -4746,32 +5487,175 @@ action:
             </div>
             <div style="display:flex;align-items:center;gap:6px;background:var(--ha-subtle);padding:3px 10px;border-radius:6px;border:1px solid var(--ha-divider);font-size:12px;">
               <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                <input type="checkbox" id="toggle-blueprint-underlay" ${this._showBlueprintUnderlay ? "checked" : ""} style="cursor:pointer;" />
-                <span>Blueprint Underlay</span>
+                <input type="checkbox" id="toggle-blueprint-underlay" ${layerOn("underlay") ? "checked" : ""} style="cursor:pointer;" />
+                <span>Blueprint</span>
               </label>
-              ${this._showBlueprintUnderlay ? `
+              ${layerOn("underlay") ? `
                 <input type="range" id="blueprint-opacity-slider" min="5" max="100" step="5" value="${Math.round(this._underlayOpacity * 100)}" style="width:70px;cursor:pointer;" title="Underlay Opacity" />
                 <span style="font-size:11px;color:var(--ha-muted);min-width:24px;">${Math.round(this._underlayOpacity * 100)}%</span>
               ` : ""}
             </div>
             <button class="btn btn-sm" id="btn-toggle-fp-inspector">
-              ${this._showFloorplanInspector ? "Hide Geometry & Sensor Editor" : "Edit Boxes, Cameras & Sensors"}
+              ${this._showFloorplanInspector ? "Hide Geometry &amp; Sensor Editor" : "Edit Boxes, Cameras &amp; Sensors"}
             </button>
             <button class="btn btn-primary btn-sm" id="btn-fp-compile">Apply Connections to Rooms</button>
           </div>
         </div>
 
+        <!-- Layer Controls Bar -->
+        <div class="fp-layer-bar">
+          <div class="fp-layer-chips">
+            <span style="font-size:11.5px;font-weight:600;color:var(--ha-muted);margin-right:2px;">Layers:</span>
+            ${[
+              { id: "rooms", label: `Rooms (${fRooms.length})`, color: "#0284c7" },
+              { id: "cameras", label: `Cameras (${fCams.length})`, color: "#0ea5e9" },
+              { id: "subzones", label: `Sub-Zones (${subZoneCount})`, color: "#0369a1" },
+              { id: "pir", label: `PIR Cones (${pirSensorsList.length})`, color: "#9333ea" },
+              { id: "doors", label: `Door Sensors (${doorSensorsList.length})`, color: "#ea580c" },
+              { id: "ble", label: `BLE Proxies (${fProxies.length})`, color: "#0d9488" },
+              { id: "connections", label: `Adjacency (${fConns.length})`, color: "#64748b" },
+              { id: "overlaps", label: `Overlaps (${totalOverlapPairs})`, color: "#d97706" },
+              { id: "occupants", label: `Targets (${liveEstimates.length})`, color: "#16a34a" },
+            ]
+              .map(
+                (ly) => `
+              <button
+                type="button"
+                class="fp-layer-chip ${layerOn(ly.id) ? "active" : ""}"
+                data-fp-layer="${ly.id}"
+                title="Toggle ${this._escape(ly.label)} layer"
+              >
+                <span class="fp-layer-dot" style="background:${ly.color};"></span>
+                <span>${this._escape(ly.label)}</span>
+              </button>`
+              )
+              .join("")}
+          </div>
+          <div class="fp-layer-presets">
+            <button type="button" class="btn btn-sm" data-fp-preset="clean" style="padding:3px 8px;font-size:11px;">Clean</button>
+            <button type="button" class="btn btn-sm" data-fp-preset="cameras" style="padding:3px 8px;font-size:11px;">Cameras</button>
+            <button type="button" class="btn btn-sm" data-fp-preset="motion" style="padding:3px 8px;font-size:11px;">Motion + BLE</button>
+            <button type="button" class="btn btn-sm" data-fp-preset="all" style="padding:3px 8px;font-size:11px;">All Layers</button>
+          </div>
+        </div>
+
         <div style="background:#f8fafc;color:#0f172a;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;overflow:hidden;touch-action:none;">
           <svg id="fp-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:420px;display:block;user-select:none;touch-action:none;">
+            <defs>
+              <pattern id="pdd-pat-cam-pir" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="10" height="10" fill="rgba(124, 58, 237, 0.14)" />
+                <line x1="0" y1="0" x2="0" y2="10" stroke="#7c3aed" stroke-width="2.5" stroke-opacity="0.55" />
+                <line x1="5" y1="0" x2="5" y2="10" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.55" />
+              </pattern>
+              <pattern id="pdd-pat-multi-cam" width="10" height="10" patternUnits="userSpaceOnUse">
+                <rect width="10" height="10" fill="rgba(217, 119, 6, 0.16)" />
+                <path d="M 0,10 L 10,0 M -2,2 L 2,-2 M 8,12 L 12,8" stroke="#d97706" stroke-width="2" stroke-opacity="0.65" />
+                <path d="M 0,0 L 10,10" stroke="#0284c7" stroke-width="1.3" stroke-opacity="0.45" />
+              </pattern>
+              <pattern id="pdd-pat-cam-ble" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+                <rect width="10" height="10" fill="rgba(13, 148, 136, 0.14)" />
+                <line x1="0" y1="0" x2="0" y2="10" stroke="#0d9488" stroke-width="2.4" stroke-opacity="0.55" />
+                <line x1="5" y1="0" x2="5" y2="10" stroke="#0284c7" stroke-width="2.4" stroke-opacity="0.5" />
+              </pattern>
+              <pattern id="pdd-pat-pir-ble" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
+                <rect width="10" height="10" fill="rgba(147, 51, 234, 0.13)" />
+                <line x1="0" y1="0" x2="0" y2="10" stroke="#9333ea" stroke-width="2.2" stroke-opacity="0.5" />
+                <line x1="5" y1="0" x2="5" y2="10" stroke="#0d9488" stroke-width="2.2" stroke-opacity="0.55" />
+              </pattern>
+              ${clipDefs.join("")}
+            </defs>
             ${underlaySvg}
-            ${connsSvg}
-            ${roomsSvg}
-            ${bleProxiesSvg}
-            ${conesSvg}
-            ${subZonesSvg}
-            ${sensorsSvg}
-            ${occupantsSvg}
+            ${layerOn("connections") ? connsSvg : ""}
+            ${layerOn("rooms") ? roomsSvg : ""}
+            ${layerOn("ble") ? bleProxiesSvg : ""}
+            ${layerOn("cameras") ? conesSvg : ""}
+            ${layerOn("overlaps") ? `<g class="fp-overlaps-layer" style="pointer-events:none;">${overlapShapes.join("")}</g>` : ""}
+            ${layerOn("subzones") ? subZonesSvg : ""}
+            ${layerOn("pir") ? pirSensorsSvg : ""}
+            ${layerOn("doors") ? doorSensorsSvg : ""}
+            ${layerOn("occupants") ? occupantsSvg : ""}
           </svg>
+        </div>
+
+        <!-- Legend & Multi-Sensor Overlap Keys -->
+        <div class="fp-legend-panel">
+          <div class="fp-legend-grid">
+            <div>
+              <div class="fp-legend-heading">
+                <span>🗺️ Sensor &amp; Floorplan Key</span>
+                <span style="font-size:11px;font-weight:500;color:var(--ha-muted);">Click layer pills above to isolate views</span>
+              </div>
+              <div class="fp-legend-list">
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(22,163,74,0.22);border:1.5px solid #16a34a;"></span>
+                  <span><strong>Occupied Room</strong> — active presence</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(2,132,199,0.16);border:1.5px solid #0284c7;"></span>
+                  <span><strong>Camera Cone</strong> — primary room FOV</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(217,119,6,0.18);border:1.5px dashed #d97706;"></span>
+                  <span><strong>Camera Bleed</strong> — spills across doorway</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(14,165,233,0.18);border:1.5px dashed #0ea5e9;"></span>
+                  <span><strong>Sub-Zone Box</strong> — scoped detection region</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(147,51,234,0.18);border:1.5px dashed #9333ea;"></span>
+                  <span><strong>PIR Motion Cone</strong> — passive IR sensor</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:#ea580c;border:1.5px solid #ffffff;"></span>
+                  <span><strong>Door Contact</strong> / <strong>Brown Line</strong> doorway</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(13,148,136,0.12);border:1.5px dashed #0d9488;"></span>
+                  <span><strong>BLE Proxy Ring</strong> — Bluetooth proxy reach</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(2,132,199,0.18);border:1.5px dashed #0284c7;"></span>
+                  <span><strong>🎯 Target Estimate</strong> — positive / neg-space</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="fp-legend-heading">
+                <span>✨ Multi-Sensor Overlap Keys</span>
+                <span style="font-size:11px;font-weight:600;color:var(--ha-primary-text);">
+                  ${
+                    layerOn("overlaps")
+                      ? `${totalOverlapPairs} overlap${totalOverlapPairs === 1 ? "" : "s"} · ${blindRoomCount} blind pocket${blindRoomCount === 1 ? "" : "s"}`
+                      : "Overlaps layer hidden"
+                  }
+                </span>
+              </div>
+              <div class="fp-legend-list">
+                <div class="fp-legend-item">
+                  <svg class="fp-swatch" viewBox="0 0 24 16"><defs><pattern id="lg-cp" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="rgba(124,58,237,0.16)"/><line x1="0" y1="0" x2="0" y2="6" stroke="#7c3aed" stroke-width="2"/><line x1="3" y1="0" x2="3" y2="6" stroke="#0284c7" stroke-width="2"/></pattern></defs><rect width="24" height="16" fill="url(#lg-cp)" stroke="#7c3aed" stroke-width="1"/></svg>
+                  <span><strong>Camera + PIR (${overlapCounts.camPir})</strong> — dual-verified vision &amp; motion</span>
+                </div>
+                <div class="fp-legend-item">
+                  <svg class="fp-swatch" viewBox="0 0 24 16"><defs><pattern id="lg-mc" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="rgba(217,119,6,0.18)"/><path d="M0,6 L6,0" stroke="#d97706" stroke-width="1.6"/><path d="M0,0 L6,6" stroke="#0284c7" stroke-width="1.2"/></pattern></defs><rect width="24" height="16" fill="url(#lg-mc)" stroke="#d97706" stroke-width="1"/></svg>
+                  <span><strong>Multi-Camera (${overlapCounts.multiCam})</strong> — shared/bleed zone; tune sub-zones</span>
+                </div>
+                <div class="fp-legend-item">
+                  <svg class="fp-swatch" viewBox="0 0 24 16"><defs><pattern id="lg-cb" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="6" height="6" fill="rgba(13,148,136,0.16)"/><line x1="0" y1="0" x2="0" y2="6" stroke="#0d9488" stroke-width="2"/><line x1="3" y1="0" x2="3" y2="6" stroke="#0284c7" stroke-width="2"/></pattern></defs><rect width="24" height="16" fill="url(#lg-cb)" stroke="#0d9488" stroke-width="1"/></svg>
+                  <span><strong>Camera + BLE (${overlapCounts.camBle})</strong> — visual + radio attribution</span>
+                </div>
+                <div class="fp-legend-item">
+                  <svg class="fp-swatch" viewBox="0 0 24 16"><defs><pattern id="lg-pb" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(30)"><rect width="6" height="6" fill="rgba(147,51,234,0.15)"/><line x1="0" y1="0" x2="0" y2="6" stroke="#9333ea" stroke-width="2"/><line x1="3" y1="0" x2="3" y2="6" stroke="#0d9488" stroke-width="2"/></pattern></defs><rect width="24" height="16" fill="url(#lg-pb)" stroke="#9333ea" stroke-width="1"/></svg>
+                  <span><strong>PIR + BLE (${overlapCounts.pirBle})</strong> — motion + radio without camera</span>
+                </div>
+                <div class="fp-legend-item">
+                  <span class="fp-swatch" style="background:rgba(245,158,11,0.16);border:1.5px solid #d97706;"></span>
+                  <span><strong>Blind Pocket (${blindRoomCount})</strong> — 0 cameras; relies on PIR / Neg-Space</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         ${
@@ -5632,6 +6516,7 @@ action:
       el.addEventListener("click", () => {
         const v = el.getAttribute("data-studio-view");
         this._studioView = v;
+        this.render();
         if (v === "statistics") {
           this.loadStatistics();
         } else if (v === "replay") {
@@ -5641,14 +6526,8 @@ action:
           this.runReplay();
         } else if (v === "timeline") {
           this.loadTimeline();
-        } else if (v === "floorplan") {
-          if (!this._floorplan) {
-            this.loadFloorplan();
-          } else {
-            this.render();
-          }
-        } else {
-          this.render();
+        } else if (v === "floorplan" && !this._floorplan) {
+          this.loadFloorplan();
         }
       });
     });
@@ -5757,8 +6636,39 @@ action:
 
     // Floorplan view events
     root.querySelector("#toggle-blueprint-underlay")?.addEventListener("change", (e) => {
-      this._showBlueprintUnderlay = Boolean(e.target.checked);
+      const checked = Boolean(e.target.checked);
+      this._showBlueprintUnderlay = checked;
+      this._fpLayers = { ...(this._fpLayers || {}), underlay: checked };
+      this._saveFpLayers();
       this.render();
+    });
+    root.querySelectorAll("[data-fp-layer]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const lid = el.getAttribute("data-fp-layer");
+        if (!lid) return;
+        const cur = this._fpLayers?.[lid] !== false;
+        this._fpLayers = { ...(this._fpLayers || {}), [lid]: !cur };
+        if (lid === "underlay") this._showBlueprintUnderlay = !cur;
+        this._saveFpLayers();
+        this.render();
+      });
+    });
+    root.querySelectorAll("[data-fp-preset]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const pr = el.getAttribute("data-fp-preset");
+        const presetsMap = {
+          clean: { underlay: true, rooms: true, cameras: false, subzones: false, pir: false, doors: true, ble: false, connections: false, overlaps: false, occupants: true },
+          cameras: { underlay: true, rooms: true, cameras: true, subzones: true, pir: false, doors: true, ble: false, connections: false, overlaps: true, occupants: true },
+          motion: { underlay: true, rooms: true, cameras: false, subzones: false, pir: true, doors: true, ble: true, connections: false, overlaps: true, occupants: true },
+          all: { underlay: true, rooms: true, cameras: true, subzones: true, pir: true, doors: true, ble: true, connections: true, overlaps: true, occupants: true },
+        };
+        if (presetsMap[pr]) {
+          this._fpLayers = { ...presetsMap[pr] };
+          this._showBlueprintUnderlay = this._fpLayers.underlay;
+          this._saveFpLayers();
+          this.render();
+        }
+      });
     });
     root.querySelector("#blueprint-opacity-slider")?.addEventListener("input", (e) => {
       this._underlayOpacity = Number(e.target.value) / 100.0;
@@ -6778,6 +7688,38 @@ action:
       this._showGlobalModal = true;
       this.render();
     });
+    root.querySelector("#btn-open-adv-settings-link")?.addEventListener("click", () => {
+      this._settingsTab = "interface";
+      this._showGlobalModal = true;
+      this.render();
+    });
+    root.querySelector("#btn-open-adv-settings-card")?.addEventListener("click", () => {
+      this._settingsTab = "interface";
+      this._showGlobalModal = true;
+      this.render();
+    });
+    root.querySelectorAll("[data-settings-tab]").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._settingsTab = el.getAttribute("data-settings-tab") || "interface";
+        root.querySelectorAll("[data-settings-tab]").forEach((b) =>
+          b.classList.toggle("active", b.getAttribute("data-settings-tab") === this._settingsTab)
+        );
+        root.querySelectorAll("[data-settings-pane]").forEach((p) =>
+          p.classList.toggle("active", p.getAttribute("data-settings-pane") === this._settingsTab)
+        );
+      });
+    });
+    root.querySelector("#btn-jump-edit-selected-room")?.addEventListener("click", () => {
+      this._studioView = "design";
+      this.render();
+    });
+    root.querySelectorAll("[data-room-badge-id]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const rid = el.getAttribute("data-room-badge-id");
+        const room = (this._overview?.rooms || []).find((r) => r.entry_id === rid);
+        if (room) this._selectRoomObject(room, true);
+      });
+    });
     root.querySelector("#btn-quick-toggle-guest-mode")?.addEventListener("click", async () => {
       const curVal =
         this._globalDraft?.guest_mode_enabled !== undefined
@@ -6845,6 +7787,7 @@ action:
           3,
           Number(root.querySelector("#gl-pir-candidate-window")?.value ?? 15)
         ),
+        ui_advanced_mode: Boolean(root.querySelector("#gl-ui-advanced-mode")?.checked),
       };
       this.saveGlobalSettings();
     });
