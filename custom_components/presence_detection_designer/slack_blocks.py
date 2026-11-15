@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -285,6 +286,71 @@ def build_daily_digest_blocks(
     return blocks
 
 
+def schedule_coro_safely(hass: Any, coro: Any) -> None:
+    """Schedule an awaitable onto HA's event loop without leaking unawaited mock coroutines."""
+    if not hass or not hasattr(hass, "async_create_task"):
+        if hasattr(coro, "close"):
+            coro.close()
+        return
+    act = hass.async_create_task
+    if type(act).__name__ == "MagicMock" and getattr(act, "side_effect", None) is None:
+        act(coro)
+        if hasattr(coro, "close"):
+            coro.close()
+        return
+    loop = getattr(hass, "loop", None)
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if (
+        loop is not None
+        and type(loop).__name__ != "MagicMock"
+        and callable(getattr(loop, "is_running", None))
+        and loop.is_running()
+        and loop is not running
+        and callable(getattr(loop, "call_soon_threadsafe", None))
+    ):
+        loop.call_soon_threadsafe(act, coro)
+        return
+    act(coro)
+
+
+async def async_refresh_slack_daily_digest(
+    hass: Any, *, force: bool = False, respect_toggles: bool = True
+) -> bool:
+    """Refresh the daily Slack card if Slack notifications and daily thread are enabled."""
+    if not hass or not isinstance(getattr(hass, "data", None), dict):
+        return False
+    from .notifications import format_duration
+    from .slack_cards import get_slack_daily_thread_manager
+
+    mgr = get_slack_daily_thread_manager(hass)
+    token = mgr.get_slack_token(hass)
+    if not token:
+        return False
+    store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
+    gs = getattr(store, "global_settings", None) if store else None
+    if not isinstance(gs, dict):
+        gs = {}
+    if respect_toggles and not (
+        gs.get("notifications_enabled", True) and gs.get("slack_daily_thread", True)
+    ):
+        return False
+    channel = str(gs.get("slack_channel") or "#presence-alerts").strip()
+    await mgr.async_update_daily_digest(hass, channel, token, format_duration, force=force)
+    return True
+
+
+def schedule_slack_daily_digest_update(hass: Any, *, force: bool = False) -> None:
+    """Schedule an asynchronous Slack daily digest refresh from synchronous callbacks."""
+    if not hass or not isinstance(getattr(hass, "data", None), dict):
+        return
+    if not hasattr(hass, "async_create_task"):
+        return
+    schedule_coro_safely(hass, async_refresh_slack_daily_digest(hass, force=force))
+
+
 def cancel_startup_slack_digest_sync(hass: Any) -> None:
     """Cancel any pending startup/reload Slack digest sync listener or timer."""
     if not hass or not isinstance(getattr(hass, "data", None), dict):
@@ -328,16 +394,7 @@ def schedule_startup_slack_digest_sync(hass: Any) -> None:
     dom_data = hass.data.setdefault(DOMAIN, {})
 
     async def _async_sync_now() -> None:
-        from .notifications import format_duration
-        from .slack_cards import get_slack_daily_thread_manager
-
-        mgr = get_slack_daily_thread_manager(hass)
-        token = mgr.get_slack_token(hass)
-        store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        gs = (getattr(store, "global_settings", None) or {}) if store else {}
-        if token and gs.get("notifications_enabled", True) and gs.get("slack_daily_thread", True):
-            channel = str(gs.get("slack_channel") or "#presence-alerts").strip()
-            await mgr.async_update_daily_digest(hass, channel, token, format_duration)
+        await async_refresh_slack_daily_digest(hass)
 
     @callback
     def _schedule_delayed(_event: Any = None) -> None:

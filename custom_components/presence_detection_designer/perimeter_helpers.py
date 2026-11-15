@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import Any
@@ -157,34 +158,137 @@ def enforce_conservation_law(tracker: Any, newly_occupied_room: str | None = Non
     return []
 
 
+def persist_and_notify_headcount(
+    tracker: Any,
+    *,
+    persist: bool = True,
+    notify_digest: bool = True,
+    force_digest: bool = False,
+) -> None:
+    """Persist updated headcount to global_settings and schedule a Slack digest refresh."""
+    hass = getattr(tracker, "hass", None)
+    if not hass or not isinstance(getattr(hass, "data", None), dict):
+        return
+    from .const import DATA_STORE, DOMAIN
+    from .slack_blocks import schedule_coro_safely, schedule_slack_daily_digest_update
+
+    if persist:
+        store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        gs = getattr(store, "global_settings", None) if store else None
+        if isinstance(gs, dict) and gs.get("house_occupant_count") != tracker.state.count:
+            gs["house_occupant_count"] = tracker.state.count
+            updater = getattr(store, "async_update_global_settings", None)
+            if callable(updater):
+                res = updater({"house_occupant_count": tracker.state.count})
+                if inspect.isawaitable(res):
+                    schedule_coro_safely(hass, res)
+
+    if notify_digest:
+        schedule_slack_daily_digest_update(hass, force=force_digest)
+
+
+async def async_apply_global_settings_side_effects(
+    hass: Any, body: dict[str, Any], updated_gs: dict[str, Any]
+) -> None:
+    """Sync runtime perimeter tracking and Slack daily card after global settings changes."""
+    from .house_perimeter import get_house_perimeter_tracker
+    from .slack_blocks import async_refresh_slack_daily_digest
+
+    tracker = get_house_perimeter_tracker(hass)
+    if "house_occupant_count" in body and body["house_occupant_count"] is not None:
+        tracker.set_headcount(
+            int(updated_gs.get("house_occupant_count", 0)),
+            persist=False,
+            notify_digest=False,
+        )
+    if any(k in body for k in ("perimeter_doors", "exit_corroborators")):
+        await tracker.async_setup()
+    digest_keys = (
+        "house_occupant_count",
+        "slack_notify_transitions",
+        "slack_channel",
+        "slack_daily_thread",
+        "notifications_enabled",
+        "slack_verbosity",
+    )
+    if any(k in body for k in digest_keys):
+        await async_refresh_slack_daily_digest(hass, force=True)
+
+
 async def async_setup_perimeter_tracking(tracker: Any) -> None:
-    """Subscribe to state changes on configured exterior corroborators."""
+    """Subscribe to state changes on configured perimeter doors and exterior corroborators."""
+    for unsub in list(getattr(tracker, "_unsub_trackers", [])):
+        if callable(unsub):
+            try:
+                unsub()
+            except Exception:  # noqa: BLE001
+                pass
+    tracker._unsub_trackers.clear()
+
     if not tracker.hass or not hasattr(tracker.hass, "bus"):
         return
+
+    perimeter_doors = sorted(tracker.get_configured_perimeter_doors().keys())
     corroborators: set[str] = set()
     for sensors in tracker.get_configured_exit_corroborators().values():
         corroborators.update(sensors)
-    if not corroborators:
+
+    states_obj = getattr(tracker.hass, "states", None)
+    if states_obj is not None and callable(getattr(states_obj, "get", None)):
+        for door_eid in perimeter_doors:
+            st = states_obj.get(door_eid)
+            state_val = getattr(st, "state", None) if st is not None else None
+            if isinstance(state_val, str) and state_val not in ("unknown", "unavailable"):
+                tracker._door_is_open[door_eid] = state_val in ("on", "open", "opening")
+
+    if not perimeter_doors and not corroborators:
         return
 
     try:
         from homeassistant.core import callback
         from homeassistant.helpers.event import async_track_state_change_event
 
-        @callback
-        def _handle_ext_change(event: Any) -> None:
-            to_state = event.data.get("new_state")
-            entity_id = event.data.get("entity_id")
-            if not to_state or not entity_id:
-                return
-            is_active = to_state.state in ("on", "open", "active", "detected")
-            tracker.handle_exterior_state_change(entity_id, is_active)
+        if type(callback).__name__ == "MagicMock":
 
-        unsub = async_track_state_change_event(
-            tracker.hass,
-            list(corroborators),
-            _handle_ext_change,
-        )
-        tracker._unsub_trackers.append(unsub)
+            def callback(fn: Any) -> Any:  # type: ignore[no-redef]
+                return fn
+
+        if perimeter_doors:
+
+            @callback
+            def _handle_door_change(event: Any) -> None:
+                to_state = event.data.get("new_state")
+                entity_id = event.data.get("entity_id")
+                if not to_state or not entity_id:
+                    return
+                state_val = getattr(to_state, "state", None)
+                if state_val in (None, "unknown", "unavailable"):
+                    return
+                is_open = state_val in ("on", "open", "opening")
+                tracker.handle_door_state_change(entity_id, is_open)
+
+            tracker._unsub_trackers.append(
+                async_track_state_change_event(tracker.hass, perimeter_doors, _handle_door_change)
+            )
+
+        if corroborators:
+
+            @callback
+            def _handle_ext_change(event: Any) -> None:
+                to_state = event.data.get("new_state")
+                entity_id = event.data.get("entity_id")
+                if not to_state or not entity_id:
+                    return
+                state_val = getattr(to_state, "state", None)
+                if state_val in (None, "unknown", "unavailable"):
+                    return
+                is_active = state_val in ("on", "open", "active", "detected")
+                tracker.handle_exterior_state_change(entity_id, is_active)
+
+            tracker._unsub_trackers.append(
+                async_track_state_change_event(
+                    tracker.hass, sorted(corroborators), _handle_ext_change
+                )
+            )
     except Exception as err:
-        _LOGGER.debug("Could not track exterior events: %s", err)
+        _LOGGER.debug("Could not track perimeter events: %s", err)

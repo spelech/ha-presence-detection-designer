@@ -360,3 +360,86 @@ async def test_setup_entry_registers_coordinator_before_async_setup(
     ok = await async_setup_entry(hass, entry)
     assert ok is True
     assert seen_during_setup == [True]
+
+
+@pytest.mark.asyncio
+async def test_global_settings_and_headcount_service_update_slack_footer_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing house_occupant_count or slack_notify_transitions refreshes the daily Slack card footer."""
+    import json
+
+    from custom_components.presence_detection_designer import async_setup
+    from custom_components.presence_detection_designer.house_perimeter import (
+        get_house_perimeter_tracker,
+    )
+    from custom_components.presence_detection_designer.views import PDDGlobalSettingsView
+
+    hass, store = _make_hass_with_store()
+    today = now_local().strftime("%Y-%m-%d")
+    await store.async_save_daily_thread(
+        "C0CBX319XHV",
+        {
+            "date_str": today,
+            "thread_ts": "1794722544.330159",
+            "transition_count": 42,
+            "channel_name": "presence-alerts",
+        },
+    )
+    mgr = SlackDailyThreadManager()
+    mgr._channel_ids["presence-alerts"] = "C0CBX319XHV"
+    hass.data[DOMAIN]["slack_daily_mgr"] = mgr
+    monkeypatch.setattr(mgr, "get_slack_token", lambda _h: "xoxb-tok")
+
+    updates: list[dict[str, Any]] = []
+
+    def _api(url: str, token: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        if "chat.update" in url and payload:
+            updates.append(payload)
+        return {"ok": True}
+
+    monkeypatch.setattr(mgr, "call_slack_web_api", _api)
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer._async_ensure_panel_and_views",
+        AsyncMock(),
+    )
+
+    registered_services: dict[str, Any] = {}
+    hass.services = MagicMock()
+    hass.services.has_service = MagicMock(return_value=False)
+    hass.services.async_register = MagicMock(
+        side_effect=lambda dom, name, fn, **kw: registered_services.setdefault(
+            f"{dom}.{name}", fn
+        )
+    )
+
+    assert await async_setup(hass, {}) is True
+    tracker = get_house_perimeter_tracker(hass)
+    assert tracker.state.count == 1
+
+    # 1. Service call set_house_occupant_count -> updates tracker, store, and Slack card footer
+    await registered_services["presence_detection_designer.set_house_occupant_count"](
+        MagicMock(data={"count": 2})
+    )
+    assert tracker.state.count == 2
+    assert store.global_settings["house_occupant_count"] == 2
+    assert len(updates) == 1
+    ctx_text = str(updates[-1]["blocks"][-1])
+    assert "*Today's Transitions:* 42" in ctx_text
+    assert "*Headcount:* 2 (multi occupant)" in ctx_text
+    assert "Transitions muted" in ctx_text
+
+    # 2. PDDGlobalSettingsView toggling slack_notify_transitions & headcount -> forces Slack footer refresh
+    req = MagicMock()
+    req.app = {"hass": hass}
+    req.json = AsyncMock(
+        return_value={"house_occupant_count": 3, "slack_notify_transitions": True}
+    )
+    resp = await PDDGlobalSettingsView().post(req)
+    assert resp.status == 200
+    assert json.loads(resp.text)["global_settings"]["house_occupant_count"] == 3
+    assert tracker.state.count == 3
+    assert len(updates) == 2
+    ctx_text_2 = str(updates[-1]["blocks"][-1])
+    assert "*Headcount:* 3 (multi occupant)" in ctx_text_2
+    assert "Transitions logged below" in ctx_text_2

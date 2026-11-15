@@ -24,7 +24,11 @@ from .const import (
 )
 from .coordinator import RoomPresenceCoordinator
 from .llm_verifier import LLMVerifier
-from .slack_cards import cancel_startup_slack_digest_sync, schedule_startup_slack_digest_sync
+from .slack_blocks import (
+    async_refresh_slack_daily_digest,
+    cancel_startup_slack_digest_sync,
+    schedule_startup_slack_digest_sync,
+)
 from .store import async_get_store
 from .views import async_apply_and_persist_room_config, async_register_views
 
@@ -210,16 +214,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             ):
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
-        from .notifications import format_duration
-        from .slack_cards import get_slack_daily_thread_manager
-
-        mgr = get_slack_daily_thread_manager(hass)
-        token = mgr.get_slack_token(hass)
-        store = await async_get_store(hass)
-        gs = store.global_settings or {}
-        channel = str(gs.get("slack_channel") or "#presence-alerts")
-        if token and gs.get("notifications_enabled", True) and gs.get("slack_daily_thread", True):
-            await mgr.async_update_daily_digest(hass, channel, token, format_duration, force=True)
+        await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_explain_presence(call: Any) -> dict[str, Any] | None:
         """Generate natural-language and YAML explanations for one or all rooms."""
@@ -366,22 +361,14 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         from .house_perimeter import get_house_perimeter_tracker
 
         tracker = get_house_perimeter_tracker(hass)
-        tracker.set_headcount(count)
+        tracker.set_headcount(count, persist=False, notify_digest=False)
         store = await async_get_store(hass)
         await store.async_update_global_settings({"house_occupant_count": count})
+        await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_update_slack_digest(call: Any) -> None:
         """Manually trigger an immediate update of the main Slack daily presence card."""
-        from .notifications import format_duration
-        from .slack_cards import get_slack_daily_thread_manager
-
-        mgr = get_slack_daily_thread_manager(hass)
-        token = mgr.get_slack_token(hass)
-        store = await async_get_store(hass)
-        gs = store.global_settings or {}
-        channel = str(gs.get("slack_channel") or "#presence-alerts")
-        if token:
-            await mgr.async_update_daily_digest(hass, channel, token, format_duration, force=True)
+        await async_refresh_slack_daily_digest(hass, force=True, respect_toggles=False)
 
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)

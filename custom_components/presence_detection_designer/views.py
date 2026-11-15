@@ -328,6 +328,9 @@ class PDDGlobalSettingsView(HomeAssistantView):
             if isinstance(coord, RoomPresenceCoordinator):
                 coord._apply_config_fields(coord.config, preserve_state=True)
 
+        from .perimeter_helpers import async_apply_global_settings_side_effects
+
+        await async_apply_global_settings_side_effects(hass, body, updated_gs)
         return self.json({"status": "ok", "global_settings": updated_gs})
 
 

@@ -324,6 +324,7 @@ class HousePerimeterTracker:
     def _apply_vector(self, record: DoorTransitionRecord) -> None:
         """Update headcount and mode based on vector transition."""
         old_count = self.state.count
+        old_mode = self.state.mode
         if record.vector == "ingress":
             self.state.count = min(self._max_occupants(), max(1, self.state.count + 1))
             self._last_vector_by_door[record.entity_id] = "ingress"
@@ -359,14 +360,25 @@ class HousePerimeterTracker:
         # Enforce conservation law if count dropped to 0 or 1
         self.enforce_conservation_law()
         self._notify_listeners()
+        if self.state.count != old_count or self.state.mode != old_mode:
+            from .perimeter_helpers import persist_and_notify_headcount
 
-    def set_headcount(self, count: int) -> None:
+            persist_and_notify_headcount(self, persist=True, force_digest=False)
+
+    def set_headcount(
+        self, count: int, *, persist: bool = True, notify_digest: bool = True
+    ) -> None:
         """Manually override the current house occupant count."""
         self.state.count = max(0, int(count))
         self._all_clear_since = None
         self._update_mode()
         self.enforce_conservation_law()
         self._notify_listeners()
+        from .perimeter_helpers import persist_and_notify_headcount
+
+        persist_and_notify_headcount(
+            self, persist=persist, notify_digest=notify_digest, force_digest=True
+        )
 
     def reconcile_headcount(
         self,
@@ -424,6 +436,9 @@ class HousePerimeterTracker:
             self._update_mode()
             self.enforce_conservation_law()
             self._notify_listeners()
+            from .perimeter_helpers import persist_and_notify_headcount
+
+            persist_and_notify_headcount(self, persist=True, force_digest=False)
         return changed
 
     def enforce_conservation_law(self, newly_occupied_room: str | None = None) -> list[str]:
