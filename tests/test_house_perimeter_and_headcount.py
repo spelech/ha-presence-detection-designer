@@ -873,3 +873,73 @@ def test_panel_js_strips_house_occupant_count_from_global_settings_save():
         / "panel.js"
     ).read_text()
     assert "delete payload.house_occupant_count;" in panel_js
+
+
+def test_cooling_rooms_do_not_block_single_occupant_garage_egress(mock_hass):
+    """Trailing occupied_cooling rooms from a departing resident must not block garage egress."""
+    office = _make_mock_coord(mock_hass, "Office")
+    garage = _make_mock_coord(mock_hass, "Garage")
+    mock_hass.data.setdefault(DOMAIN, {})
+    mock_hass.data[DOMAIN][office.entry_id] = office
+    mock_hass.data[DOMAIN][garage.entry_id] = garage
+
+    now = 1000.0
+    office.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.office_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.office_motion",
+        ),
+        now_ts=now,
+    )
+    # Person leaves Office toward Garage -> Office enters passive occupied_cooling
+    office.state_machine.apply_evidence(RoomEvidenceSnapshot(), now_ts=now + 10.0)
+    assert office.state_machine.state == OccupancyState.OCCUPIED_COOLING
+
+    # Garage becomes active before garage door opens
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_ring_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.garage_ring_motion",
+        ),
+        now_ts=now + 20.0,
+    )
+
+    tracker = HousePerimeterTracker(mock_hass)
+    tracker.set_house_mode("occupied")
+
+    tracker.handle_door_state_change("cover.garage_door", True, now_ts=now + 25.0)
+    rec = tracker.handle_door_state_change("cover.garage_door", False, now_ts=now + 45.0)
+    assert rec is not None
+    assert rec.vector == "egress"
+    assert tracker.state.mode == "vacant"
+    assert tracker.state.count == 0
+
+
+def test_reconcile_uses_short_settle_after_recent_ambiguous_door_exit(mock_hass):
+    """A recent ambiguous perimeter door cycle reconciles 60s after all rooms and BLE clear."""
+    _install_global_settings(
+        mock_hass,
+        **{
+            CONF_STALE_COUNT_TIMEOUT: 900,
+            "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+        },
+    )
+    mock_hass.states.get = MagicMock(return_value=MagicMock(state="unknown"))
+    tracker = HousePerimeterTracker(mock_hass)
+    tracker.set_house_mode("occupied")
+    mock_hass.data[DOMAIN] = {DATA_STORE: mock_hass.data[DOMAIN][DATA_STORE]}
+
+    # Simulate a recent ambiguous perimeter door closure (e.g. lingering room motion)
+    tracker.state.last_event_type = "ambiguous"
+    tracker.state.last_event_ts = 1000.0
+
+    # All rooms and BLE are now clear at t=1120 -> sets _all_clear_since=1120
+    assert tracker.reconcile_headcount(now_ts=1120.0, occupied_room_names=[], force=True) is False
+    # Still occupied before 60s settle
+    assert tracker.reconcile_headcount(now_ts=1150.0, occupied_room_names=[], force=True) is False
+    # Reconciles to vacant after 60s without waiting the full 900s
+    assert tracker.reconcile_headcount(now_ts=1181.0, occupied_room_names=[], force=True) is True
+    assert tracker.state.mode == "vacant"
+    assert tracker.state.count == 0

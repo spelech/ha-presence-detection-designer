@@ -499,7 +499,7 @@ def test_collect_room_states_formats_actual_since_time() -> None:
     assert "pdd_reset_vacant" in serialized
     assert "pdd_clear_all_vacant" in serialized
     assert "pdd_set_home_1" in serialized
-    assert "tap *Occupied* or *Reset Vacant*" in serialized
+    assert "tap *Home* or *Reset Vacant*" in serialized
 
 
 @pytest.mark.asyncio

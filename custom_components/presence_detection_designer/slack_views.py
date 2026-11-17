@@ -76,7 +76,7 @@ def build_vacancy_actions_block(*, highlight_set_home: bool = False) -> dict[str
                 confirm=clear_confirm,
             ),
             _action_button(
-                "👤 Occupied",
+                "👤 Home",
                 SLACK_ACTION_SET_HOME_1,
                 "occupied",
                 style="primary" if highlight_set_home else None,
@@ -198,15 +198,20 @@ def _house_summary_line(hass: Any, occupied_count: int, clear_count: int) -> str
     except Exception:  # noqa: BLE001
         mode = str(gs.get("house_occupancy_mode") or "occupied").lower()
 
+    room_summary = (
+        f"All {clear_count} rooms clear"
+        if occupied_count == 0
+        else f"{occupied_count} active · {clear_count} clear"
+    )
     if mode == "pet_only":
-        return f"🐾 *Pet Only* · {occupied_count} occupied · {clear_count} clear"
+        return f"🐾 *Pet Only (0 people)* · {room_summary}"
     if mode == "vacant" and occupied_count > 0:
-        return f"⚠️ *Vacant* · *{occupied_count} rooms active* · {clear_count} clear"
+        return f"⚠️ *Vacant (0 occupants)* · *{occupied_count} rooms active* · {clear_count} clear"
     if mode == "vacant":
-        return f"⚪ *Vacant* · All {clear_count} rooms clear"
+        return f"⚪ *Vacant (0 occupants)* · All {clear_count} rooms clear"
     if mode == "guest" or guest:
-        return f"👥 *Guest Mode* · {occupied_count} occupied · {clear_count} clear"
-    return f"👤 *Occupied* · {occupied_count} occupied · {clear_count} clear"
+        return f"👥 *Guest Mode (2+ occupants)* · {room_summary}"
+    return f"👤 *Home (1 occupant)* · {room_summary}"
 
 
 def build_manage_modal_view(hass: Any) -> dict[str, Any]:
