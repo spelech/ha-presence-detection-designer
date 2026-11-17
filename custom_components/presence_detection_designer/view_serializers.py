@@ -284,6 +284,7 @@ def collect_ha_areas_and_entities(hass: Any) -> tuple[list[dict[str, str]], list
                         "state": str(getattr(st, "state", "")),
                         "device_class": str(attrs.get("device_class", "")),
                         "area_id": entity_area_map.get(eid, ""),
+                        "entity_picture": str(attrs.get("entity_picture") or ""),
                     }
                 )
         except Exception:  # noqa: BLE001

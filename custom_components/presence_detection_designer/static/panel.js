@@ -78,6 +78,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._timelineSpeed = 1;
     this._timelineTimer = null;
     this._timelineHours = 6;
+    this._timelineFloor = "all";
     this._timelineNegSpace = true;
     this._timelineNegativeSpace = true;
     this._replayNegSpace = true;
@@ -976,6 +977,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       );
       if (box && box.floor) {
         this._selectedFloorId = box.floor;
+        if (this._studioView === "timeline" && this._timelineFloor !== "all") {
+          this._timelineFloor = box.floor;
+        }
       }
     }
     this._draftConfig = JSON.parse(JSON.stringify(room.config || {}));
@@ -1420,11 +1424,6 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           return;
         }
         this._timelineFrameIdx = (this._timelineFrameIdx + 1) % frames.length;
-        const curFrame = frames[this._timelineFrameIdx];
-        const firstOcc = (curFrame?.occupant_estimates || [])[0];
-        if (firstOcc && firstOcc.floor) {
-          this._selectedFloorId = firstOcc.floor;
-        }
         if (!this._updateTimelineFrameInPlace()) {
           this.render();
         }
@@ -1857,52 +1856,314 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     };
   }
 
-  _getRoomColor(roomName) {
-    const palette = [
-      "#0284c7",
-      "#7c3aed",
-      "#db2777",
-      "#ea580c",
-      "#0d9488",
-      "#4f46e5",
-      "#c026d3",
-      "#ca8a04",
-      "#2563eb",
-      "#9333ea",
-      "#e11d48",
-      "#059669",
-      "#0891b2",
-      "#d97706",
-      "#6366f1",
-      "#be123c",
+  _hslToRgb(h, s, l) {
+    const sn = s / 100;
+    const ln = l / 100;
+    const c = (1 - Math.abs(2 * ln - 1)) * sn;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = ln - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    return [
+      Math.round((r + m) * 255),
+      Math.round((g + m) * 255),
+      Math.round((b + m) * 255),
     ];
-    const key = String(roomName || "").trim();
-    if (!key) return { hex: "#64748b", border: "rgba(100, 116, 139, 0.45)", bg: "rgba(100, 116, 139, 0.1)" };
-    const knownSet = new Set();
-    ((this._overview && this._overview.rooms) || []).forEach((r) => {
-      if (r && r.room_name) knownSet.add(r.room_name);
-    });
-    ((this._floorplan && this._floorplan.rooms) || []).forEach((b) => {
-      const n = b && (b.name || b.room_name);
-      if (n) knownSet.add(n);
-    });
-    const sortedNames = Array.from(knownSet).sort((a, b) => a.localeCompare(b));
-    let idx = sortedNames.indexOf(key);
-    if (idx < 0) {
-      let h = 0;
-      for (let i = 0; i < key.length; i++) {
-        h = (h * 31 + key.charCodeAt(i)) >>> 0;
-      }
-      idx = h;
-    }
-    const hex = palette[idx % palette.length];
+  }
+
+  _colorFromHex(hex) {
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
     return {
       hex,
-      border: `rgba(${r}, ${g}, ${b}, 0.48)`,
-      bg: `rgba(${r}, ${g}, ${b}, 0.12)`,
+      border: `rgba(${r}, ${g}, ${b}, 0.52)`,
+      bg: `rgba(${r}, ${g}, ${b}, 0.14)`,
+    };
+  }
+
+  _getRoomColor(roomName) {
+    const palette = [
+      "#0284c7", // Sky Blue
+      "#16a34a", // Emerald Green
+      "#ea580c", // Vivid Orange
+      "#9333ea", // Royal Purple
+      "#db2777", // Hot Pink
+      "#0d9488", // Teal
+      "#d97706", // Amber Gold
+      "#2563eb", // Cobalt Blue
+      "#dc2626", // Crimson Red
+      "#65a30d", // Olive Lime
+      "#0891b2", // Cyan
+      "#c026d3", // Fuchsia
+      "#4f46e5", // Indigo
+      "#b45309", // Bronze
+      "#059669", // Mint Emerald
+      "#e11d48", // Rose
+      "#6366f1", // Periwinkle
+      "#0f766e", // Deep Teal
+      "#ca8a04", // Mustard
+      "#be185d", // Berry
+      "#1d4ed8", // Navy Blue
+      "#15803d", // Forest Green
+      "#9a3412", // Terracotta
+      "#7c3aed", // Violet
+    ];
+    const key = String(roomName || "").trim();
+    if (!key) return { hex: "#64748b", border: "rgba(100, 116, 139, 0.45)", bg: "rgba(100, 116, 139, 0.1)" };
+
+    const fp = this._floorplan || this._overview?.floorplan || PDD_DEFAULT_FLOORPLAN;
+    const floorOrderMap = new Map();
+    (fp.floors || []).forEach((fl, i) => {
+      if (fl && fl.id) floorOrderMap.set(fl.id, Number(fl.order ?? i));
+    });
+
+    const roomFloorMap = new Map();
+    (fp.rooms || []).forEach((b) => {
+      const n = b && (b.name || b.room_name);
+      if (n) roomFloorMap.set(n, b.floor || "main");
+    });
+    ((this._overview && this._overview.rooms) || []).forEach((r) => {
+      if (r && r.room_name && !roomFloorMap.has(r.room_name)) {
+        roomFloorMap.set(r.room_name, r.floor || r.area || "unassigned");
+      }
+    });
+
+    const floorGroups = new Map();
+    Array.from(roomFloorMap.keys())
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((n) => {
+        const fl = roomFloorMap.get(n) || "unassigned";
+        if (!floorGroups.has(fl)) floorGroups.set(fl, []);
+        floorGroups.get(fl).push(n);
+      });
+
+    const sortedFloors = Array.from(floorGroups.keys()).sort((a, b) => {
+      const oa = floorOrderMap.has(a) ? floorOrderMap.get(a) : 99;
+      const ob = floorOrderMap.has(b) ? floorOrderMap.get(b) : 99;
+      return oa !== ob ? oa - ob : a.localeCompare(b);
+    });
+
+    const totalKnown = roomFloorMap.size;
+    const assigned = new Map();
+    if (totalKnown <= palette.length) {
+      let cursor = 0;
+      sortedFloors.forEach((fl) => {
+        (floorGroups.get(fl) || []).forEach((rn) => {
+          assigned.set(rn, this._colorFromHex(palette[cursor++]));
+        });
+      });
+    } else {
+      sortedFloors.forEach((fl, fIdx) => {
+        const names = floorGroups.get(fl) || [];
+        const floorOffset = (fIdx * 7) % palette.length;
+        names.forEach((rn, rIdx) => {
+          if (rIdx < palette.length) {
+            assigned.set(rn, this._colorFromHex(palette[(rIdx + floorOffset) % palette.length]));
+          } else {
+            const hue = Math.round(((rIdx * 137.508 + fIdx * 47) % 360));
+            const [r, g, b] = this._hslToRgb(hue, 72, 46);
+            const toHex = (n) => n.toString(16).padStart(2, "0");
+            assigned.set(rn, {
+              hex: `#${toHex(r)}${toHex(g)}${toHex(b)}`,
+              border: `rgba(${r}, ${g}, ${b}, 0.52)`,
+              bg: `rgba(${r}, ${g}, ${b}, 0.14)`,
+            });
+          }
+        });
+      });
+    }
+
+    if (assigned.has(key)) return assigned.get(key);
+
+    let h = 0;
+    for (let i = 0; i < key.length; i++) {
+      h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    }
+    return this._colorFromHex(palette[h % palette.length]);
+  }
+
+  _getRoomInteriorAnchor(box) {
+    if (!box) return { x: 100, y: 100 };
+    if (box.svg_path) {
+      const anc = this._roomLabelAnchor(box);
+      return {
+        x: Math.round(anc.x + Math.max(40, (anc.w || 120) * 0.48)),
+        y: Math.round(anc.y + Math.max(44, Math.min(82, (anc.h || 100) * 0.58))),
+      };
+    }
+    const rx = Number(box.x || 0);
+    const ry = Number(box.y || 0);
+    const rw = Number(box.width ?? 180);
+    const rh = Number(box.height ?? 140);
+    return {
+      x: Math.round(rx + rw / 2),
+      y: Math.round(ry + Math.max(Math.min(rh - 18, 46), rh * 0.6)),
+    };
+  }
+
+  _resolveOccupantProfile(occ) {
+    const rawLabel = String(occ?.occupant_label || (occ?.detected_people && occ.detected_people[0]) || occ?.occupant_type || "Person").trim();
+    const lower = rawLabel.toLowerCase();
+    const oType = String(occ?.occupant_type || "").toLowerCase();
+
+    if (oType === "pet" || lower.includes("dog") || lower.includes("riley") || lower.includes("pet")) {
+      return {
+        key: rawLabel || "Riley (Dog)",
+        shortLabel: rawLabel.replace(/\s*\(Dog\)/i, "").trim() || "Riley",
+        role: "pet",
+        color: "#d97706",
+        bg: "#fef3c7",
+        pictureUrl: null,
+      };
+    }
+    if (lower.includes("margot") || lower.includes("kid") || lower.includes("child")) {
+      return {
+        key: rawLabel || "Margot",
+        shortLabel: rawLabel || "Margot",
+        role: "kid",
+        color: "#db2777",
+        bg: "#fce7f3",
+        pictureUrl: null,
+      };
+    }
+
+    const entities = this._overview?.entities || [];
+    const personEnt = entities.find((e) => {
+      if (!e || e.domain !== "person") return false;
+      const eName = String(e.name || "").trim().toLowerCase();
+      const eSlug = String(e.entity_id || "").replace(/^person\./, "").toLowerCase();
+      return eName === lower || eSlug === lower || lower.startsWith(eName + " ");
+    });
+
+    const pic = personEnt && personEnt.entity_picture ? String(personEnt.entity_picture).trim() : "";
+    const shortName = rawLabel.includes("/") ? rawLabel.split("/")[0].trim() : rawLabel;
+    return {
+      key: rawLabel || "Person",
+      shortLabel: shortName || "Person",
+      role: "person",
+      color: oType === "tracked_human" ? "#0284c7" : "#16a34a",
+      bg: oType === "tracked_human" ? "#e0f2fe" : "#dcfce7",
+      pictureUrl: pic || null,
+    };
+  }
+
+  _buildOccupantTokenSvg(prof, x, y, prefixId, subTag = "") {
+    const safeKey = String(prof.key || "occ").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const clipId = `${prefixId}-clip-${safeKey}`;
+    const r = 17;
+    let innerAvatar = "";
+    if (prof.pictureUrl) {
+      innerAvatar = `
+        <clipPath id="${clipId}">
+          <circle cx="0" cy="0" r="${r - 2}" />
+        </clipPath>
+        <circle cx="0" cy="0" r="${r}" fill="#ffffff" stroke="${prof.color}" stroke-width="2.6" />
+        <image href="${this._escape(prof.pictureUrl)}" x="${-(r - 2)}" y="${-(r - 2)}" width="${(r - 2) * 2}" height="${(r - 2) * 2}" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice" />
+      `;
+    } else if (prof.role === "pet") {
+      innerAvatar = `
+        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${prof.color}" stroke-width="2.5" />
+        <text x="0" y="6" text-anchor="middle" font-size="18">🐶</text>
+      `;
+    } else if (prof.role === "kid") {
+      innerAvatar = `
+        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${prof.color}" stroke-width="2.5" />
+        <text x="0" y="6" text-anchor="middle" font-size="18">🧒</text>
+      `;
+    } else {
+      innerAvatar = `
+        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${prof.color}" stroke-width="2.5" />
+        <circle cx="0" cy="-4.5" r="5" fill="${prof.color}" />
+        <path d="M -8.5 10 C -8.5 4.2, -4.5 2.5, 0 2.5 C 4.5 2.5, 8.5 4.2, 8.5 10 Z" fill="${prof.color}" />
+      `;
+    }
+    const labelText = prof.shortLabel.slice(0, 14);
+    const pillW = Math.max(46, Math.min(118, labelText.length * 6.5 + 14));
+    const subTagSvg = subTag
+      ? `<rect x="${(-pillW / 2 - 6).toFixed(1)}" y="${(-r - 17).toFixed(1)}" width="${(pillW + 12).toFixed(1)}" height="14" rx="7" fill="#0f172a" opacity="0.86" />
+         <text x="0" y="${(-r - 7).toFixed(1)}" text-anchor="middle" fill="#f8fafc" font-size="8.5" font-weight="600">${this._escape(subTag)}</text>`
+      : "";
+    return `
+      <g class="tl-occ-node" data-occ-key="${this._escape(prof.key)}" transform="translate(${x.toFixed(1)}, ${y.toFixed(1)})" style="pointer-events:none;">
+        ${subTagSvg}
+        <circle cx="0" cy="0" r="${r + 4}" fill="${prof.color}" fill-opacity="0.16" />
+        ${innerAvatar}
+        <rect x="${(-pillW / 2).toFixed(1)}" y="${(r + 3).toFixed(1)}" width="${pillW.toFixed(1)}" height="16" rx="8" fill="#0f172a" opacity="0.9" />
+        <text x="0" y="${(r + 14).toFixed(1)}" text-anchor="middle" fill="#ffffff" font-size="9.5" font-weight="700">${this._escape(labelText)}</text>
+      </g>
+    `;
+  }
+
+  _friendlyEntityName(eid, entityNameMap) {
+    const raw = String(eid || "").trim();
+    if (!raw) return "";
+    if (entityNameMap && entityNameMap.has(raw)) return entityNameMap.get(raw);
+    return raw
+      .replace(/^(binary_sensor|sensor|cover|camera|light|switch|fan)\./, "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  _formatTransitionSte100(tr, entityNameMap) {
+    const whoRaw = String(tr.occupant_label || (tr.detected_people && tr.detected_people[0]) || "").trim();
+    const who =
+      String(tr.occupant_type || "") === "pet"
+        ? whoRaw || "Riley (Dog)"
+        : whoRaw || "Person";
+    const fromRoom = tr.from_room ? String(tr.from_room).trim() : "";
+    const toRoom = String(tr.to_room || tr.room || "").trim();
+    const actionText = fromRoom && fromRoom !== toRoom
+      ? `${who} moved from ${fromRoom} to ${toRoom}.`
+      : fromRoom && fromRoom === toRoom
+      ? `${who} remained in ${toRoom}.`
+      : `${who} entered ${toRoom}.`;
+
+    const rawLoc = String(tr.subregion || tr.inferred_location || toRoom || "").trim();
+    const zoneText = rawLoc && rawLoc !== toRoom
+      ? rawLoc.replace(/\s*\u2014\s*/g, " — ")
+      : `${toRoom} (room area)`;
+
+    const drivers = (tr.positive_drivers || []).map((d) => this._friendlyEntityName(d, entityNameMap)).filter(Boolean);
+    const clearCams = (tr.negative_space_evidence || []).map((c) => this._friendlyEntityName(c, entityNameMap)).filter(Boolean);
+    const infM = String(tr.method || tr.inference_type || "").toLowerCase();
+    let reasonText = "";
+    if (infM === "pet") {
+      reasonText = drivers.length
+        ? `Camera detected ${who} via ${drivers.slice(0, 2).join(", ")}. Motion trigger ignored.`
+        : `Camera detected ${who} with no person present.`;
+    } else if (infM === "hybrid") {
+      const drv = drivers.length ? drivers.slice(0, 2).join(", ") : "room motion sensor";
+      const clr = clearCams.length ? clearCams.slice(0, 2).join(", ") : "room camera";
+      reasonText = `Sensor ${drv} detected motion. Camera ${clr} shows no person. System infers ${who.toLowerCase()} is outside the camera view.`;
+    } else if (infM.startsWith("negative_space")) {
+      if (clearCams.length && !drivers.length) {
+        reasonText = `Entry recorded from ${fromRoom || "adjacent room"}. Camera ${clearCams.slice(0, 2).join(", ")} shows no person. Room stays occupied.`;
+      } else {
+        const drv = drivers.length ? drivers.slice(0, 2).join(", ") : "room entry";
+        const clr = clearCams.length ? clearCams.slice(0, 2).join(", ") : "camera";
+        reasonText = `Active signal from ${drv}. Camera ${clr} shows no person. System infers ${who.toLowerCase()} is in an uncovered area.`;
+      }
+    } else if (drivers.length) {
+      reasonText = `Confirmed by ${drivers.slice(0, 3).join(", ")}.`;
+    } else if (tr.explanation) {
+      reasonText = String(tr.explanation);
+    }
+
+    return {
+      who,
+      fromRoom,
+      toRoom,
+      actionText,
+      zoneText,
+      reasonText,
+      isInferred: infM.startsWith("negative_space") || infM === "hybrid",
+      isPet: infM === "pet",
     };
   }
 
@@ -2317,8 +2578,32 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           font-weight: 600;
         }
         .room-badge-pill.occupied:not(.selected) {
-          border-color: rgba(22, 163, 74, 0.45);
-          background: rgba(22, 163, 74, 0.08);
+          border-color: rgba(22, 163, 74, 0.55);
+          background: rgba(22, 163, 74, 0.12);
+        }
+        .room-live-tag {
+          font-size: 9.5px;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          padding: 1px 5px;
+          border-radius: 999px;
+          background: #16a34a;
+          color: #ffffff;
+          line-height: 1.3;
+        }
+        .tl-occ-node {
+          transition: transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .tl-all-floors-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+          gap: 10px;
+        }
+        .tl-floor-card {
+          background: #ffffff;
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          border-radius: 8px;
+          padding: 8px;
         }
 
         /* Floorplan Layer Bar & Overlap Legend */
@@ -3732,13 +4017,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                       type="button"
                       class="room-badge-pill ${st.dotClass} ${isSel ? "selected" : ""}"
                       data-room-badge-id="${this._escape(r.entry_id)}"
-                      style="border-color:${isSel ? rc.hex : rc.border};background:${isSel ? rc.bg : ""};box-shadow:${isSel ? `0 0 0 1px ${rc.hex}` : `inset 3px 0 0 ${rc.hex}`};"
+                      style="border-color:${isSel ? rc.hex : rc.border};background:${isSel ? rc.bg : ""};box-shadow:${isSel ? `0 0 0 1.5px ${rc.hex}` : "none"};"
                       data-tip="${this._escape(r.room_name)}: ${this._escape(st.label)}. Click to focus on map or edit."
                       title="${this._escape(r.room_name)} — ${this._escape(st.label)}"
                     >
-                      <span class="status-dot ${st.dotClass}"></span>
-                      <span class="room-color-dot" style="background:${rc.hex};"></span>
+                      <span class="room-color-dot" style="background:${rc.hex};${st.occupied ? "box-shadow:0 0 0 2px #16a34a;" : ""}"></span>
                       <span>${this._escape(r.room_name)}</span>
+                      ${st.occupied ? `<span class="room-live-tag">LIVE</span>` : ""}
                     </button>`;
                 })
                 .join("")}
@@ -6323,29 +6608,35 @@ action:
       return !isT && Number(roomCoverage[rName]?.max_coverage_pct ?? 100) === 0;
     }).length;
 
-    const liveEstimates = (this._overview?.spatial_inference?.occupant_estimates || []).filter(
+    const livePeople = (this._overview?.spatial_inference?.occupant_estimates || []).filter(
       (est) => est.floor === activeFloor.id
     );
-    const occupantsSvg = liveEstimates
-      .map((est) => {
-        const ox = Number(est.x || 0);
-        const oy = Number(est.y || 0);
-        const isNeg = est.method === "negative_space" || est.method === "hybrid";
-        const badgeColor = isNeg ? "#0284c7" : "#16a34a";
-        return `
-          <g class="fp-occupant-marker" style="pointer-events:none;">
-            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="15" fill="${
-          isNeg ? "rgba(2, 132, 199, 0.22)" : "rgba(22, 163, 74, 0.22)"
-        }" stroke="${badgeColor}" stroke-width="1.5" stroke-dasharray="${isNeg ? "3,2" : "none"}" />
-            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="6" fill="${badgeColor}" stroke="#ffffff" stroke-width="2" />
-            <rect x="${Math.max(10, Math.min(760, ox - 110)).toFixed(1)}" y="${Math.max(8, oy - 34).toFixed(1)}" width="220" height="18" rx="9" fill="${badgeColor}" opacity="0.92" />
-            <text x="${Math.max(120, Math.min(870, ox)).toFixed(1)}" y="${Math.max(20, oy - 22).toFixed(1)}" text-anchor="middle" fill="#ffffff" font-size="9.5" font-weight="600">
-              🎯 ${this._escape((est.subregion || est.room).slice(0, 36))}
-            </text>
-          </g>
-        `;
-      })
-      .join("");
+    const liveEstimates = livePeople;
+    const livePets = (this._overview?.spatial_inference?.pet_estimates || []).filter(
+      (est) => est.floor === activeFloor.id
+    );
+    const liveAllTokens = [];
+    const liveByRoom = new Map();
+    livePeople.forEach((est) => {
+      const list = liveByRoom.get(est.room) || [];
+      list.push(est);
+      liveByRoom.set(est.room, list);
+    });
+    livePets.forEach((pet) => {
+      const list = liveByRoom.get(pet.room) || [];
+      list.push(pet);
+      liveByRoom.set(pet.room, list);
+    });
+    liveByRoom.forEach((list, rName) => {
+      const box = fRooms.find((b) => (b.name || b.room_name) === rName);
+      const anc = box ? this._getRoomInteriorAnchor(box) : { x: Number(list[0]?.x || 100), y: Number(list[0]?.y || 100) };
+      list.forEach((tok, idx) => {
+        const offsetX = list.length > 1 ? (idx - (list.length - 1) / 2) * 44 : 0;
+        const prof = this._resolveOccupantProfile(tok);
+        liveAllTokens.push(this._buildOccupantTokenSvg(prof, anc.x + offsetX, anc.y, `fp-${activeFloor.id}`));
+      });
+    });
+    const occupantsSvg = liveAllTokens.join("");
 
     const bleControlsSvg = layerOn("ble")
       ? fProxies
@@ -7367,56 +7658,33 @@ action:
     `;
   }
 
-  _buildTimelineFrameParts() {
-    const tl = this._timelineData;
+  _buildSingleFloorTimelineParts(targetFloor, frames, frameIdx, curFrame, occupiedRoomsList, occSet, roomEstimates, negZones, transitions) {
     const fp = this._floorplan || this._overview?.floorplan || PDD_DEFAULT_FLOORPLAN;
-    const floors = fp.floors || [];
-    const activeFloor =
-      floors.find((f) => f.id === this._selectedFloorId) || floors[1] || floors[0] || { id: "main", name: "Main Floor" };
-    this._selectedFloorId = activeFloor.id;
-    const frames = tl?.frames || [];
-    const frameIdx = Math.max(0, Math.min(Math.max(0, frames.length - 1), Number(this._timelineFrameIdx || 0)));
-    const curFrame = frames[frameIdx] || {
-      iso: new Date().toISOString(),
-      occupant_estimates: [],
-      negative_space_exclusions: [],
-    };
-    const frameOccupants = curFrame.occupant_estimates || curFrame.occupants || [];
-    const occupiedRoomsList =
-      curFrame.occupied_rooms ||
-      curFrame.active_rooms ||
-      frameOccupants.map((o) => o.room).filter(Boolean);
-    const occSet = new Set(occupiedRoomsList);
-    const roomEstimates = { ...(curFrame.room_estimates || {}) };
-    frameOccupants.forEach((o) => {
-      if (o.room && !roomEstimates[o.room]) {
-        roomEstimates[o.room] = o;
-      }
-    });
-    const negZones = curFrame.negative_space_exclusions || curFrame.negative_space_zones || [];
-    const focusedRoomName = this.selectedRoom?.room_name || "";
-
     const allFpRooms = fp.rooms || [];
     const allFpCams = fp.cameras || [];
-    const fRooms = activeFloor.rooms || allFpRooms.filter((r) => r.floor === activeFloor.id);
-    const fCams = activeFloor.cameras || allFpCams.filter((c) => c.floor === activeFloor.id);
+    const fRooms = targetFloor.rooms || allFpRooms.filter((r) => r.floor === targetFloor.id);
+    const fCams = targetFloor.cameras || allFpCams.filter((c) => c.floor === targetFloor.id);
+    const focusedRoomName = this.selectedRoom?.room_name || "";
+    const roomByName = new Map();
+    fRooms.forEach((b) => {
+      const n = b.name || b.room_name;
+      if (n) roomByName.set(n, b);
+    });
 
-    const trailPts = [];
-    const startTrailIdx = Math.max(0, frameIdx - 12);
-    for (let i = startTrailIdx; i <= frameIdx; i++) {
-      const f = frames[i];
-      const fOccs = f?.occupant_estimates || f?.occupants || [];
-      if (!Array.isArray(fOccs)) continue;
-      fOccs.forEach((occ) => {
-        if ((occ.floor || "main") === activeFloor.id && occ.x !== undefined && occ.y !== undefined) {
-          trailPts.push({ x: Number(occ.x), y: Number(occ.y), idx: i });
-        }
-      });
+    const frameOccupants = curFrame.occupant_estimates || curFrame.occupants || [];
+    const framePets = curFrame.pet_estimates || [];
+    const curTs = Number(curFrame.ts || 0);
+
+    const latestMoveByOcc = new Map();
+    for (let i = 0; i < transitions.length; i++) {
+      const tr = transitions[i];
+      const trTs = Number(tr.ts || 0);
+      if (curTs && trTs > curTs) break;
+      const trFrameIdx = tr.iso ? frames.findIndex((f) => (f.iso || f.timestamp) === tr.iso) : -1;
+      if (trFrameIdx > frameIdx) continue;
+      const key = String(tr.occupant_key || tr.occupant_label || (tr.occupant_type === "pet" ? "Riley (Dog)" : "Occupant")).trim();
+      latestMoveByOcc.set(key, { tr, trFrameIdx: trFrameIdx >= 0 ? trFrameIdx : i });
     }
-    const trailSvg =
-      trailPts.length >= 2
-        ? `<polyline points="${trailPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="5,4" opacity="0.75" style="pointer-events:none;" />`
-        : "";
 
     const pbRoomsSvg = fRooms
       .map((box) => {
@@ -7428,35 +7696,35 @@ action:
         const infType = est.method || est.inference_type || "clear";
         const isNegLocalized =
           isOcc && (String(infType).startsWith("negative_space") || infType === "hybrid");
-        const strokeColor = isNegLocalized ? "#7c3aed" : isOcc ? "#16a34a" : isFocused ? rc.hex : rc.border;
+        const strokeColor = isNegLocalized ? "#0284c7" : isOcc ? "#16a34a" : isFocused ? rc.hex : rc.border;
         const fillColor = isNegLocalized
-          ? "rgba(124, 58, 237, 0.18)"
+          ? "rgba(2, 132, 199, 0.14)"
           : isOcc
-          ? "rgba(22, 163, 74, 0.18)"
+          ? "rgba(22, 163, 74, 0.14)"
           : isFocused
           ? rc.bg
-          : "rgba(148, 163, 184, 0.08)";
+          : "rgba(148, 163, 184, 0.07)";
         const rx = Number(box.x);
         const ry = Number(box.y);
         const rw = Number(box.width ?? 200);
         const rh = Number(box.height ?? 150);
-        const locLabel = est.subregion || est.inferred_location || (isOcc ? "Occupied" : "Clear");
+        const statusShort = isNegLocalized ? "Inferred" : isOcc ? "Confirmed" : "Clear";
         const anchor = this._roomLabelAnchor(box);
         const padX = anchor.w < 95 ? 8 : 12;
-        const titleFontSize = anchor.w < 95 ? 10.5 : 12.5;
+        const titleFontSize = anchor.w < 95 ? 10.5 : 12;
         const availW = Math.max(0, anchor.w - padX * 2 - 12);
         const titleText = this._fitSvgLabel(rName, availW, titleFontSize);
-        const locText = rh >= 48 ? this._fitSvgLabel(locLabel, availW + 12, 10.5) : "";
+        const locText = rh >= 48 && isOcc ? this._fitSvgLabel(statusShort, availW + 12, 10) : "";
         const pbShape = box.svg_path
-          ? `<path d="${this._escape(box.svg_path)}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc || isFocused ? "2.6" : "1.5"}" />`
-          : `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="6" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc || isFocused ? "2.6" : "1.5"}" />`;
+          ? `<path d="${this._escape(box.svg_path)}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc || isFocused ? "2.4" : "1.4"}" />`
+          : `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="6" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc || isFocused ? "2.4" : "1.4"}" />`;
         return `
           <g>
-            <title>${this._escape(rName)} — ${this._escape(locLabel)}</title>
+            <title>${this._escape(rName)} — ${this._escape(statusShort)}</title>
             ${pbShape}
             ${isFocused && !box.svg_path ? `<rect x="${(rx - 3).toFixed(1)}" y="${(ry - 3).toFixed(1)}" width="${(rw + 6).toFixed(1)}" height="${(rh + 6).toFixed(1)}" rx="8" fill="none" stroke="${rc.hex}" stroke-width="2" stroke-dasharray="6,3" />` : ""}
-            ${titleText ? `<rect x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 13).toFixed(1)}" width="8" height="8" rx="2" fill="${rc.hex}" /><text x="${(anchor.x + padX + 12).toFixed(1)}" y="${(anchor.y + 21).toFixed(1)}" fill="#0f172a" font-size="${titleFontSize}" font-weight="600">${this._escape(titleText)}</text>` : ""}
-            ${locText ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 38).toFixed(1)}" fill="${isNegLocalized ? "#6d28d9" : isOcc ? "#15803d" : "#64748b"}" font-size="10.5" font-weight="${isOcc ? "600" : "400"}">${this._escape(locText)}</text>` : ""}
+            ${titleText ? `<rect x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 12).toFixed(1)}" width="8" height="8" rx="2" fill="${rc.hex}" /><text x="${(anchor.x + padX + 12).toFixed(1)}" y="${(anchor.y + 20).toFixed(1)}" fill="#0f172a" font-size="${titleFontSize}" font-weight="600">${this._escape(titleText)}</text>` : ""}
+            ${locText ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 34).toFixed(1)}" fill="${isNegLocalized ? "#0369a1" : "#15803d"}" font-size="10" font-weight="600">${this._escape(locText)}</text>` : ""}
           </g>`;
       })
       .join("");
@@ -7475,35 +7743,175 @@ action:
         const pathD = this._coneSvgPath(cam, pbSolidSegments);
         return `
           <g style="pointer-events:none;">
-            <path d="${pathD}" fill="${isClearExclusion ? "#06b6d4" : "#64748b"}" fill-opacity="${isClearExclusion ? "0.14" : "0.06"}" stroke="${isClearExclusion ? "#0891b2" : "#94a3b8"}" stroke-width="1.4" stroke-dasharray="${isClearExclusion ? "5,3" : "3,3"}" />
-            <circle cx="${Number(cam.x)}" cy="${Number(cam.y)}" r="4.5" fill="${isClearExclusion ? "#0891b2" : "#64748b"}" />
+            <path d="${pathD}" fill="${isClearExclusion ? "#06b6d4" : "#64748b"}" fill-opacity="${isClearExclusion ? "0.12" : "0.05"}" stroke="${isClearExclusion ? "#0891b2" : "#94a3b8"}" stroke-width="1.2" stroke-dasharray="${isClearExclusion ? "5,3" : "3,3"}" />
+            <circle cx="${Number(cam.x)}" cy="${Number(cam.y)}" r="4" fill="${isClearExclusion ? "#0891b2" : "#64748b"}" />
           </g>`;
       })
       .join("");
 
-    const pbOccupantsSvg = frameOccupants
-      .filter((occ) => (occ.floor || "main") === activeFloor.id)
-      .map((occ) => {
-        const ox = Number(occ.x || 0);
-        const oy = Number(occ.y || 0);
-        const infMethod = String(occ.method || occ.inference_type || "");
-        const isNeg = infMethod.startsWith("negative_space") || infMethod === "hybrid";
-        const color = isNeg ? "#7c3aed" : "#15803d";
-        const label = (occ.subregion || occ.inferred_location || occ.room || "").slice(0, 32);
-        return `
-          <g style="pointer-events:none;">
-            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="15" fill="${color}" fill-opacity="0.22" />
-            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="8.5" fill="${color}" stroke="#ffffff" stroke-width="2" />
-            <rect x="${Math.max(8, Math.min(780, ox - 105)).toFixed(1)}" y="${Math.max(6, oy - 32).toFixed(1)}" width="210" height="19" rx="9.5" fill="${color}" opacity="0.94" />
-            <text x="${Math.max(113, Math.min(885, ox)).toFixed(1)}" y="${Math.max(19, oy - 19).toFixed(1)}" text-anchor="middle" fill="#ffffff" font-size="9.5" font-weight="600">🎯 ${this._escape(label)}</text>
-          </g>`;
-      })
-      .join("");
+    const tokensByRoom = new Map();
+    const pushToken = (item) => {
+      if ((item.floor || "main") !== targetFloor.id) return;
+      const rName = item.room;
+      if (!rName) return;
+      const arr = tokensByRoom.get(rName) || [];
+      arr.push(item);
+      tokensByRoom.set(rName, arr);
+    };
+    frameOccupants.forEach(pushToken);
+    framePets.forEach(pushToken);
+
+    frameOccupants.forEach((occ) => {
+      if ((occ.floor || "main") !== targetFloor.id) return;
+      if (occ.pet_present && !framePets.some((p) => p.room === occ.room)) {
+        pushToken({
+          room: occ.room,
+          floor: occ.floor || targetFloor.id,
+          occupant_type: "pet",
+          occupant_label: (occ.detected_animals && occ.detected_animals[0]) || "Riley (Dog)",
+        });
+      }
+    });
+
+    const arrowsList = [];
+    const occupantTokens = [];
+    const markerId = `tl-arrow-${targetFloor.id}`;
+
+    tokensByRoom.forEach((list, rName) => {
+      const box = roomByName.get(rName);
+      const anc = box
+        ? this._getRoomInteriorAnchor(box)
+        : { x: Number(list[0]?.x || 150), y: Number(list[0]?.y || 150) };
+
+      list.forEach((tok, idx) => {
+        const offsetX = list.length > 1 ? (idx - (list.length - 1) / 2) * 44 : 0;
+        const tx = anc.x + offsetX;
+        const ty = anc.y;
+        const prof = this._resolveOccupantProfile(tok);
+        const moveRec = latestMoveByOcc.get(prof.key);
+        let subTag = "";
+
+        if (moveRec && moveRec.tr) {
+          const tr = moveRec.tr;
+          const fromRoom = tr.from_room;
+          const fromFloor = tr.from_floor;
+          const isRecentMove = frameIdx - moveRec.trFrameIdx <= 8;
+          if (fromRoom && fromRoom !== rName && isRecentMove) {
+            const fromBox = roomByName.get(fromRoom);
+            if (fromBox && (!fromFloor || fromFloor === targetFloor.id)) {
+              const fromAnc = this._getRoomInteriorAnchor(fromBox);
+              const dx = tx - fromAnc.x;
+              const dy = ty - fromAnc.y;
+              const dist = Math.hypot(dx, dy);
+              if (dist > 28) {
+                const trimEnd = 22;
+                const ex = tx - (dx / dist) * trimEnd;
+                const ey = ty - (dy / dist) * trimEnd;
+                const mx = (fromAnc.x + ex) / 2 - (dy / dist) * Math.min(24, dist * 0.12);
+                const my = (fromAnc.y + ey) / 2 + (dx / dist) * Math.min(24, dist * 0.12);
+                arrowsList.push(`
+                  <g style="pointer-events:none;">
+                    <path d="M ${fromAnc.x.toFixed(1)} ${fromAnc.y.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}" fill="none" stroke="${prof.color}" stroke-width="2.6" stroke-linecap="round" marker-end="url(#${markerId})" opacity="0.88" />
+                  </g>
+                `);
+              }
+            } else if (fromFloor && fromFloor !== targetFloor.id) {
+              const flTitle = fromFloor.charAt(0).toUpperCase() + fromFloor.slice(1);
+              subTag = `From ${flTitle}`;
+            }
+          }
+        }
+
+        occupantTokens.push({
+          key: prof.key,
+          x: tx,
+          y: ty,
+          svg: this._buildOccupantTokenSvg(prof, tx, ty, `tl-${targetFloor.id}`, subTag),
+        });
+      });
+    });
 
     const underlaySvg =
-      typeof PDD_FLOOR_UNDERLAYS !== "undefined" && PDD_FLOOR_UNDERLAYS[activeFloor.id] && this._showBlueprintUnderlay
-        ? `<image href="${PDD_FLOOR_UNDERLAYS[activeFloor.id].url}" x="${PDD_FLOOR_UNDERLAYS[activeFloor.id].x}" y="${PDD_FLOOR_UNDERLAYS[activeFloor.id].y}" width="${PDD_FLOOR_UNDERLAYS[activeFloor.id].width}" height="${PDD_FLOOR_UNDERLAYS[activeFloor.id].height}" opacity="${this._underlayOpacity}" preserveAspectRatio="xMidYMid meet" style="pointer-events:none;" />`
+      typeof PDD_FLOOR_UNDERLAYS !== "undefined" && PDD_FLOOR_UNDERLAYS[targetFloor.id] && this._showBlueprintUnderlay
+        ? `<image href="${PDD_FLOOR_UNDERLAYS[targetFloor.id].url}" x="${PDD_FLOOR_UNDERLAYS[targetFloor.id].x}" y="${PDD_FLOOR_UNDERLAYS[targetFloor.id].y}" width="${PDD_FLOOR_UNDERLAYS[targetFloor.id].width}" height="${PDD_FLOOR_UNDERLAYS[targetFloor.id].height}" opacity="${this._underlayOpacity}" preserveAspectRatio="xMidYMid meet" style="pointer-events:none;" />`
         : "";
+
+    const defsSvg = `
+      <defs>
+        <marker id="${markerId}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#0f172a" />
+        </marker>
+      </defs>
+    `;
+    const arrowsSvg = arrowsList.join("");
+    const occupantsSvg = occupantTokens.map((t) => t.svg).join("");
+    const svgInner = `${defsSvg}<g class="tl-layer-underlay">${underlaySvg}</g><g class="tl-layer-rooms">${pbRoomsSvg}</g><g class="tl-layer-cones">${pbConesSvg}</g><g class="tl-layer-arrows">${arrowsSvg}</g><g class="tl-layer-occupants">${occupantsSvg}</g>`;
+
+    return {
+      floor: targetFloor,
+      defsSvg,
+      underlaySvg,
+      roomsSvg: pbRoomsSvg,
+      conesSvg: pbConesSvg,
+      arrowsSvg,
+      occupantsSvg,
+      occupantTokens,
+      svgInner,
+    };
+  }
+
+  _buildTimelineFrameParts() {
+    const tl = this._timelineData;
+    const fp = this._floorplan || this._overview?.floorplan || PDD_DEFAULT_FLOORPLAN;
+    const floors = fp.floors || [];
+    const activeFloor =
+      floors.find((f) => f.id === this._selectedFloorId) || floors[1] || floors[0] || { id: "main", name: "Main Floor" };
+    if (this._timelineFloor !== "all" && floors.some((f) => f.id === this._timelineFloor)) {
+      this._selectedFloorId = this._timelineFloor;
+    }
+
+    const frames = tl?.frames || [];
+    const frameIdx = Math.max(0, Math.min(Math.max(0, frames.length - 1), Number(this._timelineFrameIdx || 0)));
+    const curFrame = frames[frameIdx] || {
+      iso: new Date().toISOString(),
+      occupant_estimates: [],
+      pet_estimates: [],
+      negative_space_exclusions: [],
+    };
+    const frameOccupants = curFrame.occupant_estimates || curFrame.occupants || [];
+    const occupiedRoomsList =
+      curFrame.occupied_rooms ||
+      curFrame.active_rooms ||
+      frameOccupants.map((o) => o.room).filter(Boolean);
+    const occSet = new Set(occupiedRoomsList);
+    const roomEstimates = { ...(curFrame.room_estimates || {}) };
+    frameOccupants.forEach((o) => {
+      if (o.room && !roomEstimates[o.room]) {
+        roomEstimates[o.room] = o;
+      }
+    });
+    const negZones = curFrame.negative_space_exclusions || curFrame.negative_space_zones || [];
+    const transitions = tl?.transitions || [];
+
+    const visibleFloors =
+      this._timelineFloor === "all" && floors.length > 0
+        ? floors
+        : [floors.find((f) => f.id === (this._timelineFloor === "all" ? activeFloor.id : this._timelineFloor)) || activeFloor];
+
+    const floorParts = visibleFloors.map((fl) =>
+      this._buildSingleFloorTimelineParts(
+        fl,
+        frames,
+        frameIdx,
+        curFrame,
+        occupiedRoomsList,
+        occSet,
+        roomEstimates,
+        negZones,
+        transitions
+      )
+    );
+    const primaryParts = floorParts.find((p) => p.floor.id === activeFloor.id) || floorParts[0];
 
     const rawFrameTs = curFrame.iso || curFrame.timestamp;
     const curTimeStr = rawFrameTs
@@ -7512,21 +7920,75 @@ action:
 
     return {
       floors,
-      activeFloor,
+      activeFloor: primaryParts ? primaryParts.floor : activeFloor,
+      floorParts,
       frames,
       frameIdx,
       curTimeStr,
       occupiedRoomsList,
-      svgInner: `${underlaySvg}${pbRoomsSvg}${pbConesSvg}${trailSvg}${pbOccupantsSvg}`,
+      svgInner: primaryParts ? primaryParts.svgInner : "",
     };
+  }
+
+  _patchSvgTimelineLayers(svgEl, fpData) {
+    if (!svgEl || !fpData) return;
+    const roomsLayer = svgEl.querySelector?.(".tl-layer-rooms");
+    const conesLayer = svgEl.querySelector?.(".tl-layer-cones");
+    const arrowsLayer = svgEl.querySelector?.(".tl-layer-arrows");
+    const occLayer = svgEl.querySelector?.(".tl-layer-occupants");
+    if (!roomsLayer || !conesLayer || !arrowsLayer || !occLayer) {
+      svgEl.innerHTML = fpData.svgInner;
+      return;
+    }
+    roomsLayer.innerHTML = fpData.roomsSvg;
+    conesLayer.innerHTML = fpData.conesSvg;
+    arrowsLayer.innerHTML = fpData.arrowsSvg;
+
+    const existingNodes = new Map();
+    occLayer.querySelectorAll?.(".tl-occ-node[data-occ-key]")?.forEach((node) => {
+      existingNodes.set(node.getAttribute("data-occ-key"), node);
+    });
+    const nextKeys = new Set();
+    fpData.occupantTokens.forEach((tok) => {
+      nextKeys.add(tok.key);
+      const ex = existingNodes.get(tok.key);
+      if (ex && ex.setAttribute) {
+        ex.setAttribute("transform", `translate(${tok.x.toFixed(1)}, ${tok.y.toFixed(1)})`);
+      } else {
+        const tmp = document.createElementNS ? document.createElementNS("http://www.w3.org/2000/svg", "svg") : null;
+        if (tmp) {
+          tmp.innerHTML = tok.svg;
+          if (tmp.firstElementChild) occLayer.appendChild(tmp.firstElementChild);
+        } else {
+          occLayer.innerHTML += tok.svg;
+        }
+      }
+    });
+    existingNodes.forEach((node, k) => {
+      if (!nextKeys.has(k) && node.remove) node.remove();
+    });
   }
 
   _updateTimelineFrameInPlace() {
     const root = this.shadowRoot;
-    const tlSvg = root?.querySelector?.("#tl-svg-canvas");
-    if (!tlSvg || !this._timelineData) return false;
+    if (!root || !this._timelineData) return false;
+    const tlSvgSingle = root.querySelector?.("#tl-svg-canvas");
+    const multiSvgs = root.querySelectorAll?.(".tl-floor-svg[data-tl-floor-svg]") || [];
+    if (!tlSvgSingle && multiSvgs.length === 0) return false;
+
     const parts = this._buildTimelineFrameParts();
-    tlSvg.innerHTML = parts.svgInner;
+    if (tlSvgSingle) {
+      const targetPart =
+        parts.floorParts.find((p) => p.floor.id === parts.activeFloor.id) || parts.floorParts[0];
+      if (targetPart) this._patchSvgTimelineLayers(tlSvgSingle, targetPart);
+    }
+    if (multiSvgs.length > 0) {
+      multiSvgs.forEach((svgEl) => {
+        const fid = svgEl.getAttribute("data-tl-floor-svg");
+        const matched = parts.floorParts.find((p) => p.floor.id === fid);
+        if (matched) this._patchSvgTimelineLayers(svgEl, matched);
+      });
+    }
 
     const slider = root.querySelector("#tl-scrubber-slider");
     if (slider) slider.value = String(parts.frameIdx);
@@ -7541,12 +8003,15 @@ action:
       activeRoomsEl.textContent = parts.occupiedRoomsList.join(", ") || "None";
     }
 
-    root.querySelectorAll(".seg-btn[data-floor-id]").forEach((btn) => {
-      btn.classList.toggle("active", btn.getAttribute("data-floor-id") === parts.activeFloor.id);
+    root.querySelectorAll(".seg-btn[data-tl-floor]").forEach((btn) => {
+      btn.classList.toggle("active", btn.getAttribute("data-tl-floor") === this._timelineFloor);
     });
     const floorSummaryEl = root.querySelector("#tl-floor-label");
     if (floorSummaryEl) {
-      floorSummaryEl.textContent = parts.activeFloor.name.replace(/\s*\(.*\)/, "");
+      floorSummaryEl.textContent =
+        this._timelineFloor === "all"
+          ? `All ${parts.floors.length} Floors`
+          : parts.activeFloor.name.replace(/\s*\(.*\)/, "");
     }
 
     root.querySelectorAll(".tl-transition-row[data-frame-idx]").forEach((row) => {
@@ -7559,17 +8024,14 @@ action:
     const tl = this._timelineData;
     const fp = this._floorplan || this._overview?.floorplan || PDD_DEFAULT_FLOORPLAN;
     const floors = fp.floors || [];
-    const activeFloor =
-      floors.find((f) => f.id === this._selectedFloorId) || floors[1] || floors[0] || { id: "main", name: "Main Floor" };
-    this._selectedFloorId = activeFloor.id;
 
     if (!tl) {
       return `
         <div class="ha-card">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div>
-              <h2 class="card-title" style="font-size:18px;">🎯 Whole-House Spatial Timeline &amp; Negative-Space Playback</h2>
-              <div class="card-desc">Reconstructing historical occupant trajectories, positive sub-zones, and negative-space camera/PIR exclusions...</div>
+              <h2 class="card-title" style="font-size:18px;">🎯 Whole-House Spatial Timeline &amp; Playback</h2>
+              <div class="card-desc">Loading historical occupant positions and room movement records...</div>
             </div>
             <button class="btn btn-sm" id="btn-reload-timeline">Reload Timeline</button>
           </div>
@@ -7577,7 +8039,7 @@ action:
     }
 
     const parts = this._buildTimelineFrameParts();
-    const { frames, frameIdx, curTimeStr, occupiedRoomsList, svgInner } = parts;
+    const { frames, frameIdx, curTimeStr, occupiedRoomsList, floorParts } = parts;
     const transitions = tl.transitions || [];
     const summary = tl.comparison_summary || tl.summary || {};
     const totalSubregionFrames = Number(
@@ -7594,13 +8056,42 @@ action:
       0
     );
 
+    const entityNameMap = new Map();
+    ((this._overview && this._overview.entities) || []).forEach((e) => {
+      if (e && e.entity_id) entityNameMap.set(e.entity_id, e.name || e.entity_id);
+    });
+
+    const isAllFloors = this._timelineFloor === "all" && floorParts.length > 1;
+    const mapsMarkup = isAllFloors
+      ? `<div id="tl-maps-grid" class="tl-all-floors-grid">
+          ${floorParts
+            .map(
+              (fpData) => `
+            <div class="tl-floor-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span style="font-size:12px;font-weight:700;color:#0f172a;">${this._escape(
+                  fpData.floor.name.replace(/\s*\(.*\)/, "")
+                )}</span>
+                <span style="font-size:11px;color:#475569;">${fpData.occupantTokens.length} active</span>
+              </div>
+              <svg class="tl-floor-svg" data-tl-floor-svg="${this._escape(fpData.floor.id)}" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:220px;display:block;">
+                ${fpData.svgInner}
+              </svg>
+            </div>`
+            )
+            .join("")}
+        </div>`
+      : `<svg id="tl-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:360px;display:block;">
+          ${parts.svgInner}
+        </svg>`;
+
     return `
       <div class="ha-card">
         <div class="card-head" style="flex-wrap:wrap;gap:12px;">
           <div>
-            <h2 class="card-title" style="font-size:18px;">🎯 Whole-House Spatial Timeline &amp; Negative-Space Playback</h2>
+            <h2 class="card-title" style="font-size:18px;">🎯 Whole-House Spatial Timeline &amp; Playback</h2>
             <div class="card-desc">
-              "The missile knows where it is because it knows where it isn't" — combines positive Frigate sub-zones &amp; PIR cones with negative-space exclusion and doorway trajectory conservation.
+              Shows where each person, child, and pet is across all floors, with directional arrows from their previous room.
             </div>
           </div>
 
@@ -7609,11 +8100,11 @@ action:
               class="btn btn-sm"
               id="btn-timeline-toggle-neg-space"
               style="background:${this._timelineNegativeSpace ? "var(--ha-accent-purple-bg)" : "var(--ha-subtle)"};color:${this._timelineNegativeSpace ? "var(--ha-accent-purple-text)" : "var(--ha-text)"};border-color:${this._timelineNegativeSpace ? "var(--ha-accent-purple-border)" : "var(--ha-divider)"};font-weight:600;"
-              data-tip="A/B compare timeline reconstruction WITH vs WITHOUT Negative-Space Exclusion."
+              data-tip="Compare timeline playback WITH vs WITHOUT Negative-Space inference."
               data-tip-align="right"
-              title="A/B compare timeline reconstruction WITH vs WITHOUT Negative-Space Exclusion"
+              title="Compare timeline playback WITH vs WITHOUT Negative-Space inference"
             >
-              🎯 A/B Negative-Space: ${this._timelineNegativeSpace ? "ON (Active)" : "OFF (Standard Bayesian)"}
+              🎯 Negative-Space: ${this._timelineNegativeSpace ? "ON" : "OFF"}
             </button>
 
             <div class="seg-group" style="margin-top:0;">
@@ -7637,20 +8128,20 @@ action:
         <!-- KPI Summary Bar -->
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));gap:10px;margin-bottom:14px;">
           <div style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:var(--ha-muted);">Timeline Frames (${summary.window_hours || this._timelineHours}h)</div>
-            <div style="font-size:16px;font-weight:700;">${Number(tl.frame_count || frames.length)} frames · ${Number(transitions.length)} moves</div>
-          </div>
-          <div style="background:var(--ha-accent-purple-bg);border:1px solid var(--ha-accent-purple-border);border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:var(--ha-accent-purple-text);">Negative-Space Subregion Localizations</div>
-            <div style="font-size:16px;font-weight:700;color:var(--ha-accent-purple-text);">${totalSubregionFrames} localizations</div>
+            <div style="font-size:11px;color:var(--ha-muted);">Timeline Window (${summary.window_hours || this._timelineHours}h)</div>
+            <div style="font-size:16px;font-weight:700;">${Number(tl.frame_count || frames.length)} frames · ${Number(transitions.length)} events</div>
           </div>
           <div style="background:var(--ha-accent-cyan-bg);border:1px solid var(--ha-accent-cyan-border);border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:var(--ha-accent-cyan-text);">Blind-Pocket Holds (Bathrooms / Guest)</div>
+            <div style="font-size:11px;color:var(--ha-accent-cyan-text);">Inferred Uncovered Areas</div>
+            <div style="font-size:16px;font-weight:700;color:var(--ha-accent-cyan-text);">${totalSubregionFrames} localizations</div>
+          </div>
+          <div style="background:var(--ha-accent-cyan-bg);border:1px solid var(--ha-accent-cyan-border);border-radius:8px;padding:8px 12px;">
+            <div style="font-size:11px;color:var(--ha-accent-cyan-text);">Blind-Room Holds (Bathrooms)</div>
             <div style="font-size:16px;font-weight:700;color:var(--ha-accent-cyan-text);">${totalBlindPocketFrames} frames (${totalDeltaFrames} A/B diffs)</div>
           </div>
           <div style="background:var(--ha-accent-amber-bg);border:1px solid var(--ha-accent-amber-border);border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:var(--ha-accent-amber-text);">Moving Shades / Sun Excluded</div>
-            <div style="font-size:16px;font-weight:700;color:var(--ha-accent-amber-text);">☀️ ${totalShadeExclusionFrames} frames filtered</div>
+            <div style="font-size:11px;color:var(--ha-accent-amber-text);">Moving Shades Filtered</div>
+            <div style="font-size:16px;font-weight:700;color:var(--ha-accent-amber-text);">☀️ ${totalShadeExclusionFrames} frames ignored</div>
           </div>
         </div>
 
@@ -7688,39 +8179,44 @@ action:
           </div>
         </div>
 
-        <!-- Split 2D Floorplan Playback + Movement Transitions Log -->
+        <!-- Split 2D Floorplan Playback + ASD-STE100 Movement Log -->
         <div class="timeline-split-grid">
           <div style="background:#f8fafc;color:#0f172a;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;">
             <div class="fp-map-toolbar">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span style="font-size:12px;font-weight:700;color:#0f172a;">Floor:</span>
                 <div class="seg-group" style="margin-top:0;background:rgba(15,23,42,0.06);border-color:rgba(15,23,42,0.12);">
+                  <button class="seg-btn ${this._timelineFloor === "all" ? "active" : ""}" data-tl-floor="all" style="padding:4px 11px;">
+                    All Floors
+                  </button>
                   ${floors
                     .map(
                       (fl) => `
-                    <button class="seg-btn ${fl.id === activeFloor.id ? "active" : ""}" data-floor-id="${this._escape(fl.id)}" style="padding:4px 11px;">
+                    <button class="seg-btn ${this._timelineFloor === fl.id ? "active" : ""}" data-tl-floor="${this._escape(fl.id)}" style="padding:4px 11px;">
                       ${this._escape(fl.name.replace(/\s*\(.*\)/, ""))}
                     </button>`
                     )
                     .join("")}
                 </div>
               </div>
-              <span id="tl-floor-label" style="font-size:11.5px;color:#475569;font-weight:500;">${this._escape(activeFloor.name.replace(/\s*\(.*\)/, ""))}</span>
+              <span id="tl-floor-label" style="font-size:11.5px;color:#475569;font-weight:500;">${
+                this._timelineFloor === "all"
+                  ? `All ${floors.length} Floors`
+                  : this._escape(parts.activeFloor.name.replace(/\s*\(.*\)/, ""))
+              }</span>
             </div>
-            <svg id="tl-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:360px;display:block;">
-              ${svgInner}
-            </svg>
+            ${mapsMarkup}
             <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;font-size:11.5px;color:#475569;flex-wrap:wrap;gap:8px;">
-              <span>🟢 Direct Positive Detection &nbsp;|&nbsp; 🟣 Negative-Space Localization &nbsp;|&nbsp; 🩵 Dashed Cyan = Clear Camera Exclusion Cone</span>
+              <span>🟢 Sensor Confirmed &nbsp;|&nbsp; 🔵 Inferred Position &nbsp;|&nbsp; ➡️ Movement Arrow &nbsp;|&nbsp; 🩵 Clear Camera Cone</span>
               <span>Active Rooms: <strong id="tl-active-rooms">${this._escape(occupiedRoomsList.join(", ") || "None")}</strong></span>
             </div>
           </div>
 
-          <div id="tl-log-scroll" style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;max-height:430px;overflow:auto;">
-            <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Chronological Movement &amp; Inference Log (${transitions.length})</div>
+          <div id="tl-log-scroll" style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;max-height:680px;overflow:auto;">
+            <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Movement &amp; Inference Log (${transitions.length})</div>
             ${
               transitions.length === 0
-                ? `<div style="font-size:12.5px;color:var(--ha-muted);">No room transitions recorded in this window.</div>`
+                ? `<div style="font-size:12.5px;color:var(--ha-muted);">No room changes occurred in this time range.</div>`
                 : transitions
                     .slice()
                     .reverse()
@@ -7729,33 +8225,34 @@ action:
                       const tStr = rawTrTs
                         ? new Date(rawTrTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
                         : "";
-                      const infM = String(tr.method || tr.inference_type || "");
-                      const isNeg = infM.startsWith("negative_space") || infM === "hybrid";
                       const fIdx = frames.findIndex((f) => (f.iso || f.timestamp) === rawTrTs);
-                      const trLoc = tr.subregion || tr.inferred_location || tr.to_room || tr.room || "";
+                      const ste = this._formatTransitionSte100(tr, entityNameMap);
+                      const toColor = this._getRoomColor(ste.toRoom);
+                      const borderAccent = ste.isPet
+                        ? "var(--ha-accent-amber-border)"
+                        : ste.isInferred
+                        ? "var(--ha-accent-cyan-border)"
+                        : "var(--ha-divider)";
                       return `
                         <div
                           class="tl-transition-row"
                           data-frame-idx="${fIdx >= 0 ? fIdx : 0}"
-                          style="padding:8px 10px;margin-bottom:6px;background:var(--ha-card);border:1px solid ${
-                            isNeg ? "var(--ha-accent-purple-border)" : "var(--ha-divider)"
-                          };border-radius:8px;cursor:pointer;font-size:12px;"
+                          style="padding:8px 10px;margin-bottom:6px;background:var(--ha-card);border:1px solid ${borderAccent};border-radius:8px;cursor:pointer;font-size:12px;"
                         >
-                          <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <strong>${this._escape(tr.from_room ? `${tr.from_room} → ${tr.to_room}` : `${tr.to_room || tr.room}`)}</strong>
-                            <span style="font-family:var(--ha-mono);font-size:11px;color:var(--ha-muted);">${this._escape(tStr)}</span>
+                          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                            <span style="display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--ha-text);">
+                              <span class="room-color-dot" style="background:${toColor.hex};"></span>
+                              ${this._escape(ste.actionText)}
+                            </span>
+                            <span style="font-family:var(--ha-mono);font-size:11px;color:var(--ha-muted);white-space:nowrap;">${this._escape(tStr)}</span>
                           </div>
-                          <div style="color:${isNeg ? "var(--ha-accent-purple-text)" : "var(--ha-success-text)"};font-weight:500;margin-top:2px;">
-                            🎯 ${this._escape(trLoc)}
+                          <div style="color:${ste.isPet ? "var(--ha-accent-amber-text)" : ste.isInferred ? "var(--ha-accent-cyan-text)" : "var(--ha-success-text)"};font-weight:500;margin-top:3px;">
+                            Zone: ${this._escape(ste.zoneText)}
                           </div>
                           ${
-                            tr.explanation
-                              ? `<div style="font-size:11px;color:var(--ha-muted);margin-top:2px;">${this._escape(
-                                  tr.explanation
-                                )}</div>`
-                              : (tr.negative_space_evidence || []).length > 0
-                              ? `<div style="font-size:11px;color:var(--ha-muted);margin-top:2px;">🚫 Clear: ${this._escape(
-                                  tr.negative_space_evidence.join(", ")
+                            ste.reasonText
+                              ? `<div style="font-size:11.5px;color:var(--ha-muted);margin-top:3px;line-height:1.4;">${this._escape(
+                                  ste.reasonText
                                 )}</div>`
                               : ""
                           }
@@ -9273,12 +9770,22 @@ action:
     root.querySelectorAll(".tl-speed-btn[data-tl-speed]").forEach((el) => {
       el.addEventListener("click", () => {
         this._timelineSpeed = Number(el.getAttribute("data-tl-speed") || 1);
+        root.querySelectorAll(".tl-speed-btn[data-tl-speed]").forEach((btn) => {
+          btn.classList.toggle("active", Number(btn.getAttribute("data-tl-speed") || 1) === this._timelineSpeed);
+        });
         if (this._timelinePlaying) {
           this._toggleTimelinePlay(false);
           this._toggleTimelinePlay(true);
-        } else {
-          this.render();
         }
+      });
+    });
+    root.querySelectorAll(".seg-btn[data-tl-floor]").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._timelineFloor = el.getAttribute("data-tl-floor") || "all";
+        if (this._timelineFloor !== "all") {
+          this._selectedFloorId = this._timelineFloor;
+        }
+        this.render();
       });
     });
     root.querySelector("#tl-scrubber-slider")?.addEventListener("input", (e) => {
