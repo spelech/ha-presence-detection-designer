@@ -720,7 +720,7 @@ async def test_slack_modal_app_home_slash_commands_and_room_actions(
 
     response_posts: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(
-        "custom_components.presence_detection_designer.slack_actions._post_response_url_sync",
+        "custom_components.presence_detection_designer.slack_files._post_response_url_sync",
         lambda url, body: response_posts.append((url, body)),
     )
 
@@ -888,3 +888,122 @@ async def test_slack_modal_app_home_slash_commands_and_room_actions(
     s_manage = await async_handle_slack_webhook(hass, wh_id, _slash_req("manage", trigger_id="trig_cmd_9"))
     assert s_manage.status == 200
     assert any(p and p.get("trigger_id") == "trig_cmd_9" for u, p in api_calls if "views.open" in u)
+
+
+@pytest.mark.asyncio
+async def test_slack_files_write_native_snapshot_upload_and_slash_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify files:write external upload flow, private URL filtering, and /presence snapshot."""
+    import io
+    import json
+    import urllib.parse
+    from types import SimpleNamespace
+
+    from custom_components.presence_detection_designer.slack_actions import (
+        async_ensure_slack_webhook_id,
+        async_handle_slack_webhook,
+    )
+    from custom_components.presence_detection_designer.slack_cards import (
+        get_slack_daily_thread_manager,
+    )
+    from custom_components.presence_detection_designer.slack_files import (
+        async_upload_room_snapshot,
+        is_public_snapshot_url,
+    )
+
+    assert is_public_snapshot_url("http://10.0.0.10:8301/api/office/latest.jpg") is False
+    assert is_public_snapshot_url("https://192.168.1.50/snap.jpg") is False
+    assert is_public_snapshot_url("https://cdn.example.com/snap.jpg") is True
+
+    hass, store = _make_hass_with_store()
+    await store.async_update_global_settings({"slack_channel": "#presence-alerts"})
+    wh_id = await async_ensure_slack_webhook_id(hass)
+
+    coord = SimpleNamespace(
+        room_name="Office",
+        entry_id="office",
+        camera_entity="camera.office",
+        camera_snapshot_url="http://10.0.0.10:8301/api/office/latest.jpg",
+        state_machine=SimpleNamespace(is_present=True, override=False),
+        async_update_listeners=MagicMock(),
+    )
+    hass.data[DOMAIN]["office"] = coord
+
+    mgr = get_slack_daily_thread_manager(hass)
+    monkeypatch.setattr(mgr, "get_slack_token", lambda _h: "xoxb-tok")
+    mgr._channel_ids["presence-alerts"] = "C0CBX319XHV"
+    from custom_components.presence_detection_designer.slack_blocks import now_local
+
+    await store.async_save_daily_thread(
+        "C0CBX319XHV",
+        {"date_str": now_local().strftime("%Y-%m-%d"), "thread_ts": "1794809018.835629", "transition_count": 1},
+    )
+
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer.slack_files.async_fetch_snapshot_bytes",
+        AsyncMock(return_value=b"\xff\xd8\xff\xe0FAKEJPEG"),
+    )
+
+    urlopen_calls: list[tuple[str, bytes]] = []
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _fake_urlopen(req, timeout=8):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        data = getattr(req, "data", b"") or b""
+        urlopen_calls.append((url, data))
+        if "files.getUploadURLExternal" in url:
+            return _Resp(json.dumps({"ok": True, "upload_url": "https://files.slack.com/upload/v1/abc", "file_id": "F123"}).encode())
+        if "files.slack.com/upload" in url:
+            return _Resp(b"OK - 12")
+        if "files.completeUploadExternal" in url:
+            return _Resp(json.dumps({"ok": True, "files": [{"id": "F123"}]}).encode())
+        return _Resp(b"{}")
+
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer.slack_files.urllib.request.urlopen",
+        _fake_urlopen,
+    )
+
+    ok = await async_upload_room_snapshot(
+        hass,
+        "Office",
+        camera_entity="camera.office",
+        snapshot_url="http://10.0.0.10:8301/api/office/latest.jpg",
+        initial_comment="Test capture",
+    )
+    assert ok is True
+    assert any("files.getUploadURLExternal" in u for u, _ in urlopen_calls)
+    assert any("files.slack.com/upload/v1/abc" in u and d == b"\xff\xd8\xff\xe0FAKEJPEG" for u, d in urlopen_calls)
+    comp = [json.loads(d.decode()) for u, d in urlopen_calls if "files.completeUploadExternal" in u]
+    assert len(comp) == 1
+    assert comp[0]["channel_id"] == "C0CBX319XHV"
+    assert comp[0]["thread_ts"] == "1794809018.835629"
+    assert comp[0]["files"][0]["id"] == "F123"
+
+    # Slash command `/presence snapshot Office` uploads directly to channel_id
+    urlopen_calls.clear()
+    raw_body = urllib.parse.urlencode(
+        {
+            "command": "/presence",
+            "text": "snapshot Office",
+            "user_id": "U123",
+            "user_name": "steve",
+            "channel_id": "C0CBX319XHV",
+        }
+    )
+    req = MagicMock()
+    req.text = AsyncMock(return_value=raw_body)
+    req.content_type = "application/x-www-form-urlencoded"
+    req.headers = {}
+    resp = await async_handle_slack_webhook(hass, wh_id, req)
+    assert resp.status == 200
+    body = json.loads(resp.text)
+    assert "Uploaded live snapshot" in body["text"]
+    assert any("files.completeUploadExternal" in u for u, _ in urlopen_calls)
