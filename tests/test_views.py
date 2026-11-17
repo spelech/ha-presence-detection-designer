@@ -1231,6 +1231,76 @@ assert.strictEqual(renderCalls, 0, "In-place timeline frame update must NOT call
 assert.strictEqual(tlSlider.value, "1");
 assert.strictEqual(tlActive.textContent, "Living Room");
 assert(tlSvg.innerHTML.includes("Living Room"));
+
+// 6. Per-floor room colors NEVER repeat on the same floor even with 20+ rooms
+const seenPerFloor = {};
+for (const r of panel._floorplan.rooms) {
+  const fl = r.floor || "main";
+  const rn = r.name || r.room_name;
+  const col = panel._getRoomColor(rn).hex;
+  if (!seenPerFloor[fl]) seenPerFloor[fl] = new Set();
+  assert(!seenPerFloor[fl].has(col), `Duplicate color ${col} on floor ${fl} for ${rn}`);
+  seenPerFloor[fl].add(col);
+}
+
+// 7. All-floors timeline parts render every floor simultaneously + person picture / kid / dog + arrows
+panel._overview.entities.push({
+  entity_id: "person.steve",
+  name: "Steve",
+  domain: "person",
+  entity_picture: "/api/image/serve/steve_avatar/512x512",
+});
+panel._timelineFloor = "all";
+panel._timelineData = {
+  frames: [
+    {
+      ts: 1000,
+      iso: "2026-11-16T20:00:00Z",
+      occupied_rooms: ["Kitchen"],
+      occupant_estimates: [{ room: "Kitchen", floor: "main", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive" }],
+    },
+    {
+      ts: 1020,
+      iso: "2026-11-16T20:00:20Z",
+      occupied_rooms: ["Living Room", "Margot's Room"],
+      occupant_estimates: [
+        { room: "Living Room", floor: "main", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive" },
+        { room: "Margot's Room", floor: "upstairs", occupant_label: "Margot", occupant_type: "untracked_human", method: "positive" },
+      ],
+      pet_estimates: [{ room: "Dining Room", floor: "main", occupant_label: "Riley (Dog)", occupant_type: "pet" }],
+    },
+  ],
+  transitions: [
+    {
+      ts: 1020,
+      iso: "2026-11-16T20:00:20Z",
+      from_room: "Kitchen",
+      to_room: "Living Room",
+      from_floor: "main",
+      to_floor: "main",
+      occupant_key: "Steve",
+      occupant_label: "Steve",
+      occupant_type: "tracked_human",
+      method: "hybrid",
+      positive_drivers: ["binary_sensor.kitchen_pir"],
+      negative_space_evidence: ["camera.living_room"],
+    },
+  ],
+};
+panel._timelineFrameIdx = 1;
+const multiParts = panel._buildTimelineFrameParts();
+assert.strictEqual(multiParts.floorParts.length, panel._floorplan.floors.length, "All Floors mode must render every floor");
+const mainPart = multiParts.floorParts.find((fp) => fp.floor.id === "main");
+const upPart = multiParts.floorParts.find((fp) => fp.floor.id === "upstairs");
+assert(mainPart.svgInner.includes("/api/image/serve/steve_avatar/512x512"), "Confirmed person should use entity_picture");
+assert(mainPart.svgInner.includes("🐶"), "Dog should use dog icon");
+assert(mainPart.arrowsSvg.includes("marker-end"), "Same-floor transition should draw directional arrow");
+assert(upPart.svgInner.includes("🧒"), "Kid should use kid icon");
+
+// 8. ASD-STE100 transition formatter uses short active-voice sentences
+const ste = panel._formatTransitionSte100(panel._timelineData.transitions[0], new Map([["binary_sensor.kitchen_pir", "Kitchen PIR"], ["camera.living_room", "Living Room Cam"]]));
+assert.strictEqual(ste.actionText, "Steve moved from Kitchen to Living Room.");
+assert(ste.reasonText.includes("Sensor Kitchen PIR detected motion. Camera Living Room Cam shows no person."));
 """
     proc = subprocess.run(
         [node_bin, "-e", js_test, str(panel_path)],

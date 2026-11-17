@@ -66,6 +66,7 @@ def reconstruct_house_timeline(
     prev_frame_off: dict[str, Any] | None = None
     last_primary_room: str | None = None
     last_primary_subregion: str | None = None
+    last_occupant_loc: dict[str, dict[str, Any]] = {}
 
     blind_pocket_holds_count = 0
     uncovered_subregion_count = 0
@@ -125,35 +126,116 @@ def reconstruct_house_timeline(
         iso_str = datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
         occ_list = chosen_eval["occupant_estimates"]
+        pet_list = chosen_eval.get("pet_estimates", []) or []
+
         if occ_list:
-            primary = occ_list[0]
-            curr_room = str(primary["room"])
-            curr_sub = str(primary["subregion"])
-            if curr_room != last_primary_room or curr_sub != last_primary_subregion:
+            seen_occ_keys: set[str] = set()
+            for idx_occ, occ in enumerate(occ_list):
+                raw_label = str(occ.get("occupant_label") or "Occupant").strip()
+                occ_key = raw_label
+                if occ_key in seen_occ_keys:
+                    occ_key = f"{raw_label} #{idx_occ + 1}"
+                seen_occ_keys.add(occ_key)
+                curr_room = str(occ["room"])
+                curr_sub = str(occ.get("subregion") or curr_room)
+                curr_floor = str(occ.get("floor") or "main")
+                prev_info = last_occupant_loc.get(occ_key)
+                if idx_occ == 0:
+                    prev_room = prev_info["room"] if prev_info else last_primary_room
+                    prev_sub = prev_info["subregion"] if prev_info else last_primary_subregion
+                    prev_floor = prev_info["floor"] if prev_info else None
+                    prev_x = prev_info["x"] if prev_info else None
+                    prev_y = prev_info["y"] if prev_info else None
+                else:
+                    prev_room = prev_info["room"] if prev_info else None
+                    prev_sub = prev_info["subregion"] if prev_info else None
+                    prev_floor = prev_info["floor"] if prev_info else None
+                    prev_x = prev_info["x"] if prev_info else None
+                    prev_y = prev_info["y"] if prev_info else None
+
+                if curr_room != prev_room or curr_sub != prev_sub:
+                    transitions.append(
+                        {
+                            "ts": ts,
+                            "iso": iso_str,
+                            "from_room": prev_room,
+                            "to_room": curr_room,
+                            "from_floor": prev_floor,
+                            "to_floor": curr_floor,
+                            "from_x": prev_x,
+                            "from_y": prev_y,
+                            "floor": curr_floor,
+                            "x": occ["x"],
+                            "y": occ["y"],
+                            "subregion": curr_sub,
+                            "method": occ["method"],
+                            "explanation": occ["explanation"],
+                            "positive_drivers": occ["positive_drivers"],
+                            "negative_space_evidence": occ["negative_exclusions"],
+                            "occupant_key": occ_key,
+                            "occupant_label": raw_label,
+                            "occupant_type": str(occ.get("occupant_type") or "human"),
+                            "detected_people": list(occ.get("detected_people") or []),
+                            "detected_animals": list(occ.get("detected_animals") or []),
+                        }
+                    )
+                    last_occupant_loc[occ_key] = {
+                        "room": curr_room,
+                        "subregion": curr_sub,
+                        "floor": curr_floor,
+                        "x": occ["x"],
+                        "y": occ["y"],
+                    }
+                    if idx_occ == 0:
+                        last_primary_room = curr_room
+                        last_primary_subregion = curr_sub
+
+        for pet in pet_list:
+            pet_label = str(pet.get("occupant_label") or "Riley (Dog)")
+            pet_room = str(pet.get("room") or "")
+            if not pet_room:
+                continue
+            prev_pet = last_occupant_loc.get(pet_label)
+            if not prev_pet or prev_pet["room"] != pet_room:
                 transitions.append(
                     {
                         "ts": ts,
                         "iso": iso_str,
-                        "from_room": last_primary_room,
-                        "to_room": curr_room,
-                        "floor": primary["floor"],
-                        "x": primary["x"],
-                        "y": primary["y"],
-                        "subregion": curr_sub,
-                        "method": primary["method"],
-                        "explanation": primary["explanation"],
-                        "positive_drivers": primary["positive_drivers"],
-                        "negative_space_evidence": primary["negative_exclusions"],
+                        "from_room": prev_pet["room"] if prev_pet else None,
+                        "to_room": pet_room,
+                        "from_floor": prev_pet["floor"] if prev_pet else None,
+                        "to_floor": str(pet.get("floor") or "main"),
+                        "from_x": prev_pet["x"] if prev_pet else None,
+                        "from_y": prev_pet["y"] if prev_pet else None,
+                        "floor": str(pet.get("floor") or "main"),
+                        "x": pet.get("x"),
+                        "y": pet.get("y"),
+                        "subregion": pet_room,
+                        "method": "pet",
+                        "explanation": f"{pet_label} detected in {pet_room}.",
+                        "positive_drivers": list(pet.get("dog_entities") or []),
+                        "negative_space_evidence": [],
+                        "occupant_key": pet_label,
+                        "occupant_label": pet_label,
+                        "occupant_type": "pet",
+                        "detected_people": [],
+                        "detected_animals": [pet_label],
                     }
                 )
-                last_primary_room = curr_room
-                last_primary_subregion = curr_sub
+                last_occupant_loc[pet_label] = {
+                    "room": pet_room,
+                    "subregion": pet_room,
+                    "floor": str(pet.get("floor") or "main"),
+                    "x": pet.get("x"),
+                    "y": pet.get("y"),
+                }
 
         frames.append(
             {
                 "ts": ts,
                 "iso": iso_str,
                 "occupant_estimates": chosen_eval["occupant_estimates"],
+                "pet_estimates": pet_list,
                 "active_rooms": chosen_active_rooms,
                 "active_rooms_with_negative_space": active_rooms_on,
                 "active_rooms_baseline": active_rooms_off,
