@@ -278,3 +278,175 @@ def _boxes_overlap_2d(box_a: dict[str, Any], box_b: dict[str, Any]) -> float:
         ),
     )
     return round(inter / min_area, 2)
+
+
+FLOORPLAN_PX_PER_FOOT: float = 19.0
+AVERAGE_WALKING_SPEED_FPS: float = 4.0
+MAX_SPRINT_SPEED_FPS: float = 12.0
+STAIR_FLIGHT_EQUIV_FEET: float = 18.0
+SENSOR_JITTER_ALLOWANCE_SEC: float = 2.5
+
+_FLOOR_STAIR_PORTALS: dict[tuple[str, str], tuple[tuple[float, float], tuple[float, float]]] = {
+    ("upstairs", "main"): ((590.0, 420.0), (490.0, 390.0)),
+    ("main", "upstairs"): ((490.0, 390.0), (590.0, 420.0)),
+    ("main", "basement"): ((535.0, 330.0), (535.0, 420.0)),
+    ("basement", "main"): ((535.0, 420.0), (535.0, 330.0)),
+}
+
+
+def _room_center(room_box: dict[str, Any]) -> tuple[float, float]:
+    """Return 2D center (cx, cy) of a room box in floorplan pixels."""
+    rx = float(room_box.get("x", 0.0))
+    ry = float(room_box.get("y", 0.0))
+    rw = max(1.0, float(room_box.get("width", 100.0)))
+    rh = max(1.0, float(room_box.get("height", 100.0)))
+    return rx + rw / 2.0, ry + rh / 2.0
+
+
+def compute_taxicab_distance(
+    room_a: str,
+    room_b: str,
+    floorplan: dict[str, Any] | None = None,
+    px_per_foot: float = FLOORPLAN_PX_PER_FOOT,
+) -> dict[str, float | int]:
+    """Compute Taxicab (L1) distance in pixels and feet between two rooms across floors."""
+    from .floorplan_presets import get_default_floorplan
+
+    if room_a == room_b:
+        return {"distance_px": 0.0, "distance_ft": 0.0, "floor_changes": 0}
+
+    fp = (
+        floorplan
+        if isinstance(floorplan, dict) and floorplan.get("rooms")
+        else get_default_floorplan()
+    )
+    rooms_by_name: dict[str, dict[str, Any]] = {
+        str(r.get("name")): r for r in (fp.get("rooms") or []) if r.get("name")
+    }
+    box_a = rooms_by_name.get(room_a)
+    box_b = rooms_by_name.get(room_b)
+    scale = max(1.0, float(px_per_foot))
+
+    if not box_a or not box_b:
+        default_ft = 20.0
+        return {
+            "distance_px": round(default_ft * scale, 1),
+            "distance_ft": default_ft,
+            "floor_changes": 0,
+        }
+
+    ax, ay = _room_center(box_a)
+    bx, by = _room_center(box_b)
+    fl_a = str(box_a.get("floor", "main"))
+    fl_b = str(box_b.get("floor", "main"))
+
+    if fl_a == fl_b:
+        dist_px = abs(ax - bx) + abs(ay - by)
+        return {
+            "distance_px": round(dist_px, 1),
+            "distance_ft": round(dist_px / scale, 1),
+            "floor_changes": 0,
+        }
+
+    stair_px = STAIR_FLIGHT_EQUIV_FEET * scale
+    if (fl_a, fl_b) in _FLOOR_STAIR_PORTALS:
+        (s_ax, s_ay), (s_bx, s_by) = _FLOOR_STAIR_PORTALS[(fl_a, fl_b)]
+        dist_px = abs(ax - s_ax) + abs(ay - s_ay) + stair_px + abs(s_bx - bx) + abs(s_by - by)
+        floors = 1
+    else:
+        # 2-floor change (upstairs <-> main <-> basement)
+        (u_sx, u_sy), (m1_sx, m1_sy) = _FLOOR_STAIR_PORTALS[("upstairs", "main")]
+        (m2_sx, m2_sy), (b_sx, b_sy) = _FLOOR_STAIR_PORTALS[("main", "basement")]
+        if fl_a == "upstairs" and fl_b == "basement":
+            dist_px = (
+                abs(ax - u_sx)
+                + abs(ay - u_sy)
+                + stair_px
+                + abs(m1_sx - m2_sx)
+                + abs(m1_sy - m2_sy)
+                + stair_px
+                + abs(b_sx - bx)
+                + abs(b_sy - by)
+            )
+        else:
+            dist_px = (
+                abs(ax - b_sx)
+                + abs(ay - b_sy)
+                + stair_px
+                + abs(m2_sx - m1_sx)
+                + abs(m2_sy - m1_sy)
+                + stair_px
+                + abs(u_sx - bx)
+                + abs(u_sy - by)
+            )
+        floors = 2
+
+    return {
+        "distance_px": round(dist_px, 1),
+        "distance_ft": round(dist_px / scale, 1),
+        "floor_changes": floors,
+    }
+
+
+def evaluate_walking_speed_credibility(
+    distance_ft: float,
+    elapsed_sec: float,
+    *,
+    is_adjacent: bool = False,
+    avg_walking_speed_fps: float = AVERAGE_WALKING_SPEED_FPS,
+    max_sprint_speed_fps: float = MAX_SPRINT_SPEED_FPS,
+    max_transit_window_sec: float = 90.0,
+) -> dict[str, Any]:
+    """Evaluate whether a room transition over `distance_ft` in `elapsed_sec` is kinematically credible."""
+    dist = max(0.0, float(distance_ft))
+    dt = max(0.0, float(elapsed_sec))
+    avg_v = max(0.5, float(avg_walking_speed_fps))
+    max_v = max(avg_v, float(max_sprint_speed_fps))
+
+    expected_sec = dist / avg_v if dist > 0.0 else 0.0
+    min_credible_sec = (
+        0.0 if is_adjacent else max(0.0, (dist / max_v) - SENSOR_JITTER_ALLOWANCE_SEC)
+    )
+    max_credible_sec = max(float(max_transit_window_sec), expected_sec * 3.0 + 30.0)
+    implied_speed_fps = round(dist / max(0.5, dt), 2) if dist > 0.0 else 0.0
+
+    if not is_adjacent and dt < min_credible_sec:
+        return {
+            "is_credible": False,
+            "implied_speed_fps": implied_speed_fps,
+            "expected_transit_sec": round(expected_sec, 1),
+            "min_credible_sec": round(min_credible_sec, 1),
+            "max_credible_sec": round(max_credible_sec, 1),
+            "credibility_score": 0.0,
+            "reason": (
+                f"kinematic_speed_exceeded_{implied_speed_fps:.1f}fps_over_{dist:.1f}ft_in_{dt:.1f}s"
+            ),
+        }
+
+    if not is_adjacent and dt > max_credible_sec:
+        return {
+            "is_credible": False,
+            "implied_speed_fps": implied_speed_fps,
+            "expected_transit_sec": round(expected_sec, 1),
+            "min_credible_sec": round(min_credible_sec, 1),
+            "max_credible_sec": round(max_credible_sec, 1),
+            "credibility_score": 0.1,
+            "reason": f"transit_window_exceeded_{dt:.1f}s_max_{max_credible_sec:.1f}s",
+        }
+
+    # Score peaks at 1.0 near expected walking time, gently decaying for slower lingers
+    if dt <= expected_sec + 5.0:
+        score = 1.0
+    else:
+        over_ratio = (dt - expected_sec) / max(10.0, max_credible_sec - expected_sec)
+        score = max(0.25, round(1.0 - 0.65 * min(1.0, over_ratio), 2))
+
+    return {
+        "is_credible": True,
+        "implied_speed_fps": implied_speed_fps,
+        "expected_transit_sec": round(expected_sec, 1),
+        "min_credible_sec": round(min_credible_sec, 1),
+        "max_credible_sec": round(max_credible_sec, 1),
+        "credibility_score": score,
+        "reason": "credible_walking_kinematics",
+    }

@@ -708,6 +708,9 @@ def reconstruct_house_timeline(
             conservation_enabled=conservation_enabled,
             guest_mode_enabled=guest_mode_enabled,
         )
+        for r_name, est in (chosen_eval.get("room_estimates") or {}).items():
+            if est.get("blind_pocket_pruned") and r_name not in pruned_inferred_rooms:
+                pruned_inferred_rooms.append(str(r_name))
         pruned_set = set(pruned_inferred_rooms)
         chosen_active_rooms = [r for r in raw_active_rooms if r not in pruned_set]
         pet_list = [dict(pt) for pt in (chosen_eval.get("pet_estimates", []) or [])]
