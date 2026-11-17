@@ -10,6 +10,28 @@ from typing import Any
 _LOGGER = logging.getLogger(__name__)
 
 
+def host_room_had_recent_activity(tracker: Any, host_room: str, now: float) -> bool:
+    """Snapshot whether host_room already had interior motion/presence before door opened."""
+    from .trajectory_validator import get_all_room_coordinators
+
+    for coord in get_all_room_coordinators(tracker.hass):
+        if getattr(coord, "room_name", "") != host_room:
+            continue
+        sm = getattr(coord, "state_machine", None)
+        if not sm:
+            return False
+        if getattr(coord, "_active_triggers", None) or getattr(
+            getattr(sm, "snapshot", None), "active_triggers", None
+        ):
+            return True
+        if getattr(sm, "is_present", False):
+            return True
+        last_occ = getattr(sm, "last_occupied_time", 0.0)
+        if last_occ and 0.0 <= (now - last_occ) < 30.0:
+            return True
+    return False
+
+
 def vet_exit_vector(
     tracker: Any,
     door_entity: str,
@@ -35,6 +57,7 @@ def infer_door_vector(
     host_room: str,
     opened_ts: float,
     closed_ts: float,
+    had_motion_on_open: bool | None = None,
 ) -> tuple[str, float, str]:
     """Directionally vector door transit into ingress vs egress based on sensor timings."""
     from .trajectory_validator import get_all_room_coordinators
@@ -42,14 +65,18 @@ def infer_door_vector(
     coords = {getattr(c, "room_name", ""): c for c in get_all_room_coordinators(tracker.hass)}
     host_coord = coords.get(host_room)
 
-    # Check if interior room motion occurred BEFORE door opened
-    interior_motion_before = False
-    if host_coord and hasattr(host_coord, "state_machine"):
-        sm = host_coord.state_machine
-        if getattr(host_coord, "_active_triggers", None) or sm.snapshot.active_triggers:
-            interior_motion_before = True
-        elif sm.last_occupied_time and (opened_ts - sm.last_occupied_time) < 30.0:
-            interior_motion_before = True
+    # Use activity snapshot captured when the door opened when available so
+    # arrival motion (e.g., pulling into the garage) is never mistaken for exit.
+    if had_motion_on_open is not None:
+        interior_motion_before = bool(had_motion_on_open)
+    else:
+        interior_motion_before = False
+        if host_coord and hasattr(host_coord, "state_machine"):
+            sm = host_coord.state_machine
+            if getattr(host_coord, "_active_triggers", None) or sm.snapshot.active_triggers:
+                interior_motion_before = True
+            elif sm.last_occupied_time and 0.0 <= (opened_ts - sm.last_occupied_time) < 30.0:
+                interior_motion_before = True
 
     # Check other occupied interior rooms
     other_occupied = [
@@ -58,17 +85,14 @@ def infer_door_vector(
         if r != host_room and getattr(c, "state_machine", None) and c.state_machine.is_present
     ]
 
-    # Case 1: The house is genuinely vacant -> any perimeter cycle is an arrival.
+    # Case 1: House count is vacant (0) -> never emit an egress that stays stuck at 0.
     if tracker.state.count <= 0:
         if not interior_motion_before:
             return "ingress", 0.95, "Arrival from vacant state"
-        return vet_exit_vector(
-            tracker,
-            door_entity,
-            host_room,
-            opened_ts,
-            0.60,
-            f"Interior motion in {host_room} contradicts vacant count",
+        return (
+            "ambiguous",
+            0.40,
+            f"Interior motion in {host_room} with vacant count; skipping egress",
         )
 
     # Case 2: Interior motion in the host room before the door opened -> egress.
@@ -203,6 +227,10 @@ async def async_apply_global_settings_side_effects(
         )
     if any(k in body for k in ("perimeter_doors", "exit_corroborators")):
         await tracker.async_setup()
+    if "slack_webhook_id" in body:
+        from .slack_actions import async_setup_slack_webhook
+
+        await async_setup_slack_webhook(hass, updated_gs.get("slack_webhook_id"))
     digest_keys = (
         "house_occupant_count",
         "slack_notify_transitions",

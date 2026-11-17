@@ -74,6 +74,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "slack_verbosity": DEFAULT_SLACK_VERBOSITY,
     "slack_daily_thread": True,
     "slack_notify_transitions": False,
+    "slack_webhook_id": "",
+    "slack_signing_secret": "",
     "include_camera_snapshot": False,
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
@@ -293,6 +295,8 @@ class PDDStore:
             "slack_notify_service",
             "slack_channel",
             "slack_verbosity",
+            "slack_webhook_id",
+            "slack_signing_secret",
         ):
             if key in updates and updates[key] is not None:
                 gs[key] = str(updates[key]).strip()

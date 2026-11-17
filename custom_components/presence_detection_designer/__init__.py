@@ -83,6 +83,12 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
             domain_data[VIEWS_REGISTERED] = True
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Skipping HTTP view registration: %s", err)
+        try:
+            from .slack_actions import async_setup_slack_webhook
+
+            await async_setup_slack_webhook(hass)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Skipping Slack webhook setup: %s", err)
 
     if domain_data.get(PANEL_REGISTERED) != version:
         try:
@@ -370,6 +376,12 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         """Manually trigger an immediate update of the main Slack daily presence card."""
         await async_refresh_slack_daily_digest(hass, force=True, respect_toggles=False)
 
+    async def handle_reset_vacancy(call: Any) -> None:
+        """Reset house vacancy to 0 (and optionally clear occupied rooms)."""
+        from .slack_actions import async_handle_reset_vacancy_service
+
+        await async_handle_reset_vacancy_service(hass, call)
+
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)
         _register_service(hass, "force_refresh", handle_force_refresh)
@@ -377,6 +389,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         _register_service(hass, "clear_manual_intent", handle_clear_manual_intent)
         _register_service(hass, "set_house_occupant_count", handle_set_house_occupant_count)
         _register_service(hass, "update_slack_digest", handle_update_slack_digest)
+        _register_service(hass, "reset_vacancy", handle_reset_vacancy)
         _register_service(
             hass, "explain_presence", handle_explain_presence, supports_optional_response=True
         )

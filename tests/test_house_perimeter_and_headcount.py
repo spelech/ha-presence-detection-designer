@@ -712,3 +712,99 @@ async def test_async_setup_subscribes_perimeter_doors_and_persists_digest(
     assert tracker.state.mode == "single_occupant"
     assert mock_hass.data[DOMAIN][DATA_STORE].global_settings["house_occupant_count"] == 1
     assert len(digest_calls) == 1
+
+
+def test_garage_arrival_when_vacant_ignores_motion_after_door_opens(mock_hass):
+    """Arriving via cover.garage_door trips Garage motion while open, and must still count as ingress."""
+    garage = _make_mock_coord(mock_hass, "Garage")
+    mock_hass.data.setdefault(DOMAIN, {})
+    mock_hass.data[DOMAIN][garage.entry_id] = garage
+
+    tracker = HousePerimeterTracker(mock_hass)
+    tracker.set_headcount(0)
+
+    now = 1000.0
+    # Garage is empty when door starts opening
+    assert garage.state_machine.is_present is False
+    tracker.handle_door_state_change("cover.garage_door", True, now_ts=now)
+
+    # Car enters Garage while door is open, activating Garage motion BEFORE door closes
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_ring_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.garage_ring_motion",
+        ),
+        now_ts=now + 6.0,
+    )
+    assert garage.state_machine.is_present is True
+
+    # Garage door closes -> must classify as ingress (0 -> 1), NEVER egress (0 -> 0)
+    rec = tracker.handle_door_state_change("cover.garage_door", False, now_ts=now + 20.0)
+    assert rec is not None
+    assert rec.vector == "ingress"
+    assert tracker.state.count == 1
+    assert tracker.state.mode == "single_occupant"
+
+
+def test_garage_arrival_while_spouse_home_increments_headcount(mock_hass):
+    """Second occupant arriving via garage door while Living Room is occupied increments 1 -> 2."""
+    living = _make_mock_coord(mock_hass, "Living Room")
+    garage = _make_mock_coord(mock_hass, "Garage")
+    mock_hass.data.setdefault(DOMAIN, {})
+    mock_hass.data[DOMAIN][living.entry_id] = living
+    mock_hass.data[DOMAIN][garage.entry_id] = garage
+
+    living.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.living_room_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.living_room_motion",
+        ),
+        now_ts=900.0,
+    )
+
+    tracker = HousePerimeterTracker(mock_hass)
+    tracker.set_headcount(1)
+
+    now = 1000.0
+    tracker.handle_door_state_change("cover.garage_door", True, now_ts=now)
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_ring_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.garage_ring_motion",
+        ),
+        now_ts=now + 5.0,
+    )
+
+    rec = tracker.handle_door_state_change("cover.garage_door", False, now_ts=now + 18.0)
+    assert rec is not None
+    assert rec.vector == "ingress"
+    assert tracker.state.count == 2
+    assert tracker.state.mode == "multi_occupant"
+
+
+def test_vacant_count_never_emits_egress_on_interior_door_cycle(mock_hass):
+    """When count is 0 and host room already had motion, door cycle must not emit a bogus egress."""
+    kitchen = _make_mock_coord(mock_hass, "Kitchen")
+    mock_hass.data.setdefault(DOMAIN, {})
+    mock_hass.data[DOMAIN][kitchen.entry_id] = kitchen
+    kitchen.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.kitchen_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.kitchen_motion",
+        ),
+        now_ts=995.0,
+    )
+
+    tracker = HousePerimeterTracker(mock_hass)
+    tracker.set_headcount(0)
+
+    now = 1000.0
+    tracker.handle_door_state_change("binary_sensor.back_door", True, now_ts=now)
+    rec = tracker.handle_door_state_change("binary_sensor.back_door", False, now_ts=now + 4.0)
+    assert rec is not None
+    assert rec.vector == "ambiguous"
+    assert tracker.state.count == 0

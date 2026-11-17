@@ -233,3 +233,7 @@ DEFAULT_EXIT_CORROBORATORS: dict[str, list[str]] = {
 # Window in seconds to wait for exterior corroboration after door closure
 CONF_EXIT_CORROBORATION_WINDOW = "exit_corroboration_window"
 DEFAULT_EXIT_CORROBORATION_WINDOW = 30.0
+
+# Slack Interactive Webhook & Signing Secret
+CONF_SLACK_WEBHOOK_ID = "slack_webhook_id"
+CONF_SLACK_SIGNING_SECRET = "slack_signing_secret"
