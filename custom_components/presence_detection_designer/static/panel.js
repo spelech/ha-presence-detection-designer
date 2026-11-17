@@ -2011,12 +2011,15 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     const rawLabel = String(occ?.occupant_label || (occ?.detected_people && occ.detected_people[0]) || occ?.occupant_type || "Person").trim();
     const lower = rawLabel.toLowerCase();
     const oType = String(occ?.occupant_type || "").toLowerCase();
+    const methodStr = String(occ?.method || occ?.inference_type || "").toLowerCase();
+    const isInferred = methodStr === "negative_space" || methodStr.startsWith("negative_space_");
 
     if (oType === "pet" || lower.includes("dog") || lower.includes("riley") || lower.includes("pet")) {
       return {
         key: rawLabel || "Riley (Dog)",
         shortLabel: rawLabel.replace(/\s*\(Dog\)/i, "").trim() || "Riley",
         role: "pet",
+        isInferred: false,
         color: "#d97706",
         bg: "#fef3c7",
         pictureUrl: null,
@@ -2027,8 +2030,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         key: rawLabel || "Margot",
         shortLabel: rawLabel || "Margot",
         role: "kid",
-        color: "#db2777",
-        bg: "#fce7f3",
+        isInferred,
+        color: isInferred ? "#0284c7" : "#db2777",
+        bg: isInferred ? "#e0f2fe" : "#fce7f3",
         pictureUrl: null,
       };
     }
@@ -2047,13 +2051,22 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       key: rawLabel || "Person",
       shortLabel: shortName || "Person",
       role: "person",
-      color: oType === "tracked_human" ? "#0284c7" : "#16a34a",
-      bg: oType === "tracked_human" ? "#e0f2fe" : "#dcfce7",
+      isInferred,
+      color: isInferred ? "#0284c7" : "#16a34a",
+      bg: isInferred ? "#e0f2fe" : "#dcfce7",
       pictureUrl: pic || null,
     };
   }
 
-  _buildOccupantTokenSvg(prof, x, y, prefixId, subTag = "") {
+  _buildOccupantTokenSvg(prof, x, y, prefixId, opts = "") {
+    const cfg = typeof opts === "string" ? { subTag: opts } : (opts || {});
+    const subTag = String(cfg.subTag || "");
+    const isInferred = cfg.isInferred !== undefined ? Boolean(cfg.isInferred) : Boolean(prof.isInferred);
+    const count = cfg.count !== undefined ? Number(cfg.count) : (prof.role === "pet" ? 0 : 1);
+    const ringColor = cfg.ringColor || (prof.role === "pet" ? "#d97706" : isInferred ? "#0284c7" : prof.role === "kid" ? "#db2777" : "#16a34a");
+    const ringDashAttr = isInferred ? ` stroke-dasharray="5,3"` : "";
+    const ringWidth = isInferred ? "2.8" : "3";
+
     const safeKey = String(prof.key || "occ").replace(/[^a-zA-Z0-9_-]/g, "_");
     const clipId = `${prefixId}-clip-${safeKey}`;
     const r = 17;
@@ -2063,24 +2076,24 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         <clipPath id="${clipId}">
           <circle cx="0" cy="0" r="${r - 2}" />
         </clipPath>
-        <circle cx="0" cy="0" r="${r}" fill="#ffffff" stroke="${prof.color}" stroke-width="2.6" />
+        <circle cx="0" cy="0" r="${r}" fill="#ffffff" stroke="${ringColor}" stroke-width="${ringWidth}"${ringDashAttr} />
         <image href="${this._escape(prof.pictureUrl)}" x="${-(r - 2)}" y="${-(r - 2)}" width="${(r - 2) * 2}" height="${(r - 2) * 2}" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice" />
       `;
     } else if (prof.role === "pet") {
       innerAvatar = `
-        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${prof.color}" stroke-width="2.5" />
+        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${ringColor}" stroke-width="${ringWidth}"${ringDashAttr} />
         <text x="0" y="6" text-anchor="middle" font-size="18">🐶</text>
       `;
     } else if (prof.role === "kid") {
       innerAvatar = `
-        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${prof.color}" stroke-width="2.5" />
+        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${ringColor}" stroke-width="${ringWidth}"${ringDashAttr} />
         <text x="0" y="6" text-anchor="middle" font-size="18">🧒</text>
       `;
     } else {
       innerAvatar = `
-        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${prof.color}" stroke-width="2.5" />
-        <circle cx="0" cy="-4.5" r="5" fill="${prof.color}" />
-        <path d="M -8.5 10 C -8.5 4.2, -4.5 2.5, 0 2.5 C 4.5 2.5, 8.5 4.2, 8.5 10 Z" fill="${prof.color}" />
+        <circle cx="0" cy="0" r="${r}" fill="${prof.bg}" stroke="${ringColor}" stroke-width="${ringWidth}"${ringDashAttr} />
+        <circle cx="0" cy="-4.5" r="5" fill="${ringColor}" />
+        <path d="M -8.5 10 C -8.5 4.2, -4.5 2.5, 0 2.5 C 4.5 2.5, 8.5 4.2, 8.5 10 Z" fill="${ringColor}" />
       `;
     }
     const labelText = prof.shortLabel.slice(0, 14);
@@ -2089,11 +2102,21 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       ? `<rect x="${(-pillW / 2 - 6).toFixed(1)}" y="${(-r - 17).toFixed(1)}" width="${(pillW + 12).toFixed(1)}" height="14" rx="7" fill="#0f172a" opacity="0.86" />
          <text x="0" y="${(-r - 7).toFixed(1)}" text-anchor="middle" fill="#f8fafc" font-size="8.5" font-weight="600">${this._escape(subTag)}</text>`
       : "";
+    const showCountBadge = prof.role !== "pet" && Number.isFinite(count) && count >= 1;
+    const badgeColor = isInferred ? "#0284c7" : "#15803d";
+    const countBadgeSvg = showCountBadge
+      ? `<g class="tl-occ-count-badge" transform="translate(${(r * 0.74).toFixed(1)}, ${(r * 0.74).toFixed(1)})">
+           <circle cx="0" cy="0" r="8" fill="${badgeColor}" stroke="#ffffff" stroke-width="1.8" />
+           <text x="0" y="3.3" text-anchor="middle" fill="#ffffff" font-size="9.5" font-weight="800">${Math.round(count)}</text>
+         </g>`
+      : "";
+    const tokenSig = `${prof.role}|${isInferred ? "inf" : "conf"}|${count}|${subTag}|${prof.pictureUrl || ""}|${labelText}`;
     return `
-      <g class="tl-occ-node" data-occ-key="${this._escape(prof.key)}" transform="translate(${x.toFixed(1)}, ${y.toFixed(1)})" style="pointer-events:none;">
+      <g class="tl-occ-node" data-occ-key="${this._escape(prof.key)}" data-token-sig="${this._escape(tokenSig)}" transform="translate(${x.toFixed(1)}, ${y.toFixed(1)})" style="pointer-events:none;">
         ${subTagSvg}
-        <circle cx="0" cy="0" r="${r + 4}" fill="${prof.color}" fill-opacity="0.16" />
+        <circle cx="0" cy="0" r="${r + 4}" fill="${ringColor}" fill-opacity="0.14"${ringDashAttr} />
         ${innerAvatar}
+        ${countBadgeSvg}
         <rect x="${(-pillW / 2).toFixed(1)}" y="${(r + 3).toFixed(1)}" width="${pillW.toFixed(1)}" height="16" rx="8" fill="#0f172a" opacity="0.9" />
         <text x="0" y="${(r + 14).toFixed(1)}" text-anchor="middle" fill="#ffffff" font-size="9.5" font-weight="700">${this._escape(labelText)}</text>
       </g>
@@ -3961,7 +3984,6 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     }" data-room-id="${this._escape(r.entry_id)}" style="box-shadow:inset 4px 0 0 ${rc.hex};">
                       <div class="room-row-left">
                         <span class="status-dot ${st.dotClass}" title="Occupancy: ${this._escape(st.label)}"></span>
-                        <span class="room-color-dot" style="background:${rc.hex};" title="Assigned color for ${this._escape(r.room_name)}"></span>
                         <span class="room-row-name">${this._escape(r.room_name)}</span>
                       </div>
                       <span class="room-row-status ${st.dotClass}">${this._escape(st.label)}</span>
@@ -7777,56 +7799,99 @@ action:
     const occupantTokens = [];
     const markerId = `tl-arrow-${targetFloor.id}`;
 
-    tokensByRoom.forEach((list, rName) => {
+    tokensByRoom.forEach((rawList, rName) => {
       const box = roomByName.get(rName);
       const anc = box
         ? this._getRoomInteriorAnchor(box)
-        : { x: Number(list[0]?.x || 150), y: Number(list[0]?.y || 150) };
+        : { x: Number(rawList[0]?.x || 150), y: Number(rawList[0]?.y || 150) };
 
-      list.forEach((tok, idx) => {
-        const offsetX = list.length > 1 ? (idx - (list.length - 1) / 2) * 44 : 0;
+      // Collapse identical generic/repeated occupant entries in the same room into one icon + count badge
+      const groupedList = [];
+      const groupIdxByKey = new Map();
+      rawList.forEach((item) => {
+        const prof = this._resolveOccupantProfile(item);
+        const explicitCount = Number(item.occupant_count || item.count || 1);
+        const groupKey = `${prof.role}|${prof.key}|${prof.isInferred ? "inf" : "conf"}`;
+        if (prof.role !== "pet" && groupIdxByKey.has(groupKey)) {
+          const existing = groupedList[groupIdxByKey.get(groupKey)];
+          existing.count += Number.isFinite(explicitCount) && explicitCount > 0 ? explicitCount : 1;
+          if (!existing.item.from_room && item.from_room) {
+            existing.item = { ...existing.item, from_room: item.from_room, from_floor: item.from_floor };
+          }
+        } else {
+          groupIdxByKey.set(groupKey, groupedList.length);
+          groupedList.push({
+            item,
+            prof,
+            count: prof.role === "pet" ? 0 : (Number.isFinite(explicitCount) && explicitCount > 0 ? explicitCount : 1),
+          });
+        }
+      });
+
+      groupedList.forEach((entry, idx) => {
+        const { item: tok, prof, count } = entry;
+        const offsetX = groupedList.length > 1 ? (idx - (groupedList.length - 1) / 2) * 44 : 0;
         const tx = anc.x + offsetX;
         const ty = anc.y;
-        const prof = this._resolveOccupantProfile(tok);
-        const moveRec = latestMoveByOcc.get(prof.key);
-        let subTag = "";
 
-        if (moveRec && moveRec.tr) {
-          const tr = moveRec.tr;
-          const fromRoom = tr.from_room;
-          const fromFloor = tr.from_floor;
-          const isRecentMove = frameIdx - moveRec.trFrameIdx <= 8;
-          if (fromRoom && fromRoom !== rName && isRecentMove) {
-            const fromBox = roomByName.get(fromRoom);
-            if (fromBox && (!fromFloor || fromFloor === targetFloor.id)) {
-              const fromAnc = this._getRoomInteriorAnchor(fromBox);
-              const dx = tx - fromAnc.x;
-              const dy = ty - fromAnc.y;
-              const dist = Math.hypot(dx, dy);
-              if (dist > 28) {
-                const trimEnd = 22;
-                const ex = tx - (dx / dist) * trimEnd;
-                const ey = ty - (dy / dist) * trimEnd;
-                const mx = (fromAnc.x + ex) / 2 - (dy / dist) * Math.min(24, dist * 0.12);
-                const my = (fromAnc.y + ey) / 2 + (dx / dist) * Math.min(24, dist * 0.12);
-                arrowsList.push(`
-                  <g style="pointer-events:none;">
-                    <path d="M ${fromAnc.x.toFixed(1)} ${fromAnc.y.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}" fill="none" stroke="${prof.color}" stroke-width="2.6" stroke-linecap="round" marker-end="url(#${markerId})" opacity="0.88" />
-                  </g>
-                `);
-              }
-            } else if (fromFloor && fromFloor !== targetFloor.id) {
-              const flTitle = fromFloor.charAt(0).toUpperCase() + fromFloor.slice(1);
-              subTag = `From ${flTitle}`;
-            }
+        let fromRoom = tok.from_room || null;
+        let fromFloor = tok.from_floor || null;
+        if (!fromRoom) {
+          const moveRec = latestMoveByOcc.get(prof.key);
+          if (moveRec && moveRec.tr && (!moveRec.tr.to_room || moveRec.tr.to_room === rName)) {
+            fromRoom = moveRec.tr.from_room || null;
+            fromFloor = moveRec.tr.from_floor || null;
           }
         }
 
+        let subTag = "";
+        if (fromRoom && fromRoom !== rName) {
+          const fromBox = roomByName.get(fromRoom);
+          if (fromBox && (!fromFloor || fromFloor === targetFloor.id)) {
+            const fromAnc = this._getRoomInteriorAnchor(fromBox);
+            const dx = tx - fromAnc.x;
+            const dy = ty - fromAnc.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 28) {
+              const trimEnd = 22;
+              const ex = tx - (dx / dist) * trimEnd;
+              const ey = ty - (dy / dist) * trimEnd;
+              const mx = (fromAnc.x + ex) / 2 - (dy / dist) * Math.min(24, dist * 0.12);
+              const my = (fromAnc.y + ey) / 2 + (dx / dist) * Math.min(24, dist * 0.12);
+              arrowsList.push(`
+                <g style="pointer-events:none;">
+                  <path d="M ${fromAnc.x.toFixed(1)} ${fromAnc.y.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}" fill="none" stroke="${prof.color}" stroke-width="2.6" stroke-dasharray="6,4" stroke-linecap="round" marker-end="url(#${markerId})" opacity="0.9" />
+                </g>
+              `);
+            }
+          } else if (fromFloor && fromFloor !== targetFloor.id) {
+            const flTitle = fromFloor.charAt(0).toUpperCase() + fromFloor.slice(1);
+            subTag = `From ${flTitle}`;
+            const stubFromLeft = tx > 56;
+            const sx = stubFromLeft ? tx - 48 : tx + 48;
+            const ex = stubFromLeft ? tx - 22 : tx + 22;
+            arrowsList.push(`
+              <g style="pointer-events:none;">
+                <path d="M ${sx.toFixed(1)} ${ty.toFixed(1)} L ${ex.toFixed(1)} ${ty.toFixed(1)}" fill="none" stroke="${prof.color}" stroke-width="2.4" stroke-dasharray="4,3" stroke-linecap="round" marker-end="url(#${markerId})" opacity="0.9" />
+              </g>
+            `);
+          }
+        }
+
+        const svgStr = this._buildOccupantTokenSvg(prof, tx, ty, `tl-${targetFloor.id}`, {
+          subTag,
+          isInferred: prof.isInferred,
+          count,
+        });
+        const tokenSig = `${prof.role}|${prof.isInferred ? "inf" : "conf"}|${count}|${subTag}|${prof.pictureUrl || ""}|${prof.shortLabel.slice(0, 14)}`;
         occupantTokens.push({
           key: prof.key,
+          sig: tokenSig,
           x: tx,
           y: ty,
-          svg: this._buildOccupantTokenSvg(prof, tx, ty, `tl-${targetFloor.id}`, subTag),
+          count,
+          role: prof.role,
+          svg: svgStr,
         });
       });
     });
@@ -7952,8 +8017,19 @@ action:
     fpData.occupantTokens.forEach((tok) => {
       nextKeys.add(tok.key);
       const ex = existingNodes.get(tok.key);
-      if (ex && ex.setAttribute) {
+      const nextSig = tok.sig || "";
+      if (ex && ex.getAttribute && ex.getAttribute("data-token-sig") === nextSig && ex.setAttribute) {
         ex.setAttribute("transform", `translate(${tok.x.toFixed(1)}, ${tok.y.toFixed(1)})`);
+      } else if (ex) {
+        const tmp = document.createElementNS ? document.createElementNS("http://www.w3.org/2000/svg", "svg") : null;
+        if (tmp) {
+          tmp.innerHTML = tok.svg;
+          if (tmp.firstElementChild && ex.parentNode) {
+            ex.parentNode.replaceChild(tmp.firstElementChild, ex);
+          }
+        } else {
+          ex.outerHTML = tok.svg;
+        }
       } else {
         const tmp = document.createElementNS ? document.createElementNS("http://www.w3.org/2000/svg", "svg") : null;
         if (tmp) {
@@ -8002,6 +8078,18 @@ action:
     if (activeRoomsEl) {
       activeRoomsEl.textContent = parts.occupiedRoomsList.join(", ") || "None";
     }
+    const visOccEl = root.querySelector("#tl-visible-occupants-count");
+    if (visOccEl) {
+      const curFr = parts.frames[parts.frameIdx] || {};
+      const visHumans = (curFr.occupant_estimates || curFr.occupants || []).length;
+      const houseCap = this._timelineData?.house_occupant_count;
+      visOccEl.textContent = houseCap != null ? `${visHumans} / ${houseCap}` : `${visHumans}`;
+    }
+    root.querySelectorAll("[data-tl-floor-count]").forEach((badge) => {
+      const fid = badge.getAttribute("data-tl-floor-count");
+      const matched = parts.floorParts.find((p) => p.floor.id === fid);
+      if (matched) badge.textContent = `${matched.occupantTokens.length} active`;
+    });
 
     root.querySelectorAll(".seg-btn[data-tl-floor]").forEach((btn) => {
       btn.classList.toggle("active", btn.getAttribute("data-tl-floor") === this._timelineFloor);
@@ -8072,7 +8160,7 @@ action:
                 <span style="font-size:12px;font-weight:700;color:#0f172a;">${this._escape(
                   fpData.floor.name.replace(/\s*\(.*\)/, "")
                 )}</span>
-                <span style="font-size:11px;color:#475569;">${fpData.occupantTokens.length} active</span>
+                <span data-tl-floor-count="${this._escape(fpData.floor.id)}" style="font-size:11px;color:#475569;">${fpData.occupantTokens.length} active</span>
               </div>
               <svg class="tl-floor-svg" data-tl-floor-svg="${this._escape(fpData.floor.id)}" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:220px;display:block;">
                 ${fpData.svgInner}
@@ -8207,8 +8295,23 @@ action:
             </div>
             ${mapsMarkup}
             <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;font-size:11.5px;color:#475569;flex-wrap:wrap;gap:8px;">
-              <span>🟢 Sensor Confirmed &nbsp;|&nbsp; 🔵 Inferred Position &nbsp;|&nbsp; ➡️ Movement Arrow &nbsp;|&nbsp; 🩵 Clear Camera Cone</span>
-              <span>Active Rooms: <strong id="tl-active-rooms">${this._escape(occupiedRoomsList.join(", ") || "None")}</strong></span>
+              <span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:11px;height:11px;border-radius:50%;border:2.5px solid #16a34a;vertical-align:middle;"></span>Confirmed</span>
+                <span>&middot;</span>
+                <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:11px;height:11px;border-radius:50%;border:2.5px dashed #0284c7;vertical-align:middle;"></span>Inferred</span>
+                <span>&middot;</span>
+                <span>┄▶ Moved From</span>
+                <span>&middot;</span>
+                <span>🩵 Clear Camera Cone</span>
+              </span>
+              <span>
+                Occupants: <strong id="tl-visible-occupants-count">${(() => {
+                  const cf = frames[frameIdx] || {};
+                  const vh = (cf.occupant_estimates || cf.occupants || []).length;
+                  return tl.house_occupant_count != null ? `${vh} / ${tl.house_occupant_count}` : `${vh}`;
+                })()}</strong>
+                &nbsp;|&nbsp; Active Rooms: <strong id="tl-active-rooms">${this._escape(occupiedRoomsList.join(", ") || "None")}</strong>
+              </span>
             </div>
           </div>
 

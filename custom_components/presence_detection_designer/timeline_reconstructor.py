@@ -2,12 +2,78 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from .spatial_catalog import BLIND_POCKET_DEFINITIONS
+from .spatial_catalog import (
+    BLIND_POCKET_DEFINITIONS,
+    SECONDARY_BLE_TRACKER_ENTITIES,
+    STEVE_DEFINITIVE_BLE_ENTITIES,
+)
 from .spatial_topology import compile_floorplan_topology, get_default_floorplan
+
+_GENERIC_HUMAN_LABELS = frozenset(
+    {"", "Occupant", "Guest / Untracked Occupant", "Margot / Untracked Occupant"}
+)
+
+
+def _consolidate_frame_occupants(
+    raw_occ_list: list[dict[str, Any]],
+    telemetry_ble_by_room: dict[str, list[str]],
+    recent_positive_ts: dict[str, float],
+    house_occupant_count: int | None,
+    conservation_enabled: bool,
+    guest_mode_enabled: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Enforce BLE telemetry identity hints and prune stale inferred holds."""
+    occ_list = [dict(o) for o in (raw_occ_list or [])]
+    steve_pinned = any(str(o.get("occupant_label") or "") == "Steve" for o in occ_list)
+
+    for o in occ_list:
+        r_name = str(o.get("room") or "")
+        r_ble = telemetry_ble_by_room.get(r_name) or []
+        lbl = str(o.get("occupant_label") or "").strip()
+        if (
+            not steve_pinned
+            and lbl in _GENERIC_HUMAN_LABELS
+            and any(eid in STEVE_DEFINITIVE_BLE_ENTITIES for eid in r_ble)
+        ):
+            o["occupant_label"] = "Steve"
+            o["occupant_type"] = "tracked_human"
+            o["detected_people"] = ["Steve"]
+            o["definitive_tracker_pinned"] = True
+            steve_pinned = True
+        elif lbl in _GENERIC_HUMAN_LABELS and any(
+            eid in SECONDARY_BLE_TRACKER_ENTITIES for eid in r_ble
+        ):
+            o["occupant_label"] = "Margot"
+            o["occupant_type"] = "untracked_human"
+            o["detected_people"] = ["Margot"]
+
+    pruned_inferred_rooms: list[str] = []
+    if conservation_enabled and not guest_mode_enabled and house_occupant_count is not None:
+        confirmed = [o for o in occ_list if str(o.get("method", "")) != "negative_space"]
+        inferred = [o for o in occ_list if str(o.get("method", "")) == "negative_space"]
+        cap = max(0, int(house_occupant_count))
+        inferred_budget = max(0, cap - len(confirmed))
+        if len(inferred) > inferred_budget:
+            inferred.sort(
+                key=lambda o: (
+                    float(recent_positive_ts.get(str(o.get("room") or ""), 0.0)),
+                    float(o.get("confidence") or 0.0),
+                ),
+                reverse=True,
+            )
+            kept_inferred = inferred[:inferred_budget]
+            dropped = inferred[inferred_budget:]
+            pruned_inferred_rooms = [
+                str(o.get("room") or "") for o in dropped if o.get("room")
+            ]
+            occ_list = confirmed + kept_inferred
+
+    return occ_list, pruned_inferred_rooms
 
 
 def reconstruct_house_timeline(
@@ -20,12 +86,24 @@ def reconstruct_house_timeline(
     min_step_sec: float = 2.0,
     max_frames: int = 350,
     frame_evaluator: Callable[..., dict[str, Any]] | None = None,
+    house_occupant_count: int | None = None,
+    conservation_enabled: bool = True,
+    guest_mode_enabled: bool = False,
+    ble_decider_enabled: bool = False,
 ) -> dict[str, Any]:
     """Reconstruct a chronological whole-house spatial timeline across all sensors and rooms."""
     if frame_evaluator is None:
         from .spatial_inference import evaluate_spatial_frame
 
         frame_evaluator = evaluate_spatial_frame
+
+    try:
+        ev_params = inspect.signature(frame_evaluator).parameters
+        supports_extra_flags = "guest_mode_enabled" in ev_params or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in ev_params.values()
+        )
+    except (ValueError, TypeError):
+        supports_extra_flags = False
 
     fp = (
         floorplan
@@ -66,7 +144,11 @@ def reconstruct_house_timeline(
     prev_frame_off: dict[str, Any] | None = None
     last_primary_room: str | None = None
     last_primary_subregion: str | None = None
+    last_primary_floor: str | None = None
+    last_primary_x: Any = None
+    last_primary_y: Any = None
     last_occupant_loc: dict[str, dict[str, Any]] = {}
+    current_leg_by_slot: dict[str, tuple[str | None, str | None]] = {}
 
     blind_pocket_holds_count = 0
     uncovered_subregion_count = 0
@@ -82,21 +164,26 @@ def reconstruct_house_timeline(
                 idx += 1
             pointers[eid] = idx
 
+        eval_kwargs: dict[str, Any] = {
+            "floorplan": fp,
+            "compiled_topology": compiled,
+            "state_getter": lambda eid: current_states.get(eid, "off"),
+        }
+        if supports_extra_flags:
+            eval_kwargs["guest_mode_enabled"] = guest_mode_enabled
+            eval_kwargs["ble_decider_enabled"] = ble_decider_enabled
+
         eval_on = frame_evaluator(
-            floorplan=fp,
-            compiled_topology=compiled,
-            state_getter=lambda eid: current_states.get(eid, "off"),
             prev_frame=prev_frame_on,
             now_ts=ts,
             negative_space_enabled=True,
+            **eval_kwargs,
         )
         eval_off = frame_evaluator(
-            floorplan=fp,
-            compiled_topology=compiled,
-            state_getter=lambda eid: current_states.get(eid, "off"),
             prev_frame=prev_frame_off,
             now_ts=ts,
             negative_space_enabled=False,
+            **eval_kwargs,
         )
         prev_frame_on = eval_on
         prev_frame_off = eval_off
@@ -122,11 +209,27 @@ def reconstruct_house_timeline(
             per_room_off_frames[r_name] = per_room_off_frames.get(r_name, 0) + 1
 
         chosen_eval = eval_on if negative_space_enabled else eval_off
-        chosen_active_rooms = active_rooms_on if negative_space_enabled else active_rooms_off
+        raw_active_rooms = active_rooms_on if negative_space_enabled else active_rooms_off
         iso_str = datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
-        occ_list = chosen_eval["occupant_estimates"]
-        pet_list = chosen_eval.get("pet_estimates", []) or []
+        occ_list, pruned_inferred_rooms = _consolidate_frame_occupants(
+            raw_occ_list=chosen_eval.get("occupant_estimates") or [],
+            telemetry_ble_by_room=chosen_eval.get("telemetry_ble_by_room") or {},
+            recent_positive_ts=chosen_eval.get("recent_positive_ts") or {},
+            house_occupant_count=house_occupant_count,
+            conservation_enabled=conservation_enabled,
+            guest_mode_enabled=guest_mode_enabled,
+        )
+        pruned_set = set(pruned_inferred_rooms)
+        chosen_active_rooms = [r for r in raw_active_rooms if r not in pruned_set]
+        pet_list = [dict(pt) for pt in (chosen_eval.get("pet_estimates", []) or [])]
+
+        single_slot_mode = (
+            conservation_enabled
+            and not guest_mode_enabled
+            and house_occupant_count == 1
+            and len(occ_list) == 1
+        )
 
         if occ_list:
             seen_occ_keys: set[str] = set()
@@ -136,16 +239,28 @@ def reconstruct_house_timeline(
                 if occ_key in seen_occ_keys:
                     occ_key = f"{raw_label} #{idx_occ + 1}"
                 seen_occ_keys.add(occ_key)
+                slot_key = "__primary_occupant__" if single_slot_mode else occ_key
+
                 curr_room = str(occ["room"])
                 curr_sub = str(occ.get("subregion") or curr_room)
                 curr_floor = str(occ.get("floor") or "main")
-                prev_info = last_occupant_loc.get(occ_key)
+                prev_info = (
+                    {
+                        "room": last_primary_room,
+                        "subregion": last_primary_subregion,
+                        "floor": last_primary_floor,
+                        "x": last_primary_x,
+                        "y": last_primary_y,
+                    }
+                    if single_slot_mode and last_primary_room is not None
+                    else last_occupant_loc.get(occ_key)
+                )
                 if idx_occ == 0:
                     prev_room = prev_info["room"] if prev_info else last_primary_room
                     prev_sub = prev_info["subregion"] if prev_info else last_primary_subregion
-                    prev_floor = prev_info["floor"] if prev_info else None
-                    prev_x = prev_info["x"] if prev_info else None
-                    prev_y = prev_info["y"] if prev_info else None
+                    prev_floor = prev_info["floor"] if prev_info else last_primary_floor
+                    prev_x = prev_info["x"] if prev_info else last_primary_x
+                    prev_y = prev_info["y"] if prev_info else last_primary_y
                 else:
                     prev_room = prev_info["room"] if prev_info else None
                     prev_sub = prev_info["subregion"] if prev_info else None
@@ -154,6 +269,10 @@ def reconstruct_house_timeline(
                     prev_y = prev_info["y"] if prev_info else None
 
                 if curr_room != prev_room or curr_sub != prev_sub:
+                    if prev_room and prev_room != curr_room:
+                        current_leg_by_slot[slot_key] = (prev_room, prev_floor)
+                    elif prev_room is None:
+                        current_leg_by_slot[slot_key] = (None, None)
                     transitions.append(
                         {
                             "ts": ts,
@@ -189,6 +308,14 @@ def reconstruct_house_timeline(
                     if idx_occ == 0:
                         last_primary_room = curr_room
                         last_primary_subregion = curr_sub
+                        last_primary_floor = curr_floor
+                        last_primary_x = occ["x"]
+                        last_primary_y = occ["y"]
+
+                leg_from_room, leg_from_floor = current_leg_by_slot.get(slot_key, (None, None))
+                if leg_from_room and leg_from_room != curr_room:
+                    occ["from_room"] = leg_from_room
+                    occ["from_floor"] = leg_from_floor
 
         for pet in pet_list:
             pet_label = str(pet.get("occupant_label") or "Riley (Dog)")
@@ -197,6 +324,10 @@ def reconstruct_house_timeline(
                 continue
             prev_pet = last_occupant_loc.get(pet_label)
             if not prev_pet or prev_pet["room"] != pet_room:
+                if prev_pet and prev_pet["room"] != pet_room:
+                    current_leg_by_slot[pet_label] = (prev_pet["room"], prev_pet["floor"])
+                else:
+                    current_leg_by_slot[pet_label] = (None, None)
                 transitions.append(
                     {
                         "ts": ts,
@@ -229,16 +360,21 @@ def reconstruct_house_timeline(
                     "x": pet.get("x"),
                     "y": pet.get("y"),
                 }
+            pet_leg_room, pet_leg_floor = current_leg_by_slot.get(pet_label, (None, None))
+            if pet_leg_room and pet_leg_room != pet_room:
+                pet["from_room"] = pet_leg_room
+                pet["from_floor"] = pet_leg_floor
 
         frames.append(
             {
                 "ts": ts,
                 "iso": iso_str,
-                "occupant_estimates": chosen_eval["occupant_estimates"],
+                "occupant_estimates": occ_list,
                 "pet_estimates": pet_list,
                 "active_rooms": chosen_active_rooms,
                 "active_rooms_with_negative_space": active_rooms_on,
                 "active_rooms_baseline": active_rooms_off,
+                "pruned_inferred_rooms": pruned_inferred_rooms,
                 "active_positive_sensors": chosen_eval["active_positive_sensors"],
                 "active_negative_exclusions": chosen_eval["active_negative_exclusions"],
                 "active_shade_exclusions": chosen_eval.get("active_shade_exclusions", []),
@@ -257,6 +393,8 @@ def reconstruct_house_timeline(
 
     return {
         "negative_space_enabled": negative_space_enabled,
+        "house_occupant_count": house_occupant_count,
+        "conservation_enabled": conservation_enabled,
         "start_ts": start_ts,
         "end_ts": end_ts,
         "frame_count": len(frames),

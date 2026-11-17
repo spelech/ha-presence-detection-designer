@@ -211,6 +211,25 @@ class PDDTimelineReconstructionView(HomeAssistantView):
                         for s_eid, s_val in ent_map.items():
                             tuple_timelines.setdefault(str(s_eid), []).append((ev_ts, str(s_val)))
 
+        gs = getattr(store, "global_settings", None) or {}
+        guest_mode_enabled = bool(gs.get("guest_mode_enabled", False))
+        ble_decider_enabled = bool(gs.get("ble_decider_enabled", False))
+        conservation_enabled = bool(gs.get("enable_conservation_law", True))
+        house_occupant_count: int | None = None
+        if gs.get("house_occupant_count") is not None:
+            try:
+                house_occupant_count = max(0, int(gs["house_occupant_count"]))
+            except (ValueError, TypeError):
+                house_occupant_count = None
+        try:
+            from .house_perimeter import get_house_perimeter_tracker
+
+            tracker = get_house_perimeter_tracker(hass)
+            if tracker is not None and getattr(tracker, "state", None) is not None:
+                house_occupant_count = max(0, int(tracker.state.count))
+        except Exception:
+            pass
+
         result = reconstruct_house_timeline(
             floorplan=fp,
             room_configs=room_configs,
@@ -218,5 +237,9 @@ class PDDTimelineReconstructionView(HomeAssistantView):
             start_ts=start_ts,
             end_ts=end_ts,
             negative_space_enabled=neg_space_enabled,
+            house_occupant_count=house_occupant_count,
+            conservation_enabled=conservation_enabled,
+            guest_mode_enabled=guest_mode_enabled,
+            ble_decider_enabled=ble_decider_enabled,
         )
         return self.json(result)
