@@ -449,12 +449,11 @@ async def async_handle_slack_webhook(hass: Any, _webhook_id: str, request: Any) 
         sel_opt = first.get("selected_option") if isinstance(first.get("selected_option"), dict) else {}
         action_value = str(sel_opt.get("value") or first.get("value") or "").strip()
 
-    if not action_id:
-        return web.json_response({"ok": False, "error": "missing_action_id"}, status=400)
-
-    if action_id == SLACK_ACTION_OPEN_MANAGE_MODAL:
+    if payload.get("type") in ("shortcut", "message_action") or action_id == SLACK_ACTION_OPEN_MANAGE_MODAL:
         opened = await async_open_manage_modal(hass, str(payload.get("trigger_id") or ""))
         return web.Response(status=200, text="") if kind == "interactive" else web.json_response({"ok": opened})
+    if not action_id:
+        return web.json_response({"ok": False, "error": "missing_action_id"}, status=400)
 
     view_type = str((payload.get("view") or {}).get("type") or "") if isinstance(payload.get("view"), dict) else ""
     uid = str(user_obj.get("id") or "") or None

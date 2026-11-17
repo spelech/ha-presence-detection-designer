@@ -475,9 +475,13 @@ class RoomPresenceCoordinator:
         return result
 
     async def async_send_test_notification(
-        self, service: str | None = None, channel: str | None = None, verbosity: str | None = None
+        self,
+        service: str | None = None,
+        channel: str | None = None,
+        verbosity: str | None = None,
+        daily_thread: bool | None = None,
     ) -> bool:
         """Send a test diagnostic notification to verify Slack connectivity."""
         return await async_send_coordinator_test_notification(
-            self, service=service, channel=channel, verbosity=verbosity
+            self, service=service, channel=channel, verbosity=verbosity, daily_thread=daily_thread
         )

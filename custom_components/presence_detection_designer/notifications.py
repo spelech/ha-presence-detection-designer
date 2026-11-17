@@ -267,7 +267,7 @@ class NotificationDispatcher:
             verbosity=verbosity,
             include_snapshot=include_snapshot,
             snapshot_url=snapshot_url,
-            room_id=attribution.room_id,
+            room_id=None if attribution.room_id == "studio_test" else attribution.room_id,
         )
         return {
             "text": full_text,
@@ -281,34 +281,37 @@ class NotificationDispatcher:
         attribution: TransitionAttribution,
         global_settings: dict[str, Any],
         room_config: dict[str, Any],
+        *,
+        force_test: bool = False,
     ) -> bool:
         """Dispatch Slack notification if enabled and within rate limits."""
-        if not global_settings.get("notifications_enabled", True):
-            _LOGGER.debug("Notifications globally disabled; skipping")
-            return False
+        if not force_test:
+            if not global_settings.get("notifications_enabled", True):
+                _LOGGER.debug("Notifications globally disabled; skipping")
+                return False
 
-        if room_config.get("notify_slack") is False:
-            return False
+            if room_config.get("notify_slack") is False:
+                return False
 
-        if attribution.to_state == "occupied" and room_config.get("notify_on_occupied") is False:
-            return False
+            if attribution.to_state == "occupied" and room_config.get("notify_on_occupied") is False:
+                return False
 
-        if attribution.to_state == "clear" and room_config.get("notify_on_cleared") is False:
-            return False
+            if attribution.to_state == "clear" and room_config.get("notify_on_cleared") is False:
+                return False
 
-        key = (attribution.room_id, attribution.to_state)
-        now = time.time()
-        last_time = self._last_dispatched.get(key, 0.0)
-        if (now - last_time) < DEBOUNCE_SECONDS:
-            _LOGGER.debug(
-                "Debouncing rapid transition for %s -> %s (last %.1fs ago)",
-                attribution.room_id,
-                attribution.to_state,
-                now - last_time,
-            )
-            return False
+            key = (attribution.room_id, attribution.to_state)
+            now = time.time()
+            last_time = self._last_dispatched.get(key, 0.0)
+            if (now - last_time) < DEBOUNCE_SECONDS:
+                _LOGGER.debug(
+                    "Debouncing rapid transition for %s -> %s (last %.1fs ago)",
+                    attribution.room_id,
+                    attribution.to_state,
+                    now - last_time,
+                )
+                return False
 
-        self._last_dispatched[key] = now
+            self._last_dispatched[key] = now
 
         notify_service_full = str(
             global_settings.get("slack_notify_service") or "notify.scdbots"
@@ -360,12 +363,13 @@ class NotificationDispatcher:
         message_text = formatted["text"]
         blocks = formatted.get("blocks")
 
-        try:
-            hass.bus.async_fire(EVENT_PRESENCE_TRANSITION, attribution.to_dict())
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
+        if not force_test:
+            try:
+                hass.bus.async_fire(EVENT_PRESENCE_TRANSITION, attribution.to_dict())
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
 
-        notify_trans = bool(
+        notify_trans = force_test or bool(
             room_config.get("slack_notify_transitions")
             if room_config.get("slack_notify_transitions") is not None
             else global_settings.get("slack_notify_transitions", False)

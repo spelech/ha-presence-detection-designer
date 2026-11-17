@@ -1608,16 +1608,21 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   async saveGlobalSettings() {
     if (!this._globalDraft) return;
     try {
+      const payload = { ...this._globalDraft };
+      delete payload.house_occupant_count;
       const res = await this._apiCall(
         "POST",
         "/api/presence_detection_designer/global_settings",
-        this._globalDraft
+        payload
       );
       if (typeof this._globalDraft?.ui_advanced_mode === "boolean") {
         this._saveLocalAdvancedMode(this._globalDraft.ui_advanced_mode);
       }
-      if (res && res.global_settings && this._overview) {
-        this._overview.global_settings = res.global_settings;
+      if (res && res.global_settings) {
+        this._globalDraft = { ...res.global_settings };
+        if (this._overview) {
+          this._overview.global_settings = res.global_settings;
+        }
       }
       this._showGlobalModal = false;
       this.render();
@@ -8816,10 +8821,12 @@ action:
         const service = root.querySelector("#gl-slack-service")?.value || "notify.scdbots";
         const channel = root.querySelector("#gl-slack-channel")?.value || "#presence-alerts";
         const verbosity = root.querySelector("#gl-slack-verbosity")?.value || "compact";
+        const dailyThread = Boolean(root.querySelector("#gl-slack-daily-thread")?.checked !== false);
         const res = await this._apiCall("POST", "/api/presence_detection_designer/notifications/test", {
           slack_notify_service: service,
           slack_channel: channel,
           slack_verbosity: verbosity,
+          slack_daily_thread: dailyThread,
         });
         this.showToast(res?.message || "Test alert dispatched to Slack!", "success");
       } catch (err) {

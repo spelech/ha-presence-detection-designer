@@ -239,16 +239,25 @@ class PDDNotificationTestView(HomeAssistantView):
         service = body.get("slack_notify_service")
         channel = body.get("slack_channel")
         verbosity = body.get("slack_verbosity")
+        daily_thread = body.get("slack_daily_thread")
 
         domain_data = getattr(hass, "data", {}).get(DOMAIN, {})
         coordinators = [c for c in domain_data.values() if isinstance(c, RoomPresenceCoordinator)]
         if coordinators:
             success = await coordinators[0].async_send_test_notification(
-                service=service, channel=channel, verbosity=verbosity
+                service=service, channel=channel, verbosity=verbosity, daily_thread=daily_thread
             )
+            if not success:
+                return self.json(
+                    {
+                        "success": False,
+                        "error": f"Test alert failed via {service or 'notify.scdbots'} to {channel or '#presence-alerts'}. Check HA logs, Slack token, or notify service.",
+                    },
+                    status_code=502,
+                )
             return self.json(
                 {
-                    "success": success,
+                    "success": True,
                     "message": f"Test alert sent via {service or 'notify.scdbots'} to {channel or '#presence-alerts'} ({verbosity or 'compact'})",
                 }
             )
@@ -261,11 +270,13 @@ class PDDNotificationTestView(HomeAssistantView):
             global_settings["slack_channel"] = channel
         if verbosity:
             global_settings["slack_verbosity"] = verbosity
+        if daily_thread is not None:
+            global_settings["slack_daily_thread"] = bool(daily_thread)
 
         dispatcher = NotificationDispatcher()
         attribution = TransitionAttribution(
             room_id="studio_test",
-            room_name="Design Studio",
+            room_name="Design Studio Test",
             from_state="clear",
             to_state="occupied",
             primary_driver="Manual Studio Verification Ping",
@@ -281,11 +292,20 @@ class PDDNotificationTestView(HomeAssistantView):
             hass,
             attribution,
             global_settings,
-            {"notify_slack": True, "notify_on_occupied": True},
+            {"notify_slack": True, "notify_on_occupied": True, "slack_notify_transitions": True},
+            force_test=True,
         )
+        if not success:
+            return self.json(
+                {
+                    "success": False,
+                    "error": f"Test alert failed via {global_settings.get('slack_notify_service', 'notify.scdbots')} to {global_settings.get('slack_channel', '#presence-alerts')}. Check HA logs, Slack token, or notify service.",
+                },
+                status_code=502,
+            )
         return self.json(
             {
-                "success": success,
+                "success": True,
                 "message": f"Test alert sent via {global_settings.get('slack_notify_service', 'notify.scdbots')} to {global_settings.get('slack_channel', '#presence-alerts')}",
             }
         )
