@@ -1301,6 +1301,38 @@ assert(upPart.svgInner.includes("🧒"), "Kid should use kid icon");
 const ste = panel._formatTransitionSte100(panel._timelineData.transitions[0], new Map([["binary_sensor.kitchen_pir", "Kitchen PIR"], ["camera.living_room", "Living Room Cam"]]));
 assert.strictEqual(ste.actionText, "Steve moved from Kitchen to Living Room.");
 assert(ste.reasonText.includes("Sensor Kitchen PIR detected motion. Camera Living Room Cam shows no person."));
+
+// 9. Solid vs Dashed rings, lower-right count badge, persistent dashed arrows, and clean cross-floor
+assert(mainPart.arrowsSvg.includes('stroke-dasharray="6,4"'), "Same-floor movement arrow must be dashed");
+assert(mainPart.occupantsSvg.includes('tl-occ-count-badge'), "Human token should render lower-right count badge");
+assert(!mainPart.occupantsSvg.includes('stroke-dasharray="5,3"'), "Confirmed occupant should render solid ring border");
+
+// Test inferred occupant (dashed ring), grouped room count badge (2), persistent arrow past 8 frames, and clean cross-floor
+const manyFrames = [];
+for (let i = 0; i < 16; i++) {
+  manyFrames.push({
+    ts: 2000 + i * 10,
+    iso: `2026-11-16T21:00:${String(i).padStart(2, "0")}Z`,
+    occupied_rooms: i === 0 ? ["Kitchen"] : ["Living Room", "Master Bathroom"],
+    occupant_estimates: i === 0
+      ? [{ room: "Kitchen", floor: "main", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive" }]
+      : [
+          { room: "Living Room", floor: "main", occupant_label: "Occupant", occupant_type: "human", method: "negative_space", from_room: "Kitchen", from_floor: "main" },
+          { room: "Living Room", floor: "main", occupant_label: "Occupant", occupant_type: "human", method: "negative_space" },
+          { room: "Master Bathroom", floor: "upstairs", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive", from_room: "Kitchen", from_floor: "main" },
+        ],
+  });
+}
+panel._timelineData = { frames: manyFrames, transitions: [], house_occupant_count: 2 };
+panel._timelineFrameIdx = 15;
+const ringParts = panel._buildTimelineFrameParts();
+const ringMain = ringParts.floorParts.find((fp) => fp.floor.id === "main");
+const ringUp = ringParts.floorParts.find((fp) => fp.floor.id === "upstairs");
+assert(ringMain.occupantsSvg.includes('stroke-dasharray="5,3"'), "Inferred occupant must render dashed ring");
+assert(ringMain.occupantsSvg.includes('>2</text>'), "Grouped identical generic occupants in same room must show count badge 2");
+assert(ringMain.arrowsSvg.includes('stroke-dasharray="6,4"'), "Dashed movement arrow must persist beyond 8 frames while in room");
+assert(ringUp.occupantsSvg.includes("From Main"), "Cross-floor transition must show clean From <Floor> pill");
+assert(ringUp.arrowsSvg.includes('stroke-dasharray="4,3"'), "Cross-floor transition must show compact dashed entry stub");
 """
     proc = subprocess.run(
         [node_bin, "-e", js_test, str(panel_path)],

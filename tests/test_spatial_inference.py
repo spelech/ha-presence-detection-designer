@@ -355,3 +355,73 @@ def test_ble_decider_disabled_excludes_floor_bleed_while_logging_telemetry() -> 
     assert b_decider["probability_boost"] > 0.0
     assert "Basement Play Area" in frame_decider["steve_pinned_rooms"]
     assert "sensor.steve_s_s25_ble_area" in frame_decider["active_positive_sensors"]
+
+
+def test_timeline_conservation_prunes_stale_inferred_keeps_confirmed_and_ble_hint() -> None:
+    """Conservation prunes stale inferred holds when another room is confirmed, keeps all confirmed rooms, and hints BLE identity."""
+    fp = get_default_floorplan()
+    entity_timelines = {
+        "binary_sensor.master_bathroom_person_occupancy": [
+            (1000.0, "on"),
+            (1010.0, "off"),  # Master Bathroom becomes negative_space blind-pocket hold
+        ],
+        "binary_sensor.office_person_occupancy": [
+            (1030.0, "on"),
+            (1080.0, "on"),
+        ],
+        "sensor.steve_s_s25_ble_area": [
+            (1030.0, "Office"),
+        ],
+    }
+
+    res = reconstruct_house_timeline(
+        floorplan=fp,
+        room_configs={},
+        entity_timelines=entity_timelines,
+        start_ts=1000.0,
+        end_ts=1090.0,
+        negative_space_enabled=True,
+        house_occupant_count=1,
+        conservation_enabled=True,
+        guest_mode_enabled=False,
+        ble_decider_enabled=False,
+    )
+
+    assert res["house_occupant_count"] == 1
+    # Frame at t=1010: 0 confirmed -> Master Bathroom inferred hold is kept (1 occupant)
+    frame_hold = next(f for f in res["frames"] if f["ts"] >= 1010.0)
+    assert frame_hold["active_rooms"] == ["Master Bathroom"]
+    assert frame_hold["occupant_estimates"][0]["method"] == "negative_space"
+
+    # Frame at t=1030+: Office is confirmed -> stale Master Bathroom hold is pruned
+    frame_office = next(f for f in res["frames"] if f["ts"] >= 1030.0)
+    assert frame_office["active_rooms"] == ["Office"]
+    assert "Master Bathroom" in frame_office["pruned_inferred_rooms"]
+    assert len(frame_office["occupant_estimates"]) == 1
+    occ = frame_office["occupant_estimates"][0]
+    assert occ["occupant_label"] == "Steve"
+    assert occ["method"] == "positive"
+    assert occ["from_room"] == "Master Bathroom"
+
+    # Subsequent frame still in Office keeps persistent from_room leg
+    final_occ = res["frames"][-1]["occupant_estimates"][0]
+    assert final_occ["room"] == "Office"
+    assert final_occ["from_room"] == "Master Bathroom"
+
+    # Confirmed detections are NEVER hidden even if 2 rooms are confirmed while count=1
+    dual_confirmed_timelines = {
+        "binary_sensor.office_person_occupancy": [(2000.0, "on")],
+        "binary_sensor.dining_room_person_occupancy": [(2000.0, "on")],
+    }
+    res_dual = reconstruct_house_timeline(
+        floorplan=fp,
+        room_configs={},
+        entity_timelines=dual_confirmed_timelines,
+        start_ts=2000.0,
+        end_ts=2010.0,
+        negative_space_enabled=True,
+        house_occupant_count=1,
+        conservation_enabled=True,
+    )
+    assert sorted(res_dual["frames"][0]["active_rooms"]) == ["Dining Room", "Office"]
+    assert len(res_dual["frames"][0]["occupant_estimates"]) == 2
