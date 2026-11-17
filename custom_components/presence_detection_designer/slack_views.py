@@ -54,11 +54,11 @@ def build_refresh_button() -> dict[str, Any]:
 
 
 def build_vacancy_actions_block(*, highlight_set_home: bool = False) -> dict[str, Any]:
-    """Return Slack Block Kit actions block with quick vacancy, headcount, and modal controls."""
+    """Return Slack Block Kit actions block with quick house mode and modal controls."""
     clear_confirm = {
         "title": _pt("Clear all occupied rooms?"),
         "text": _mrkdwn(
-            "Force-clear every currently occupied room and reset house headcount to *0 (vacant)*?"
+            "Force-clear every currently occupied room and reset house mode to *Vacant*?"
         ),
         "confirm": _pt("Clear & Reset"),
         "deny": _pt("Cancel"),
@@ -68,7 +68,7 @@ def build_vacancy_actions_block(*, highlight_set_home: bool = False) -> dict[str
         "type": "actions",
         "block_id": "pdd_vacancy_controls",
         "elements": [
-            _action_button("⚪ Reset Vacant (0)", SLACK_ACTION_RESET_VACANT, "0"),
+            _action_button("⚪ Reset Vacant", SLACK_ACTION_RESET_VACANT, "vacant"),
             _action_button(
                 "🧹 Clear Rooms & Vacant",
                 SLACK_ACTION_CLEAR_ALL_VACANT,
@@ -76,12 +76,12 @@ def build_vacancy_actions_block(*, highlight_set_home: bool = False) -> dict[str
                 confirm=clear_confirm,
             ),
             _action_button(
-                "👤 Set 1 Home",
+                "👤 Occupied",
                 SLACK_ACTION_SET_HOME_1,
-                "1",
+                "occupied",
                 style="primary" if highlight_set_home else None,
             ),
-            _action_button("➕ +1", SLACK_ACTION_HEADCOUNT_INC, "inc"),
+            _action_button("👥 Guest Mode", SLACK_ACTION_HEADCOUNT_INC, "guest"),
             _action_button("🎛️ Manage", SLACK_ACTION_OPEN_MANAGE_MODAL, "manage"),
         ],
     }
@@ -117,18 +117,26 @@ def collect_detailed_rooms(hass: Any) -> tuple[list[dict[str, Any]], list[dict[s
         name = str(coord.room_name)
         is_occ = bool(getattr(coord, "is_present", False) or getattr(sm, "is_present", False))
         override = bool(getattr(sm, "override", False))
-        has_cam = bool(getattr(coord, "camera_entity", None) or getattr(coord, "llm_enabled", False))
+        has_cam = bool(
+            getattr(coord, "camera_entity", None) or getattr(coord, "llm_enabled", False)
+        )
         if is_occ:
             raw_occ = getattr(coord, "_occupied_start_time", None)
             if not isinstance(raw_occ, (int, float)) or isinstance(raw_occ, bool) or raw_occ <= 0:
                 raw_occ = getattr(sm, "last_occupied_time", None)
             since_time = (
                 format_since_time(float(raw_occ))
-                if isinstance(raw_occ, (int, float)) and not isinstance(raw_occ, bool) and raw_occ > 0
+                if isinstance(raw_occ, (int, float))
+                and not isinstance(raw_occ, bool)
+                and raw_occ > 0
                 else None
             )
             rem = getattr(sm, "cooling_remaining_sec", 0)
-            if getattr(sm, "is_cooling_down", False) is True and isinstance(rem, (int, float)) and rem > 0:
+            if (
+                getattr(sm, "is_cooling_down", False) is True
+                and isinstance(rem, (int, float))
+                and rem > 0
+            ):
                 driver = f"Cooling ({rem}s)"
             elif getattr(sm, "last_trigger_entity", None):
                 driver = str(sm.last_trigger_entity).split(".")[-1].replace("_", " ").title()
@@ -136,16 +144,20 @@ def collect_detailed_rooms(hass: Any) -> tuple[list[dict[str, Any]], list[dict[s
                 driver = str(sm.active_conditions[0])
             else:
                 driver = "Sensor Fusion"
-            occupied.append({
-                "entry_id": entry_id,
-                "name": name,
-                "since_time": since_time,
-                "driver": driver,
-                "override": override,
-                "has_cam": has_cam,
-            })
+            occupied.append(
+                {
+                    "entry_id": entry_id,
+                    "name": name,
+                    "since_time": since_time,
+                    "driver": driver,
+                    "override": override,
+                    "has_cam": has_cam,
+                }
+            )
         else:
-            clear.append({"entry_id": entry_id, "name": name, "override": override, "has_cam": has_cam})
+            clear.append(
+                {"entry_id": entry_id, "name": name, "override": override, "has_cam": has_cam}
+            )
     occupied.sort(key=lambda r: r["name"])
     clear.sort(key=lambda r: r["name"])
     return occupied, clear
@@ -174,25 +186,27 @@ def _recent_perimeter_lines(hass: Any, limit: int = 5) -> list[str]:
 def _house_summary_line(hass: Any, occupied_count: int, clear_count: int) -> str:
     from .house_perimeter import get_house_perimeter_tracker
 
-    store = hass.data.get(DOMAIN, {}).get(DATA_STORE) if isinstance(getattr(hass, "data", None), dict) else None
+    store = (
+        hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if isinstance(getattr(hass, "data", None), dict)
+        else None
+    )
     gs = (getattr(store, "global_settings", None) or {}) if store else {}
     guest = bool(gs.get("guest_mode_enabled", False))
     try:
-        count = int(get_house_perimeter_tracker(hass).state.count)
+        mode = str(get_house_perimeter_tracker(hass).state.mode or "occupied").lower()
     except Exception:  # noqa: BLE001
-        count = 0
+        mode = str(gs.get("house_occupancy_mode") or "occupied").lower()
 
-    if count <= 0 and occupied_count > 0:
-        line = f"⚠️ *Vacant (0)* · *{occupied_count} rooms active* · {clear_count} clear"
-    elif count <= 0:
-        line = f"⚪ *Vacant (0)* · All {clear_count} rooms clear"
-    elif count == 1:
-        line = f"👤 *Home (1 occupant)* · {occupied_count} occupied · {clear_count} clear"
-    else:
-        line = f"👥 *Home ({count} occupants)* · {occupied_count} occupied · {clear_count} clear"
-    if guest:
-        line += " · 🧑‍🤝‍🧑 *Guest Mode ON*"
-    return line
+    if mode == "pet_only":
+        return f"🐾 *Pet Only* · {occupied_count} occupied · {clear_count} clear"
+    if mode == "vacant" and occupied_count > 0:
+        return f"⚠️ *Vacant* · *{occupied_count} rooms active* · {clear_count} clear"
+    if mode == "vacant":
+        return f"⚪ *Vacant* · All {clear_count} rooms clear"
+    if mode == "guest" or guest:
+        return f"👥 *Guest Mode* · {occupied_count} occupied · {clear_count} clear"
+    return f"👤 *Occupied* · {occupied_count} occupied · {clear_count} clear"
 
 
 def build_manage_modal_view(hass: Any) -> dict[str, Any]:
@@ -200,20 +214,24 @@ def build_manage_modal_view(hass: Any) -> dict[str, Any]:
     from .house_perimeter import get_house_perimeter_tracker
 
     occupied, clear = collect_detailed_rooms(hass)
-    store = hass.data.get(DOMAIN, {}).get(DATA_STORE) if isinstance(getattr(hass, "data", None), dict) else None
+    store = (
+        hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if isinstance(getattr(hass, "data", None), dict)
+        else None
+    )
     gs = (getattr(store, "global_settings", None) or {}) if store else {}
     try:
-        headcount = int(get_house_perimeter_tracker(hass).state.count)
+        cur_mode = str(get_house_perimeter_tracker(hass).state.mode or "occupied").lower()
     except Exception:  # noqa: BLE001
-        headcount = int(gs.get("house_occupant_count", 0) or 0)
+        cur_mode = str(gs.get("house_occupancy_mode") or "occupied").lower()
 
-    hc_opts = [{"text": _pt("0 — Vacant"), "value": "0"}] + [
-        {"text": _pt(f"{n} — Home ({n} {'occupant' if n == 1 else 'occupants'})"), "value": str(n)}
-        for n in range(1, 6)
+    mode_opts = [
+        {"text": _pt("⚪ Vacant"), "value": "vacant"},
+        {"text": _pt("🐾 Pet Only"), "value": "pet_only"},
+        {"text": _pt("👤 Occupied"), "value": "occupied"},
+        {"text": _pt("👥 Guest Mode"), "value": "guest"},
     ]
-    if headcount > 5:
-        hc_opts.append({"text": _pt(f"{headcount} — Home ({headcount} occupants)"), "value": str(headcount)})
-    init_hc = next((o for o in hc_opts if o["value"] == str(max(0, headcount))), hc_opts[0])
+    init_mode = next((o for o in mode_opts if o["value"] == cur_mode), mode_opts[2])
 
     toggle_defs = [
         ("guest_mode_enabled", "🧑‍🤝‍🧑 Guest Mode (pause handoff & negative-space auto-clear)"),
@@ -223,9 +241,15 @@ def build_manage_modal_view(hass: Any) -> dict[str, Any]:
     ]
     toggle_opts = [{"text": _pt(label), "value": key} for key, label in toggle_defs]
     init_toggles = [
-        opt for opt in toggle_opts if bool(gs.get(opt["value"], opt["value"] == "notifications_enabled"))
+        opt
+        for opt in toggle_opts
+        if bool(gs.get(opt["value"], opt["value"] == "notifications_enabled"))
     ]
-    toggles_el: dict[str, Any] = {"type": "checkboxes", "action_id": "inp_toggles", "options": toggle_opts}
+    toggles_el: dict[str, Any] = {
+        "type": "checkboxes",
+        "action_id": "inp_toggles",
+        "options": toggle_opts,
+    }
     if init_toggles:
         toggles_el["initial_options"] = init_toggles
 
@@ -234,12 +258,12 @@ def build_manage_modal_view(hass: Any) -> dict[str, Any]:
         {
             "type": "input",
             "block_id": "blk_headcount",
-            "label": _pt("House Occupant Count"),
+            "label": _pt("House Presence Mode"),
             "element": {
                 "type": "static_select",
                 "action_id": "inp_headcount",
-                "options": hc_opts,
-                "initial_option": init_hc,
+                "options": mode_opts,
+                "initial_option": init_mode,
             },
         },
         {
@@ -254,25 +278,31 @@ def build_manage_modal_view(hass: Any) -> dict[str, Any]:
     if occupied:
         occ_opts = [
             {
-                "text": _pt(f"{r['name']} ({'since ' + r['since_time'] if r['since_time'] else r['driver']})"),
+                "text": _pt(
+                    f"{r['name']} ({'since ' + r['since_time'] if r['since_time'] else r['driver']})"
+                ),
                 "value": r["entry_id"],
             }
             for r in occupied[:100]
         ]
-        blocks.append({
-            "type": "input",
-            "block_id": "blk_clear_rooms",
-            "optional": True,
-            "label": _pt("Force-Clear Specific Occupied Rooms"),
-            "element": {
-                "type": "multi_static_select",
-                "action_id": "inp_clear_rooms",
-                "placeholder": _pt("Select occupied rooms to clear..."),
-                "options": occ_opts,
-            },
-        })
+        blocks.append(
+            {
+                "type": "input",
+                "block_id": "blk_clear_rooms",
+                "optional": True,
+                "label": _pt("Force-Clear Specific Occupied Rooms"),
+                "element": {
+                    "type": "multi_static_select",
+                    "action_id": "inp_clear_rooms",
+                    "placeholder": _pt("Select occupied rooms to clear..."),
+                    "options": occ_opts,
+                },
+            }
+        )
     else:
-        blocks.append({"type": "context", "elements": [_mrkdwn("_⚪ All rooms are currently clear._")]})
+        blocks.append(
+            {"type": "context", "elements": [_mrkdwn("_⚪ All rooms are currently clear._")]}
+        )
 
     all_rooms = sorted(occupied + clear, key=lambda r: r["name"])
     if all_rooms:
@@ -280,23 +310,30 @@ def build_manage_modal_view(hass: Any) -> dict[str, Any]:
             {"text": _pt(f"{'🟢' if r in occupied else '⚪'} {r['name']}"), "value": r["entry_id"]}
             for r in all_rooms[:100]
         ]
-        blocks.append({
-            "type": "input",
-            "block_id": "blk_verify_rooms",
-            "optional": True,
-            "label": _pt("Run Verification / Refresh on Rooms"),
-            "element": {
-                "type": "multi_static_select",
-                "action_id": "inp_verify_rooms",
-                "placeholder": _pt("Select rooms to verify now..."),
-                "options": cam_opts,
-            },
-        })
+        blocks.append(
+            {
+                "type": "input",
+                "block_id": "blk_verify_rooms",
+                "optional": True,
+                "label": _pt("Run Verification / Refresh on Rooms"),
+                "element": {
+                    "type": "multi_static_select",
+                    "action_id": "inp_verify_rooms",
+                    "placeholder": _pt("Select rooms to verify now..."),
+                    "options": cam_opts,
+                },
+            }
+        )
 
     perim_lines = _recent_perimeter_lines(hass, limit=4)
     if perim_lines:
         blocks.append({"type": "divider"})
-        blocks.append({"type": "section", "text": _mrkdwn("*Recent Perimeter Door Activity:*\n" + "\n".join(perim_lines))})
+        blocks.append(
+            {
+                "type": "section",
+                "text": _mrkdwn("*Recent Perimeter Door Activity:*\n" + "\n".join(perim_lines)),
+            }
+        )
 
     return {
         "type": "modal",
@@ -324,7 +361,9 @@ def build_app_home_view(hass: Any) -> dict[str, Any]:
         {"type": "header", "text": _pt("🏠 Home Presence Control Center")},
         {
             "type": "section",
-            "text": _mrkdwn(f"{_house_summary_line(hass, len(occupied), len(clear))}\n_Updated {now_str}_"),
+            "text": _mrkdwn(
+                f"{_house_summary_line(hass, len(occupied), len(clear))}\n_Updated {now_str}_"
+            ),
             "accessory": build_refresh_button(),
         },
         build_vacancy_actions_block(highlight_set_home=(headcount == 0 and len(occupied) > 0)),
@@ -341,52 +380,74 @@ def build_app_home_view(hass: Any) -> dict[str, Any]:
                 {"text": _pt("🧹 Clear Room"), "value": f"clear|{r['entry_id']}"},
                 {"text": _pt("👁️ Verify Camera"), "value": f"verify|{r['entry_id']}"},
                 {
-                    "text": _pt("🔓 Disable Override" if r.get("override") else "🔒 Enable Override"),
+                    "text": _pt(
+                        "🔓 Disable Override" if r.get("override") else "🔒 Enable Override"
+                    ),
                     "value": f"override|{r['entry_id']}",
                 },
             ]
-            blocks.append({
-                "type": "section",
-                "text": _mrkdwn(f"🟢 *{r['name']}*{since_txt}{drv_txt}{ovr_txt}"),
-                "accessory": {
-                    "type": "overflow",
-                    "action_id": SLACK_ACTION_HOME_ROOM_MENU,
-                    "options": menu_opts,
-                },
-            })
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": _mrkdwn(f"🟢 *{r['name']}*{since_txt}{drv_txt}{ovr_txt}"),
+                    "accessory": {
+                        "type": "overflow",
+                        "action_id": SLACK_ACTION_HOME_ROOM_MENU,
+                        "options": menu_opts,
+                    },
+                }
+            )
     else:
         blocks.append({"type": "context", "elements": [_mrkdwn("_⚪ All rooms currently clear._")]})
 
     clear_names = ", ".join(r["name"] for r in clear[:30]) if clear else "_None_"
-    blocks.extend([
-        {"type": "divider"},
-        {"type": "section", "text": _mrkdwn(f"*Cleared ({len(clear)}):*\n{clear_names}")},
-    ])
+    blocks.extend(
+        [
+            {"type": "divider"},
+            {"type": "section", "text": _mrkdwn(f"*Cleared ({len(clear)}):*\n{clear_names}")},
+        ]
+    )
 
     perim_lines = _recent_perimeter_lines(hass, limit=5)
     if perim_lines:
-        blocks.append({"type": "section", "text": _mrkdwn("*Recent Perimeter Doors:*\n" + "\n".join(perim_lines))})
+        blocks.append(
+            {
+                "type": "section",
+                "text": _mrkdwn("*Recent Perimeter Doors:*\n" + "\n".join(perim_lines)),
+            }
+        )
 
     return {"type": "home", "blocks": blocks[:100]}
 
 
 def parse_manage_modal_submission(view_state: dict[str, Any]) -> dict[str, Any]:
-    """Extract headcount, global toggles, rooms to clear, and rooms to verify from Slack view state."""
+    """Extract house mode, global toggles, rooms to clear, and rooms to verify from Slack view state."""
     values = view_state.get("values") if isinstance(view_state, dict) else {}
     if not isinstance(values, dict):
         values = {}
 
+    mode: str | None = None
     headcount: int | None = None
     hc_sel = ((values.get("blk_headcount") or {}).get("inp_headcount") or {}).get("selected_option")
     if isinstance(hc_sel, dict) and hc_sel.get("value") is not None:
-        try:
-            headcount = max(0, int(hc_sel["value"]))
-        except (TypeError, ValueError):
-            headcount = None
+        raw_val = str(hc_sel["value"]).strip().lower()
+        if raw_val in ("vacant", "pet_only", "occupied", "guest"):
+            mode = raw_val
+            headcount = 0 if mode in ("vacant", "pet_only") else (2 if mode == "guest" else 1)
+        else:
+            try:
+                num = int(raw_val)
+                mode = "vacant" if num <= 0 else ("guest" if num >= 2 else "occupied")
+                headcount = 0 if num <= 0 else (2 if num >= 2 else 1)
+            except (TypeError, ValueError):
+                mode = None
 
     selected_toggles = {
         str(opt.get("value"))
-        for opt in (((values.get("blk_toggles") or {}).get("inp_toggles") or {}).get("selected_options") or [])
+        for opt in (
+            ((values.get("blk_toggles") or {}).get("inp_toggles") or {}).get("selected_options")
+            or []
+        )
         if isinstance(opt, dict) and opt.get("value")
     }
     toggles = {
@@ -398,15 +459,31 @@ def parse_manage_modal_submission(view_state: dict[str, Any]) -> dict[str, Any]:
 
     clear_ids = [
         str(opt.get("value"))
-        for opt in (((values.get("blk_clear_rooms") or {}).get("inp_clear_rooms") or {}).get("selected_options") or [])
+        for opt in (
+            ((values.get("blk_clear_rooms") or {}).get("inp_clear_rooms") or {}).get(
+                "selected_options"
+            )
+            or []
+        )
         if isinstance(opt, dict) and opt.get("value")
     ]
     verify_ids = [
         str(opt.get("value"))
-        for opt in (((values.get("blk_verify_rooms") or {}).get("inp_verify_rooms") or {}).get("selected_options") or [])
+        for opt in (
+            ((values.get("blk_verify_rooms") or {}).get("inp_verify_rooms") or {}).get(
+                "selected_options"
+            )
+            or []
+        )
         if isinstance(opt, dict) and opt.get("value")
     ]
-    return {"headcount": headcount, "toggles": toggles, "clear_room_ids": clear_ids, "verify_room_ids": verify_ids}
+    return {
+        "mode": mode,
+        "headcount": headcount,
+        "toggles": toggles,
+        "clear_room_ids": clear_ids,
+        "verify_room_ids": verify_ids,
+    }
 
 
 def parse_slash_command_text(raw_text: str) -> tuple[str, str]:
@@ -423,9 +500,9 @@ def build_ephemeral_status_response(hass: Any, *, note: str | None = None) -> di
 
     occupied, clear = collect_detailed_rooms(hass)
     try:
-        headcount = int(get_house_perimeter_tracker(hass).state.count)
+        mode = str(get_house_perimeter_tracker(hass).state.mode or "occupied").lower()
     except Exception:  # noqa: BLE001
-        headcount = 0
+        mode = "occupied"
 
     lines = [note] if note else []
     lines.append(_house_summary_line(hass, len(occupied), len(clear)))
@@ -442,8 +519,14 @@ def build_ephemeral_status_response(hass: Any, *, note: str | None = None) -> di
         "response_type": "ephemeral",
         "text": lines[0],
         "blocks": [
-            {"type": "section", "text": _mrkdwn("\n".join(lines)), "accessory": build_refresh_button()},
-            build_vacancy_actions_block(highlight_set_home=(headcount == 0 and len(occupied) > 0)),
+            {
+                "type": "section",
+                "text": _mrkdwn("\n".join(lines)),
+                "accessory": build_refresh_button(),
+            },
+            build_vacancy_actions_block(
+                highlight_set_home=(mode in ("vacant", "pet_only") and len(occupied) > 0)
+            ),
         ],
     }
 
@@ -454,14 +537,19 @@ def build_slash_help_response() -> dict[str, Any]:
         "*Presence Designer Slash Commands (`/presence`):*\n"
         "• `/presence` or `/presence status` — Private live status card with quick controls\n"
         "• `/presence manage` — Open the interactive Control Center modal\n"
-        "• `/presence vacant` — Reset house headcount to `0` (vacant)\n"
-        "• `/presence home [N]` — Set house headcount to `N` (default `1`)\n"
+        "• `/presence vacant` — Set house mode to `Vacant`\n"
+        "• `/presence pet` — Set house mode to `Pet Only`\n"
+        "• `/presence occupied` (or `/presence home`) — Set house mode to `Occupied`\n"
         "• `/presence clear [room]` — Clear one room (e.g. `Office`) or all rooms + vacant\n"
-        "• `/presence guest [on|off]` — Toggle or set Guest Mode\n"
+        "• `/presence guest [on|off]` — Toggle or set `Guest Mode`\n"
         "• `/presence verify <room>` — Run verification & upload camera snapshot\n"
         "• `/presence snapshot <room>` — Upload a live camera JPEG into this channel"
     )
-    return {"response_type": "ephemeral", "text": help_text, "blocks": [{"type": "section", "text": _mrkdwn(help_text)}]}
+    return {
+        "response_type": "ephemeral",
+        "text": help_text,
+        "blocks": [{"type": "section", "text": _mrkdwn(help_text)}],
+    }
 
 
 def find_room_entry_id(hass: Any, query: str) -> str | None:

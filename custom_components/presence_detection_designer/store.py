@@ -86,6 +86,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "transit_window_sec": 90.0,
     "settling_window_sec": 2.0,
     "house_occupant_count": 1,
+    "house_occupancy_mode": "occupied",
     "enable_conservation_law": False,
     "perimeter_doors": dict(DEFAULT_PERIMETER_DOORS),
     "interior_doors": list(DEFAULT_INTERIOR_DOORS),
@@ -267,7 +268,13 @@ class PDDStore:
             "probability_pct": float(event.get("probability_pct", 0.0)),
             "entity_states": dict(event.get("entity_states") or {}),
         }
-        for opt_str in ("verified_by", "reason", "last_handoff_room", "inferred_subregion"):
+        for opt_str in (
+            "verified_by",
+            "reason",
+            "last_handoff_room",
+            "inferred_subregion",
+            "house_occupancy_mode",
+        ):
             val = event.get(opt_str)
             if val:
                 payload[opt_str] = str(val)
@@ -335,8 +342,42 @@ class PDDStore:
         if "pir_candidate_window" in updates and updates["pir_candidate_window"] is not None:
             gs["pir_candidate_window"] = max(3, int(float(updates["pir_candidate_window"])))
 
+        raw_mode = updates.get("house_occupancy_mode")
+        norm_mode = str(raw_mode).strip().lower() if raw_mode is not None else ""
+        if norm_mode in ("vacant", "occupied", "guest", "pet_only"):
+            gs["house_occupancy_mode"] = norm_mode
+            if "guest_mode_enabled" not in updates:
+                gs["guest_mode_enabled"] = norm_mode == "guest"
+            if "house_occupant_count" not in updates:
+                gs["house_occupant_count"] = (
+                    0 if norm_mode in ("vacant", "pet_only") else (2 if norm_mode == "guest" else 1)
+                )
+
         if "house_occupant_count" in updates and updates["house_occupant_count"] is not None:
-            gs["house_occupant_count"] = max(0, int(updates["house_occupant_count"]))
+            cnt = (
+                0
+                if int(updates["house_occupant_count"]) <= 0
+                else (2 if int(updates["house_occupant_count"]) >= 2 else 1)
+            )
+            gs["house_occupant_count"] = cnt
+            if norm_mode not in ("vacant", "occupied", "guest", "pet_only"):
+                gs["house_occupancy_mode"] = (
+                    "vacant" if cnt == 0 else ("guest" if cnt >= 2 else "occupied")
+                )
+            if "guest_mode_enabled" not in updates:
+                gs["guest_mode_enabled"] = gs.get("house_occupancy_mode") == "guest"
+        elif "guest_mode_enabled" in updates and norm_mode not in (
+            "vacant",
+            "occupied",
+            "guest",
+            "pet_only",
+        ):
+            if gs["guest_mode_enabled"] and gs.get("house_occupancy_mode") == "occupied":
+                gs["house_occupancy_mode"] = "guest"
+                gs["house_occupant_count"] = 2
+            elif not gs["guest_mode_enabled"] and gs.get("house_occupancy_mode") == "guest":
+                gs["house_occupancy_mode"] = "occupied"
+                gs["house_occupant_count"] = 1
 
         if "ble_trackers" in updates and updates["ble_trackers"] is not None:
             raw_ble = updates["ble_trackers"]

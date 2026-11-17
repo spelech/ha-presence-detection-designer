@@ -322,12 +322,18 @@ class RoomPresenceCoordinator:
         )
 
     def notify_adjacent_occupancy(self, from_room_name: str) -> bool:
-        """Clear cooling timer immediately if an adjacent connected room just detected an occupant."""
+        """Clear cooling or PIR-latched room immediately if an adjacent connected room just detected an occupant."""
         if self._is_guest_mode_active() or self._is_definitive_tracker_pinned():
             return False
         if sync_coordinator_pir_corroboration(self):
             self._last_adjacent_arrival = f"Entered from {from_room_name}"
         if self.state_machine.handle_adjacent_room_occupied(from_room_name):
+            self._active_triggers = {
+                t for t in self._active_triggers if not classify_sensor_reliability(t).is_pir
+            }
+            if self.pir_validator is not None:
+                self.pir_validator.active_pir_sensors.clear()
+                self.pir_validator.pir_cleared()
             self._last_adjacent_arrival = f"Entered from {from_room_name}"
             self._record_timeline_snapshot()
             self.async_update_listeners()
@@ -439,9 +445,7 @@ class RoomPresenceCoordinator:
         elif self.state_machine.is_cooling_down:
             self.async_update_listeners()
 
-    async def async_run_llm_verification(
-        self, camera_entity_override: str | None = None
-    ) -> None:
+    async def async_run_llm_verification(self, camera_entity_override: str | None = None) -> None:
         """Capture snapshot and run LLM verification."""
         target_camera = (
             camera_entity_override.strip()

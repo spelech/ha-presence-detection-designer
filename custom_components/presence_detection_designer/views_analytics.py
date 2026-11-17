@@ -223,8 +223,9 @@ class PDDTimelineReconstructionView(HomeAssistantView):
         gs = getattr(store, "global_settings", None) or {}
         guest_mode_enabled = bool(gs.get("guest_mode_enabled", False))
         ble_decider_enabled = bool(gs.get("ble_decider_enabled", False))
-        conservation_enabled = bool(gs.get("enable_conservation_law", True))
+        conservation_enabled = bool(gs.get("enable_conservation_law", False))
         house_occupant_count: int | None = None
+        house_occupancy_mode: str = str(gs.get("house_occupancy_mode") or "occupied")
         if gs.get("house_occupant_count") is not None:
             try:
                 house_occupant_count = max(0, int(gs["house_occupant_count"]))
@@ -236,6 +237,7 @@ class PDDTimelineReconstructionView(HomeAssistantView):
             tracker = get_house_perimeter_tracker(hass)
             if tracker is not None and getattr(tracker, "state", None) is not None:
                 house_occupant_count = max(0, int(tracker.state.count))
+                house_occupancy_mode = str(tracker.state.mode or house_occupancy_mode)
         except Exception:
             pass
 
@@ -247,6 +249,7 @@ class PDDTimelineReconstructionView(HomeAssistantView):
             end_ts=end_ts,
             negative_space_enabled=neg_space_enabled,
             house_occupant_count=house_occupant_count,
+            house_occupancy_mode=house_occupancy_mode,
             conservation_enabled=conservation_enabled,
             guest_mode_enabled=guest_mode_enabled,
             ble_decider_enabled=ble_decider_enabled,

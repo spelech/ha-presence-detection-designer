@@ -28,7 +28,7 @@ from .pir_corroboration import (
     build_pir_corroboration_context,
     handle_pir_validation_for_trigger,
 )
-from .sensor_reliability import classify_sensor_reliability
+from .sensor_reliability import classify_sensor_reliability, is_camera_entity
 from .trajectory_validator import (
     async_send_coordinator_test_notification,
     check_coordinator_trajectory,
@@ -435,11 +435,17 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
         last_cleared = getattr(coord.state_machine, "last_cleared_time", 0.0)
         cooldown = float(getattr(coord.state_machine, "retrigger_cooldown", 20.0))
         b_occupied = bool(coord.last_bayesian_eval and coord.last_bayesian_eval.is_occupied)
+        cam_trigger = is_camera_entity(str(entity_id))
 
-        if last_cleared > 0.0 and (now - last_cleared) < cooldown and not b_occupied:
+        if (
+            last_cleared > 0.0
+            and (now - last_cleared) < cooldown
+            and not b_occupied
+            and not cam_trigger
+        ):
             return
 
-        if not coord._is_guest_mode_active():
+        if not coord._is_guest_mode_active() and not cam_trigger:
             spatial_frame = getattr(coord, "_last_spatial_frame", None) or {}
             pinned_rooms = spatial_frame.get("steve_pinned_rooms") or []
             if pinned_rooms and coord.room_name not in pinned_rooms:

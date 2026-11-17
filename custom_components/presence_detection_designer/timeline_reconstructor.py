@@ -70,9 +70,7 @@ def _consolidate_frame_occupants(
             )
             kept_inferred = inferred[:inferred_budget]
             dropped = inferred[inferred_budget:]
-            pruned_inferred_rooms = [
-                str(o.get("room") or "") for o in dropped if o.get("room")
-            ]
+            pruned_inferred_rooms = [str(o.get("room") or "") for o in dropped if o.get("room")]
             occ_list = confirmed + kept_inferred
 
     return occ_list, pruned_inferred_rooms
@@ -123,6 +121,7 @@ def _reconstruct_from_component_logs(
     min_step_sec: float,
     max_frames: int,
     house_occupant_count: int | None,
+    house_occupancy_mode: str | None = None,
 ) -> dict[str, Any]:
     """Reconstruct playback directly from recorded RoomPresenceCoordinator timeline logs."""
     fp_rooms = {
@@ -245,13 +244,20 @@ def _reconstruct_from_component_logs(
         active_confirmed_only: list[str] = []
         active_positive_sensors: list[str] = []
         latest_logged_count: int | None = None
+        latest_logged_mode: str | None = None
         latest_logged_ts = -1.0
 
         for r_name, ev in sorted(live_ev.items()):
             ev_ts = float(ev.get("ts") or 0.0)
-            if ev.get("house_occupant_count") is not None and ev_ts >= latest_logged_ts:
+            if (
+                ev.get("house_occupant_count") is not None
+                or ev.get("house_occupancy_mode") is not None
+            ) and ev_ts >= latest_logged_ts:
                 latest_logged_ts = ev_ts
-                latest_logged_count = int(ev["house_occupant_count"])
+                if ev.get("house_occupant_count") is not None:
+                    latest_logged_count = int(ev["house_occupant_count"])
+                if ev.get("house_occupancy_mode"):
+                    latest_logged_mode = str(ev["house_occupancy_mode"])
 
             box = fp_rooms.get(r_name, {})
             fl_id = str(box.get("floor", "main"))
@@ -317,9 +323,7 @@ def _reconstruct_from_component_logs(
             )
             reason = str(ev.get("reason") or "").strip()
             subregion = str(ev.get("inferred_subregion") or r_name)
-            explanation = reason or (
-                f"Bayesian {prob_pct:.1f}% ({occ_state.replace('_', ' ')})"
-            )
+            explanation = reason or (f"Bayesian {prob_pct:.1f}% ({occ_state.replace('_', ' ')})")
 
             occ_list.append(
                 {
@@ -331,7 +335,9 @@ def _reconstruct_from_component_logs(
                     "human_present": True,
                     "pet_present": bool(ev.get("pet_present") or pet_on),
                     "detected_people": [occ_label],
-                    "detected_animals": ["Riley (Dog)"] if (ev.get("pet_present") or pet_on) else [],
+                    "detected_animals": ["Riley (Dog)"]
+                    if (ev.get("pet_present") or pet_on)
+                    else [],
                     "occupant_type": occ_type,
                     "occupant_label": occ_label,
                     "confidence": round(min(1.0, max(0.0, prob_pct / 100.0)), 2),
@@ -480,12 +486,27 @@ def _reconstruct_from_component_logs(
                 pet["from_floor"] = pet_leg_floor
 
         chosen_active = active_with_inferred if negative_space_enabled else active_confirmed_only
-        frame_house_count = latest_logged_count if latest_logged_count is not None else house_occupant_count
+        frame_house_count = (
+            latest_logged_count if latest_logged_count is not None else house_occupant_count
+        )
+        frame_house_mode = latest_logged_mode or house_occupancy_mode
+        if not frame_house_mode:
+            if not occ_list and pet_list:
+                frame_house_mode = "pet_only"
+            elif frame_house_count is not None:
+                frame_house_mode = (
+                    "vacant"
+                    if frame_house_count <= 0
+                    else ("guest" if frame_house_count >= 2 else "occupied")
+                )
+            else:
+                frame_house_mode = "occupied" if occ_list else "vacant"
         frames.append(
             {
                 "ts": ts,
                 "iso": iso_str,
                 "house_occupant_count": frame_house_count,
+                "house_occupancy_mode": frame_house_mode,
                 "occupant_estimates": occ_list,
                 "pet_estimates": pet_list,
                 "active_rooms": sorted(chosen_active),
@@ -511,6 +532,7 @@ def _reconstruct_from_component_logs(
         "source": "component_logs",
         "negative_space_enabled": negative_space_enabled,
         "house_occupant_count": house_occupant_count,
+        "house_occupancy_mode": house_occupancy_mode,
         "start_ts": float(sorted_ts[0]),
         "end_ts": float(sorted_ts[-1]),
         "frame_count": len(frames),
@@ -536,6 +558,7 @@ def reconstruct_house_timeline(
     max_frames: int = 350,
     frame_evaluator: Callable[..., dict[str, Any]] | None = None,
     house_occupant_count: int | None = None,
+    house_occupancy_mode: str | None = None,
     conservation_enabled: bool = True,
     guest_mode_enabled: bool = False,
     ble_decider_enabled: bool = False,
@@ -559,6 +582,7 @@ def reconstruct_house_timeline(
             min_step_sec=min_step_sec,
             max_frames=max_frames,
             house_occupant_count=house_occupant_count,
+            house_occupancy_mode=house_occupancy_mode,
         )
 
     if frame_evaluator is None:
@@ -859,6 +883,7 @@ def reconstruct_house_timeline(
         "source": "sensor_reconstruction",
         "negative_space_enabled": negative_space_enabled,
         "house_occupant_count": house_occupant_count,
+        "house_occupancy_mode": house_occupancy_mode,
         "conservation_enabled": conservation_enabled,
         "start_ts": start_ts,
         "end_ts": end_ts,

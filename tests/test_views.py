@@ -469,7 +469,7 @@ async def test_state_graph_view_returns_mermaid_and_history(mock_hass):
         {
             CONF_ROOM_NAME: "Kitchen",
             CONF_MODE: str(Mode.OPEN),
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.kitchen_motion"],
+            CONF_TRIGGER_ENTITIES: ["binary_sensor.kitchen_island_person_occupancy"],
         },
     )
     await coord.async_setup()
@@ -825,6 +825,8 @@ def test_coordinator_timer_hook_uses_ha_callback(monkeypatch):
     coord.state_machine._timer_scheduler(1.0, lambda: None)
     assert len(captured) == 1
     assert is_callback(captured[0]) is True
+
+
 @pytest.mark.requirement("UI-03", category="UI", req_type="PositiveFeature")
 def test_panel_js_floorplan_pointer_ux():
     """@requirement UI-03: Floorplan defaults to device editing with locked rooms, dead-zone, smooth PIR/camera LOS handles, polygon preservation, and undo/reset."""
@@ -1044,7 +1046,9 @@ assert.strictEqual(
         text=True,
         timeout=20,
     )
-    assert proc.returncode == 0, f"Node floorplan UX test failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
+    assert proc.returncode == 0, (
+        f"Node floorplan UX test failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
+    )
 
 
 @pytest.mark.requirement("UI-03", category="UI", req_type="PositiveFeature")
@@ -1074,7 +1078,7 @@ def test_panel_js_ui_polish_behaviors():
         "cfg-verify-feedback",
         "Locate Camera",
         "data-tip=",
-        "<select class=\"select\" id=\"cfg-camera-entity\"",
+        '<select class="select" id="cfg-camera-entity"',
     ):
         assert tok in panel_text, f"Missing UI polish token {tok!r}"
 
@@ -1340,7 +1344,9 @@ assert(ringUp.arrowsSvg.includes('stroke-dasharray="4,3"'), "Cross-floor transit
         text=True,
         timeout=20,
     )
-    assert proc.returncode == 0, f"Node UI polish test failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
+    assert proc.returncode == 0, (
+        f"Node UI polish test failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
+    )
 
 
 @pytest.mark.asyncio

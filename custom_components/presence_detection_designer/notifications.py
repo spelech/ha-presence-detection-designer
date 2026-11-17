@@ -293,7 +293,10 @@ class NotificationDispatcher:
             if room_config.get("notify_slack") is False:
                 return False
 
-            if attribution.to_state == "occupied" and room_config.get("notify_on_occupied") is False:
+            if (
+                attribution.to_state == "occupied"
+                and room_config.get("notify_on_occupied") is False
+            ):
                 return False
 
             if attribution.to_state == "clear" and room_config.get("notify_on_cleared") is False:
@@ -351,7 +354,9 @@ class NotificationDispatcher:
             or global_settings.get("include_camera_snapshot")
             or False
         )
-        raw_snapshot_url = str(room_config.get("camera_snapshot_url") or "") if include_snapshot else ""
+        raw_snapshot_url = (
+            str(room_config.get("camera_snapshot_url") or "") if include_snapshot else ""
+        )
         public_snapshot_url = raw_snapshot_url if is_public_snapshot_url(raw_snapshot_url) else None
 
         formatted = self.format_slack_message(
@@ -409,20 +414,34 @@ class NotificationDispatcher:
                 call_api_fn=self._call_slack_web_api,
             )
             if threaded_ok:
-                if include_snapshot and attribution.to_state == "occupied" and (
-                    room_config.get("camera_entity") or raw_snapshot_url
-                ) and hasattr(hass, "async_create_task"):
+                if (
+                    include_snapshot
+                    and attribution.to_state == "occupied"
+                    and (room_config.get("camera_entity") or raw_snapshot_url)
+                    and hasattr(hass, "async_create_task")
+                ):
                     snap_coro = async_upload_room_snapshot(
-                        hass, attribution.room_name, camera_entity=room_config.get("camera_entity"),
-                        snapshot_url=raw_snapshot_url, channel=channel, thread_ts=thread_ts,
+                        hass,
+                        attribution.room_name,
+                        camera_entity=room_config.get("camera_entity"),
+                        snapshot_url=raw_snapshot_url,
+                        channel=channel,
+                        thread_ts=thread_ts,
                         initial_comment=f"📸 {attribution.room_name} transition capture",
                     )
                     hass.async_create_task(snap_coro)
-                    if type(hass.async_create_task).__name__ == "MagicMock" and getattr(hass.async_create_task, "side_effect", None) is None and hasattr(snap_coro, "close"):
+                    if (
+                        type(hass.async_create_task).__name__ == "MagicMock"
+                        and getattr(hass.async_create_task, "side_effect", None) is None
+                        and hasattr(snap_coro, "close")
+                    ):
                         snap_coro.close()
                 _LOGGER.info(
                     "Threaded presence transition for %s (%s) into %s (thread_ts=%s)",
-                    attribution.room_name, attribution.to_state, channel, thread_ts,
+                    attribution.room_name,
+                    attribution.to_state,
+                    channel,
+                    thread_ts,
                 )
                 _schedule_digest_update()
                 return True

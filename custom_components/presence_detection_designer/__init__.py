@@ -339,37 +339,64 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 
     async def handle_set_guest_mode(call: Any) -> None:
         """Enable or disable global Guest Mode across all rooms."""
+        from .house_perimeter import get_house_perimeter_tracker
+
         enabled = bool(call.data.get("enabled", True))
+        tracker = get_house_perimeter_tracker(hass)
+        if enabled:
+            tracker.set_house_mode("guest", persist=False, notify_digest=False)
+        elif tracker.state.mode == "guest":
+            tracker.set_house_mode("occupied", persist=False, notify_digest=False)
         store = await async_get_store(hass)
-        await store.async_save_global_settings({"guest_mode_enabled": enabled})
+        await store.async_save_global_settings(
+            {
+                "guest_mode_enabled": enabled,
+                "house_occupancy_mode": tracker.state.mode,
+                "house_occupant_count": tracker.state.count,
+            }
+        )
         for coordinator in hass.data[DOMAIN].values():
             if isinstance(coordinator, RoomPresenceCoordinator):
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
+        await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_clear_manual_intent(call: Any) -> None:
         """Reset manual switch / Google Assistant override state back to 'auto' for one or all rooms."""
-        entry_id = call.data.get("entry_id")
-        room_name_filter = str(call.data.get("room_name", "")).strip().lower()
+        entry_id, room_filter = (
+            call.data.get("entry_id"),
+            str(call.data.get("room_name", "")).strip().lower(),
+        )
         for eid, coordinator in hass.data[DOMAIN].items():
             if not isinstance(coordinator, RoomPresenceCoordinator):
                 continue
-            if entry_id and eid != entry_id:
-                continue
-            if room_name_filter and coordinator.room_name.strip().lower() != room_name_filter:
+            if (entry_id and eid != entry_id) or (
+                room_filter and coordinator.room_name.strip().lower() != room_filter
+            ):
                 continue
             coordinator.actuation_tracker.clear_manual_intent()
             coordinator.async_update_listeners()
 
     async def handle_set_house_occupant_count(call: Any) -> None:
-        """Set the whole-house occupant headcount and trigger conservation enforcement."""
-        count = int(call.data.get("count", 1))
+        """Set whole-house occupancy mode (vacant/occupied/guest/pet_only) or mapped count."""
         from .house_perimeter import get_house_perimeter_tracker
 
         tracker = get_house_perimeter_tracker(hass)
-        tracker.set_headcount(count, persist=False, notify_digest=False)
+        raw_mode = str(call.data.get("mode") or "").strip().lower()
+        if raw_mode in ("vacant", "occupied", "guest", "pet_only"):
+            tracker.set_house_mode(raw_mode, persist=False, notify_digest=False)
+        else:
+            tracker.set_headcount(
+                int(call.data.get("count", 1)), persist=False, notify_digest=False
+            )
         store = await async_get_store(hass)
-        await store.async_update_global_settings({"house_occupant_count": count})
+        await store.async_update_global_settings(
+            {
+                "house_occupancy_mode": tracker.state.mode,
+                "house_occupant_count": tracker.state.count,
+                "guest_mode_enabled": tracker.state.mode == "guest",
+            }
+        )
         await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_update_slack_digest(call: Any) -> None:

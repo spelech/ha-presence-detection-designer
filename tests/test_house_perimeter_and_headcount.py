@@ -69,7 +69,7 @@ def test_house_perimeter_tracker_singleton(mock_hass):
     assert t1 is t2
     assert isinstance(t1, HousePerimeterTracker)
     assert t1.state.count == 1
-    assert t1.state.mode == "single_occupant"
+    assert t1.state.mode == "occupied"
 
 
 def test_unconfigured_door_ignored(mock_hass):
@@ -101,7 +101,7 @@ def test_ingress_transition_from_vacant(mock_hass):
     assert rec.room_name == "Front Entry"
     assert rec.confidence >= 0.8
     assert tracker.state.count == 1
-    assert tracker.state.mode == "single_occupant"
+    assert tracker.state.mode == "occupied"
     assert tracker.state.last_event_door == "binary_sensor.front_door"
     assert tracker.state.last_event_type == "ingress"
 
@@ -193,23 +193,23 @@ def test_house_headcount_sensor_attributes_and_updates(mock_hass):
     )
 
     tracker = HousePerimeterTracker(mock_hass)
-    tracker.set_headcount(1)
+    tracker.set_headcount(0)
 
     sensor = HouseHeadcountSensor(tracker)
     assert sensor.name == "House Occupant Count"
     assert sensor.unique_id == f"{DOMAIN}_house_occupant_count"
-    assert sensor.native_value == 1
-    assert sensor.extra_state_attributes["occupancy_mode"] == "single_occupant"
+    assert sensor.native_value == 0
+    assert sensor.extra_state_attributes["occupancy_mode"] == "vacant"
     assert sensor.extra_state_attributes["last_perimeter_door"] is None
 
-    # Simulate door transit
+    # Simulate arrival door transit from vacant -> occupied
     now = time.time()
     tracker.handle_door_state_change("binary_sensor.front_door", True, now_ts=now)
     tracker.handle_door_state_change("binary_sensor.front_door", False, now_ts=now + 3.0)
 
     attrs = sensor.extra_state_attributes
-    assert sensor.native_value == 2
-    assert attrs["occupancy_mode"] == "multi_occupant"
+    assert sensor.native_value == 1
+    assert attrs["occupancy_mode"] == "occupied"
     assert attrs["last_perimeter_door"] == "binary_sensor.front_door"
     assert attrs["last_vector_type"] == "ingress"
     assert len(attrs["recent_door_events"]) == 1
@@ -240,7 +240,7 @@ async def test_set_house_occupant_count_service(mock_hass):
     assert "presence_detection_designer.set_house_occupant_count" in registered_services
 
     handler = registered_services["presence_detection_designer.set_house_occupant_count"]
-    call = MagicMock(data={"count": 3})
+    call = MagicMock(data={"mode": "guest"})
     with patch(
         "custom_components.presence_detection_designer.async_get_store",
         AsyncMock(return_value=mock_store),
@@ -248,9 +248,15 @@ async def test_set_house_occupant_count_service(mock_hass):
         await handler(call)
 
     tracker = get_house_perimeter_tracker(mock_hass)
-    assert tracker.state.count == 3
-    assert tracker.state.mode == "multi_occupant"
-    mock_store.async_update_global_settings.assert_called_once_with({"house_occupant_count": 3})
+    assert tracker.state.count == 2
+    assert tracker.state.mode == "guest"
+    mock_store.async_update_global_settings.assert_called_once_with(
+        {
+            "house_occupancy_mode": "guest",
+            "house_occupant_count": 2,
+            "guest_mode_enabled": True,
+        }
+    )
 
 
 def _install_global_settings(mock_hass, **overrides):
@@ -311,7 +317,7 @@ def test_positive_count_without_evidence_is_ambiguous(mock_hass):
     assert rec is not None
     assert rec.vector == "ambiguous"
     assert tracker.state.count == 1
-    assert tracker.state.mode == "single_occupant"
+    assert tracker.state.mode == "occupied"
 
 
 def test_duplicate_close_events_count_once(mock_hass):
@@ -358,27 +364,29 @@ def test_duplicate_same_direction_transit_suppressed(mock_hass):
 
 
 def test_headcount_clamped_to_max_occupants(mock_hass):
-    """An automatically accumulated count is capped by max_occupants."""
+    """Any numeric override >= 2 normalizes immediately to categorical guest mode (count=2)."""
     _install_global_settings(mock_hass, **{CONF_MAX_OCCUPANTS: 2})
     tracker = HousePerimeterTracker(mock_hass)
     tracker.set_headcount(7)
 
-    changed = tracker.reconcile_headcount(now_ts=time.time(), force=True)
-
-    assert changed is True
     assert tracker.state.count == 2
-    assert tracker.state.mode == "multi_occupant"
+    assert tracker.state.mode == "guest"
+    changed = tracker.reconcile_headcount(now_ts=time.time(), force=True)
+    assert changed is False
+    assert tracker.state.count == 2
+    assert tracker.state.mode == "guest"
 
 
 def test_stale_positive_count_resets_when_all_rooms_clear(mock_hass):
     """A positive count is reconciled to zero after a sustained whole-house vacancy."""
     _install_global_settings(mock_hass, **{CONF_STALE_COUNT_TIMEOUT: 10})
     tracker = HousePerimeterTracker(mock_hass)
-    tracker.set_headcount(3)
+    tracker.set_house_mode("guest")
     mock_hass.data[DOMAIN] = {DATA_STORE: mock_hass.data[DOMAIN][DATA_STORE]}
 
     assert tracker.reconcile_headcount(now_ts=1000.0, force=True) is False
-    assert tracker.state.count == 3
+    assert tracker.state.count == 2
+    assert tracker.state.mode == "guest"
 
     changed = tracker.reconcile_headcount(now_ts=1011.0, force=True)
 
@@ -388,7 +396,7 @@ def test_stale_positive_count_resets_when_all_rooms_clear(mock_hass):
 
 
 def test_ingress_while_others_home_requires_plausible_count(mock_hass):
-    """Arrivals while others are home are allowed only when the count fits observed rooms."""
+    """Door cycles while already occupied or in guest mode never inflate integer headcount."""
     living = _make_mock_coord(mock_hass, "Living Room")
     kitchen = _make_mock_coord(mock_hass, "Kitchen")
     mock_hass.data[DOMAIN] = {
@@ -405,13 +413,14 @@ def test_ingress_while_others_home_requires_plausible_count(mock_hass):
     )
 
     tracker = HousePerimeterTracker(mock_hass)
-    tracker.set_headcount(2)
+    tracker.set_house_mode("occupied")
 
     now = time.time()
     tracker.handle_door_state_change("binary_sensor.front_door", True, now_ts=now)
     rec = tracker.handle_door_state_change("binary_sensor.front_door", False, now_ts=now + 4.0)
     assert rec is not None and rec.vector == "ambiguous"
-    assert tracker.state.count == 2
+    assert tracker.state.mode == "occupied"
+    assert tracker.state.count == 1
 
     kitchen.state_machine.apply_evidence(
         RoomEvidenceSnapshot(
@@ -423,8 +432,9 @@ def test_ingress_while_others_home_requires_plausible_count(mock_hass):
     tracker.handle_door_state_change("binary_sensor.front_door", True, now_ts=now + 10.0)
     rec2 = tracker.handle_door_state_change("binary_sensor.front_door", False, now_ts=now + 14.0)
 
-    assert rec2 is not None and rec2.vector == "ingress"
-    assert tracker.state.count == 3
+    assert rec2 is not None and rec2.vector == "ambiguous"
+    assert tracker.state.mode == "occupied"
+    assert tracker.state.count == 1
 
 
 def test_side_door_exit_held_pending_without_exterior_motion(mock_hass):
@@ -505,7 +515,7 @@ def test_side_door_exit_delayed_corroboration_by_backyard_motion(mock_hass):
     )
 
     tracker = HousePerimeterTracker(mock_hass)
-    tracker.set_headcount(2)
+    tracker.set_house_mode("occupied")
 
     now = 1000.0
     tracker.handle_door_state_change("binary_sensor.garage_side_door", True, now_ts=now)
@@ -514,7 +524,8 @@ def test_side_door_exit_delayed_corroboration_by_backyard_motion(mock_hass):
     )
 
     assert rec is not None and rec.vector == "pending_egress"
-    assert tracker.state.count == 2
+    assert tracker.state.count == 1
+    assert tracker.state.mode == "occupied"
 
     # Backyard motion trips 15 seconds after door closed (within 30s window)
     resolved = tracker.handle_exterior_state_change(
@@ -524,8 +535,8 @@ def test_side_door_exit_delayed_corroboration_by_backyard_motion(mock_hass):
     assert len(resolved) == 1
     assert resolved[0].vector == "egress"
     assert "binary_sensor.backyard_motion" in resolved[0].details
-    assert tracker.state.count == 1
-    assert tracker.state.mode == "single_occupant"
+    assert tracker.state.count == 0
+    assert tracker.state.mode == "vacant"
     assert len(tracker._pending_exit_corroborations) == 0
 
 
@@ -543,7 +554,7 @@ def test_side_door_exit_corroboration_window_expires_as_ambiguous(mock_hass):
     )
 
     tracker = HousePerimeterTracker(mock_hass)
-    tracker.set_headcount(2)
+    tracker.set_house_mode("occupied")
 
     now = 1000.0
     tracker.handle_door_state_change("binary_sensor.garage_side_door", True, now_ts=now)
@@ -551,14 +562,16 @@ def test_side_door_exit_corroboration_window_expires_as_ambiguous(mock_hass):
         "binary_sensor.garage_side_door", False, now_ts=now + 5.0
     )
     assert rec is not None and rec.vector == "pending_egress"
-    assert tracker.state.count == 2
+    assert tracker.state.count == 1
+    assert tracker.state.mode == "occupied"
 
     # 35 seconds later (window was 30s) reconcile_headcount runs
     resolved = tracker.check_pending_exit_corroborations(now_ts=now + 40.0)
 
     assert len(resolved) == 1
     assert resolved[0].vector == "ambiguous"
-    assert tracker.state.count == 2  # Not decremented!
+    assert tracker.state.count == 1  # Not decremented!
+    assert tracker.state.mode == "occupied"
     assert len(tracker._pending_exit_corroborations) == 0
 
 
@@ -709,7 +722,7 @@ async def test_async_setup_subscribes_perimeter_doors_and_persists_digest(
         )
     )
     assert tracker.state.count == 1
-    assert tracker.state.mode == "single_occupant"
+    assert tracker.state.mode == "occupied"
     assert mock_hass.data[DOMAIN][DATA_STORE].global_settings["house_occupant_count"] == 1
     assert len(digest_calls) == 1
 
@@ -744,7 +757,7 @@ def test_garage_arrival_when_vacant_ignores_motion_after_door_opens(mock_hass):
     assert rec is not None
     assert rec.vector == "ingress"
     assert tracker.state.count == 1
-    assert tracker.state.mode == "single_occupant"
+    assert tracker.state.mode == "occupied"
 
 
 def test_garage_arrival_while_spouse_home_increments_headcount(mock_hass):
@@ -780,9 +793,9 @@ def test_garage_arrival_while_spouse_home_increments_headcount(mock_hass):
 
     rec = tracker.handle_door_state_change("cover.garage_door", False, now_ts=now + 18.0)
     assert rec is not None
-    assert rec.vector == "ingress"
-    assert tracker.state.count == 2
-    assert tracker.state.mode == "multi_occupant"
+    assert rec.vector == "ambiguous"
+    assert tracker.state.count == 1
+    assert tracker.state.mode == "occupied"
 
 
 def test_vacant_count_never_emits_egress_on_interior_door_cycle(mock_hass):
@@ -842,9 +855,10 @@ async def test_async_setup_reloads_initial_headcount_when_store_loaded_late(mock
     tracker = HousePerimeterTracker(mock_hass)
     assert tracker.state.count == 1
 
-    _install_global_settings(mock_hass, house_occupant_count=3)
+    _install_global_settings(mock_hass, house_occupancy_mode="guest", house_occupant_count=2)
     await tracker.async_setup()
-    assert tracker.state.count == 3
+    assert tracker.state.mode == "guest"
+    assert tracker.state.count == 2
 
 
 def test_panel_js_strips_house_occupant_count_from_global_settings_save():

@@ -80,7 +80,9 @@ def upload_slack_image_sync(
     """Upload image bytes to Slack via files.getUploadURLExternal + files.completeUploadExternal."""
     meta_req = urllib.request.Request(
         "https://slack.com/api/files.getUploadURLExternal",
-        data=urllib.parse.urlencode({"filename": filename, "length": str(len(image_bytes))}).encode("utf-8"),
+        data=urllib.parse.urlencode({"filename": filename, "length": str(len(image_bytes))}).encode(
+            "utf-8"
+        ),
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/x-www-form-urlencoded",
@@ -89,8 +91,17 @@ def upload_slack_image_sync(
     )
     with urllib.request.urlopen(meta_req, timeout=8) as resp:
         meta = json.loads(resp.read().decode("utf-8"))
-    if not isinstance(meta, dict) or not meta.get("ok") or not meta.get("upload_url") or not meta.get("file_id"):
-        return meta if isinstance(meta, dict) else {"ok": False, "error": "invalid_upload_url_response"}
+    if (
+        not isinstance(meta, dict)
+        or not meta.get("ok")
+        or not meta.get("upload_url")
+        or not meta.get("file_id")
+    ):
+        return (
+            meta
+            if isinstance(meta, dict)
+            else {"ok": False, "error": "invalid_upload_url_response"}
+        )
 
     put_req = urllib.request.Request(
         str(meta["upload_url"]),
@@ -218,14 +229,23 @@ async def async_post_response_url(hass: Any, response_url: str, payload: dict[st
         _LOGGER.debug("Slack response_url post failed: %s", err)
 
 
-async def async_handle_snapshot_slash(hass: Any, coord: Any, *, actor: str, channel_id: str | None) -> dict[str, Any]:
+async def async_handle_snapshot_slash(
+    hass: Any, coord: Any, *, actor: str, channel_id: str | None
+) -> dict[str, Any]:
     """Capture and upload a live room snapshot for `/presence snapshot <room>`."""
     cam, url = getattr(coord, "camera_entity", None), getattr(coord, "camera_snapshot_url", None)
     if not cam and not url:
-        return {"response_type": "ephemeral", "text": f"⚠️ *{coord.room_name}* has no camera configured."}
+        return {
+            "response_type": "ephemeral",
+            "text": f"⚠️ *{coord.room_name}* has no camera configured.",
+        }
     ok = await async_upload_room_snapshot(
-        hass, str(coord.room_name), camera_entity=cam, snapshot_url=url,
-        channel=channel_id, initial_comment=f"📸 Live snapshot requested by *{actor}* for *{coord.room_name}*",
+        hass,
+        str(coord.room_name),
+        camera_entity=cam,
+        snapshot_url=url,
+        channel=channel_id,
+        initial_comment=f"📸 Live snapshot requested by *{actor}* for *{coord.room_name}*",
     )
     msg = (
         f"📸 Uploaded live snapshot for *{coord.room_name}*."

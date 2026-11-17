@@ -16,6 +16,7 @@ except Exception:  # noqa: BLE001
         """Fallback callback decorator when running outside Home Assistant."""
         return func
 
+
 try:
     from homeassistant.components.sensor import (
         SensorEntity,

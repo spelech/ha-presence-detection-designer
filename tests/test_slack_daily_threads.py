@@ -408,9 +408,7 @@ async def test_global_settings_and_headcount_service_update_slack_footer_status(
     hass.services = MagicMock()
     hass.services.has_service = MagicMock(return_value=False)
     hass.services.async_register = MagicMock(
-        side_effect=lambda dom, name, fn, **kw: registered_services.setdefault(
-            f"{dom}.{name}", fn
-        )
+        side_effect=lambda dom, name, fn, **kw: registered_services.setdefault(f"{dom}.{name}", fn)
     )
 
     assert await async_setup(hass, {}) is True
@@ -426,22 +424,23 @@ async def test_global_settings_and_headcount_service_update_slack_footer_status(
     assert len(updates) == 1
     ctx_text = str(updates[-1]["blocks"][-1])
     assert "*Today's Transitions:* 42" in ctx_text
-    assert "*Headcount:* 2 (multi occupant)" in ctx_text
+    assert "*Mode:* Guest" in ctx_text
     assert "Transitions muted" in ctx_text
 
     # 2. PDDGlobalSettingsView toggling slack_notify_transitions & headcount -> forces Slack footer refresh
     req = MagicMock()
     req.app = {"hass": hass}
     req.json = AsyncMock(
-        return_value={"house_occupant_count": 3, "slack_notify_transitions": True}
+        return_value={"house_occupancy_mode": "guest", "slack_notify_transitions": True}
     )
     resp = await PDDGlobalSettingsView().post(req)
     assert resp.status == 200
-    assert json.loads(resp.text)["global_settings"]["house_occupant_count"] == 3
-    assert tracker.state.count == 3
+    assert json.loads(resp.text)["global_settings"]["house_occupancy_mode"] == "guest"
+    assert tracker.state.mode == "guest"
+    assert tracker.state.count == 2
     assert len(updates) == 2
     ctx_text_2 = str(updates[-1]["blocks"][-1])
-    assert "*Headcount:* 3 (multi occupant)" in ctx_text_2
+    assert "*Mode:* Guest" in ctx_text_2
     assert "Transitions logged below" in ctx_text_2
 
 
@@ -500,7 +499,7 @@ def test_collect_room_states_formats_actual_since_time() -> None:
     assert "pdd_reset_vacant" in serialized
     assert "pdd_clear_all_vacant" in serialized
     assert "pdd_set_home_1" in serialized
-    assert "tap *1 Home* or *Reset Vacant*" in serialized
+    assert "tap *Occupied* or *Reset Vacant*" in serialized
 
 
 @pytest.mark.asyncio
@@ -604,7 +603,9 @@ async def test_slack_webhook_block_actions_reset_vacant_and_clear_rooms(
             "v0=deadbeef"
             if bad_sig
             else "v0="
-            + hmac.new(b"test_secret_123", f"v0:{ts}:{raw_body}".encode(), hashlib.sha256).hexdigest()
+            + hmac.new(
+                b"test_secret_123", f"v0:{ts}:{raw_body}".encode(), hashlib.sha256
+            ).hexdigest()
         )
         req = MagicMock()
         req.text = AsyncMock(return_value=raw_body)
@@ -613,7 +614,9 @@ async def test_slack_webhook_block_actions_reset_vacant_and_clear_rooms(
         return req
 
     # Invalid signature must be rejected
-    bad_resp = await async_handle_slack_webhook(hass, wh_id, _make_slack_request("pdd_reset_vacant", bad_sig=True))
+    bad_resp = await async_handle_slack_webhook(
+        hass, wh_id, _make_slack_request("pdd_reset_vacant", bad_sig=True)
+    )
     assert bad_resp.status == 401
     assert tracker.state.count == 2
 
@@ -632,7 +635,9 @@ async def test_slack_webhook_block_actions_reset_vacant_and_clear_rooms(
     assert tracker.state.count == 2
 
     # Clear Rooms & Vacant sets count to 0 AND force-clears occupied rooms
-    resp2 = await async_handle_slack_webhook(hass, wh_id, _make_slack_request("pdd_clear_all_vacant"))
+    resp2 = await async_handle_slack_webhook(
+        hass, wh_id, _make_slack_request("pdd_clear_all_vacant")
+    )
     assert resp2.status == 200
     assert tracker.state.count == 0
     assert sm.state == OccupancyState.VACANT
@@ -777,7 +782,9 @@ async def test_slack_modal_app_home_slash_commands_and_room_actions(
 
     # 2. App Home opened event triggers views.publish
     home_resp = await async_handle_slack_webhook(
-        hass, wh_id, _json_req({"type": "event_callback", "event": {"type": "app_home_opened", "user": "U123"}})
+        hass,
+        wh_id,
+        _json_req({"type": "event_callback", "event": {"type": "app_home_opened", "user": "U123"}}),
     )
     assert home_resp.status == 200
     publish_calls = [p for u, p in api_calls if "views.publish" in u and p]
@@ -817,7 +824,9 @@ async def test_slack_modal_app_home_slash_commands_and_room_actions(
                     "callback_id": "pdd_manage_modal",
                     "state": {
                         "values": {
-                            "blk_headcount": {"inp_headcount": {"selected_option": {"value": "3"}}},
+                            "blk_headcount": {
+                                "inp_headcount": {"selected_option": {"value": "guest"}}
+                            },
                             "blk_toggles": {
                                 "inp_toggles": {
                                     "selected_options": [
@@ -827,8 +836,12 @@ async def test_slack_modal_app_home_slash_commands_and_room_actions(
                                     ]
                                 }
                             },
-                            "blk_clear_rooms": {"inp_clear_rooms": {"selected_options": [{"value": "office"}]}},
-                            "blk_verify_rooms": {"inp_verify_rooms": {"selected_options": [{"value": "office"}]}},
+                            "blk_clear_rooms": {
+                                "inp_clear_rooms": {"selected_options": [{"value": "office"}]}
+                            },
+                            "blk_verify_rooms": {
+                                "inp_verify_rooms": {"selected_options": [{"value": "office"}]}
+                            },
                         }
                     },
                 },
@@ -837,7 +850,8 @@ async def test_slack_modal_app_home_slash_commands_and_room_actions(
     )
     assert sub_resp.status == 200
     assert json.loads(sub_resp.text) == {"response_action": "clear"}
-    assert tracker.state.count == 3
+    assert tracker.state.mode == "guest"
+    assert tracker.state.count == 2
     assert store.global_settings["guest_mode_enabled"] is True
     assert store.global_settings["slack_notify_transitions"] is True
     assert sm.state == OccupancyState.VACANT
@@ -870,22 +884,36 @@ async def test_slack_modal_app_home_slash_commands_and_room_actions(
     sm.set_override(False)
 
     # 6. Slash commands: /presence status, /presence help, /presence home 2, /presence guest off, /presence manage
-    s_status = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("status"))).text)
+    s_status = json.loads(
+        (await async_handle_slack_webhook(hass, wh_id, _slash_req("status"))).text
+    )
     assert s_status["response_type"] == "ephemeral"
     assert "pdd_vacancy_controls" in json.dumps(s_status["blocks"])
 
     s_help = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("help"))).text)
     assert "/presence vacant" in s_help["text"]
 
-    s_home = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("home 2"))).text)
-    assert tracker.state.count == 2
-    assert "2" in s_home["text"]
+    s_home = json.loads(
+        (await async_handle_slack_webhook(hass, wh_id, _slash_req("occupied"))).text
+    )
+    assert tracker.state.mode == "occupied"
+    assert tracker.state.count == 1
+    assert "Occupied" in s_home["text"]
 
-    s_guest = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("guest off"))).text)
+    s_pet = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("pet"))).text)
+    assert tracker.state.mode == "pet_only"
+    assert tracker.state.count == 0
+    assert "Pet Only" in s_pet["text"]
+
+    s_guest = json.loads(
+        (await async_handle_slack_webhook(hass, wh_id, _slash_req("guest off"))).text
+    )
     assert store.global_settings["guest_mode_enabled"] is False
     assert "DISABLED" in s_guest["text"]
 
-    s_manage = await async_handle_slack_webhook(hass, wh_id, _slash_req("manage", trigger_id="trig_cmd_9"))
+    s_manage = await async_handle_slack_webhook(
+        hass, wh_id, _slash_req("manage", trigger_id="trig_cmd_9")
+    )
     assert s_manage.status == 200
     assert any(p and p.get("trigger_id") == "trig_cmd_9" for u, p in api_calls if "views.open" in u)
 
@@ -937,7 +965,11 @@ async def test_slack_files_write_native_snapshot_upload_and_slash_snapshot(
 
     await store.async_save_daily_thread(
         "C0CBX319XHV",
-        {"date_str": now_local().strftime("%Y-%m-%d"), "thread_ts": "1794809018.835629", "transition_count": 1},
+        {
+            "date_str": now_local().strftime("%Y-%m-%d"),
+            "thread_ts": "1794809018.835629",
+            "transition_count": 1,
+        },
     )
 
     monkeypatch.setattr(
@@ -959,7 +991,15 @@ async def test_slack_files_write_native_snapshot_upload_and_slash_snapshot(
         data = getattr(req, "data", b"") or b""
         urlopen_calls.append((url, data))
         if "files.getUploadURLExternal" in url:
-            return _Resp(json.dumps({"ok": True, "upload_url": "https://files.slack.com/upload/v1/abc", "file_id": "F123"}).encode())
+            return _Resp(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "upload_url": "https://files.slack.com/upload/v1/abc",
+                        "file_id": "F123",
+                    }
+                ).encode()
+            )
         if "files.slack.com/upload" in url:
             return _Resp(b"OK - 12")
         if "files.completeUploadExternal" in url:
@@ -980,7 +1020,10 @@ async def test_slack_files_write_native_snapshot_upload_and_slash_snapshot(
     )
     assert ok is True
     assert any("files.getUploadURLExternal" in u for u, _ in urlopen_calls)
-    assert any("files.slack.com/upload/v1/abc" in u and d == b"\xff\xd8\xff\xe0FAKEJPEG" for u, d in urlopen_calls)
+    assert any(
+        "files.slack.com/upload/v1/abc" in u and d == b"\xff\xd8\xff\xe0FAKEJPEG"
+        for u, d in urlopen_calls
+    )
     comp = [json.loads(d.decode()) for u, d in urlopen_calls if "files.completeUploadExternal" in u]
     assert len(comp) == 1
     assert comp[0]["channel_id"] == "C0CBX319XHV"
@@ -1108,7 +1151,9 @@ async def test_slack_shortcut_opens_manage_modal(monkeypatch) -> None:
         _fake_open,
     )
 
-    payload = json.dumps({"type": "shortcut", "callback_id": "open_presence", "trigger_id": "trig_999"})
+    payload = json.dumps(
+        {"type": "shortcut", "callback_id": "open_presence", "trigger_id": "trig_999"}
+    )
     req = MagicMock()
     req.text = AsyncMock(return_value=urllib.parse.urlencode({"payload": payload}))
     req.content_type = "application/x-www-form-urlencoded"
