@@ -3604,6 +3604,26 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                         <div style="font-size:11px;color:var(--ha-muted);margin-top:2px;">Support attaching Frigate detection captures to cards for review of light vs person/pet (defaults to OFF).</div>
                       </div>
                     </label>
+                    <div style="border-top:1px solid var(--ha-border);padding-top:10px;display:flex;flex-direction:column;gap:8px;">
+                      <div>
+                        <div class="setting-label" style="margin-bottom:4px;">Slack Interactivity Webhook URL</div>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                          <input type="text" class="input" id="gl-slack-webhook-url" readonly value="${this._escape(
+                            this._globalDraft?.slack_webhook_id
+                              ? `${window.location.origin}/api/webhook/${this._globalDraft.slack_webhook_id}`
+                              : "Auto-generated on HA startup"
+                          )}" style="font-family:monospace;font-size:11px;flex:1;" />
+                          <button class="btn" id="btn-copy-slack-webhook" style="font-size:11px;white-space:nowrap;">📋 Copy</button>
+                        </div>
+                        <div style="font-size:11px;color:var(--ha-muted);margin-top:3px;">Paste this URL into <strong>api.slack.com/apps → Interactivity &amp; Shortcuts → Request URL</strong> so Slack buttons reset vacancy in-place.</div>
+                      </div>
+                      <div>
+                        <div class="setting-label" style="margin-bottom:4px;">Slack Signing Secret <span style="font-weight:400;color:var(--ha-muted);">(Optional HMAC verification)</span></div>
+                        <input type="password" class="input" id="gl-slack-signing-secret" value="${this._escape(
+                          this._globalDraft?.slack_signing_secret || ""
+                        )}" placeholder="Leave blank or paste Slack App Signing Secret" />
+                      </div>
+                    </div>
                     <div style="display:flex;justify-content:flex-end;">
                       <button class="btn" id="btn-test-slack-alert" style="font-size:12px;">
                         🔔 Send Test Alert to Slack
@@ -8764,6 +8784,7 @@ action:
         slack_verbosity: root.querySelector("#gl-slack-verbosity")?.value || "compact",
         slack_daily_thread: Boolean(root.querySelector("#gl-slack-daily-thread")?.checked !== false),
         include_camera_snapshot: Boolean(root.querySelector("#gl-include-camera-snapshot")?.checked),
+        slack_signing_secret: root.querySelector("#gl-slack-signing-secret")?.value ?? this._globalDraft?.slack_signing_secret ?? "",
         negative_space_enabled: Boolean(root.querySelector("#gl-neg-space-enabled")?.checked),
         guest_mode_enabled: Boolean(root.querySelector("#gl-guest-mode-enabled")?.checked),
         ble_decider_enabled: Boolean(root.querySelector("#gl-ble-decider-enabled")?.checked),
@@ -8775,6 +8796,17 @@ action:
         ui_advanced_mode: Boolean(root.querySelector("#gl-ui-advanced-mode")?.checked),
       };
       this.saveGlobalSettings();
+    });
+
+    root.querySelector("#btn-copy-slack-webhook")?.addEventListener("click", async () => {
+      const urlVal = root.querySelector("#gl-slack-webhook-url")?.value || "";
+      if (!urlVal.startsWith("http")) return;
+      try {
+        await navigator.clipboard.writeText(urlVal);
+        this.showToast("Copied Slack Interactivity URL to clipboard.", "success");
+      } catch (_err) {
+        this.showToast(urlVal, "info");
+      }
     });
 
     root.querySelector("#btn-test-slack-alert")?.addEventListener("click", async () => {

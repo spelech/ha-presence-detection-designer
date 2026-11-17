@@ -2,7 +2,8 @@
   "domain": "presence_detection_designer",
   "name": "Presence Detection Designer",
   "after_dependencies": [
-    "recorder"
+    "recorder",
+    "webhook"
   ],
   "codeowners": [
     "@spelech"

@@ -443,3 +443,197 @@ async def test_global_settings_and_headcount_service_update_slack_footer_status(
     ctx_text_2 = str(updates[-1]["blocks"][-1])
     assert "*Headcount:* 3 (multi occupant)" in ctx_text_2
     assert "Transitions logged below" in ctx_text_2
+
+
+def test_collect_room_states_formats_actual_since_time() -> None:
+    """Occupied rooms must expose actual local clock time in since_time rather than elapsed duration."""
+    from custom_components.presence_detection_designer.slack_blocks import (
+        build_daily_digest_blocks,
+        collect_room_states,
+        format_since_time,
+    )
+
+    hass, _store = _make_hass_with_store()
+    now_dt = now_local()
+    entry_ts = now_dt.timestamp() - 227.0  # 3m 47s ago
+    expected_clock = format_since_time(entry_ts, now_dt=now_dt)
+    assert expected_clock is not None
+    assert "3m" not in expected_clock
+    assert expected_clock.endswith(("AM", "PM"))
+
+    yesterday_ts = entry_ts - 86400.0
+    yesterday_clock = format_since_time(yesterday_ts, now_dt=now_dt)
+    assert yesterday_clock is not None and "," in yesterday_clock
+
+    coord = MagicMock()
+    coord.room_name = "Office"
+    coord.is_present = True
+    coord._occupied_start_time = entry_ts
+    coord.state_machine.is_present = True
+    coord.state_machine.last_occupied_time = entry_ts
+    coord.state_machine.is_cooling_down = False
+    coord.state_machine.cooling_remaining_sec = 0
+    coord.state_machine.last_trigger_entity = "binary_sensor.office_motion"
+    coord.state_machine.active_conditions = []
+    coord.last_spatial_estimate = None
+
+    hass.data[DOMAIN]["office"] = coord
+    occupied, _clear = collect_room_states(hass, format_duration)
+    assert len(occupied) == 1
+    assert occupied[0]["since_time"] == expected_clock
+    assert "3m 47s" in (occupied[0]["duration_str"] or "")
+
+    blocks = build_daily_digest_blocks(
+        date_display="Monday, Nov 16, 2026",
+        occupied_rooms=occupied,
+        clear_rooms=["Kitchen"],
+        transition_count=12,
+        last_updated_time="06:05 PM",
+        house_headcount=0,
+        occupancy_mode="vacant",
+        notify_transitions=False,
+    )
+    serialized = str(blocks)
+    assert f"_(since {expected_clock})_" in serialized
+    assert "3m 47s" not in serialized
+    assert "pdd_vacancy_controls" in serialized
+    assert "pdd_reset_vacant" in serialized
+    assert "pdd_clear_all_vacant" in serialized
+    assert "pdd_set_home_1" in serialized
+    assert "tap *1 Home* or *Reset Vacant*" in serialized
+
+
+@pytest.mark.asyncio
+async def test_slack_webhook_block_actions_reset_vacant_and_clear_rooms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slack block_actions payloads verify signature, reset vacancy/rooms, and refresh Slack card."""
+    import hashlib
+    import hmac
+    import json
+    import urllib.parse
+    from types import SimpleNamespace
+
+    from custom_components.presence_detection_designer.const import (
+        CONF_SLACK_SIGNING_SECRET,
+        OccupancyState,
+    )
+    from custom_components.presence_detection_designer.house_perimeter import (
+        get_house_perimeter_tracker,
+    )
+    from custom_components.presence_detection_designer.slack_actions import (
+        async_ensure_slack_webhook_id,
+        async_handle_slack_webhook,
+    )
+    from custom_components.presence_detection_designer.slack_cards import (
+        get_slack_daily_thread_manager,
+    )
+
+    hass, store = _make_hass_with_store()
+    await store.async_update_global_settings(
+        {
+            CONF_SLACK_SIGNING_SECRET: "test_secret_123",
+            "house_occupant_count": 2,
+            "slack_channel": "#presence-alerts",
+        }
+    )
+    wh_id = await async_ensure_slack_webhook_id(hass)
+    assert wh_id.startswith("pdd_slack_")
+
+    tracker = get_house_perimeter_tracker(hass)
+    tracker.set_headcount(2, persist=False, notify_digest=False)
+
+    # Create a real-ish mock room coordinator currently occupied
+    from custom_components.presence_detection_designer.state_machine import (
+        RoomEvidenceSnapshot,
+        RoomPresenceStateMachine,
+    )
+
+    sm = RoomPresenceStateMachine(name="Office")
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.office_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.office_motion",
+        )
+    )
+    assert sm.is_present is True
+
+    coord = SimpleNamespace(
+        room_name="Office",
+        entry_id="office",
+        state_machine=sm,
+        _occupied_start_time=time.time() - 60.0,
+        last_spatial_estimate=None,
+        async_update_listeners=MagicMock(),
+    )
+    coord.is_present = True
+    hass.data[DOMAIN]["office"] = coord
+
+    mgr = get_slack_daily_thread_manager(hass)
+    monkeypatch.setattr(mgr, "get_slack_token", lambda _h: "xoxb-tok")
+    today = now_local().strftime("%Y-%m-%d")
+    await store.async_save_daily_thread(
+        "C0CBX319XHV",
+        {"date_str": today, "thread_ts": "1794809018.835629", "transition_count": 5},
+    )
+
+    updated_cards: list[dict[str, Any]] = []
+
+    def _fake_api(url: str, token: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        if "conversations.list" in url:
+            return {"ok": True, "channels": [{"id": "C0CBX319XHV", "name": "presence-alerts"}]}
+        if "chat.update" in url and payload:
+            updated_cards.append(payload)
+            return {"ok": True}
+        return {"ok": True}
+
+    monkeypatch.setattr(mgr, "call_slack_web_api", _fake_api)
+
+    def _make_slack_request(action_id: str, *, bad_sig: bool = False) -> Any:
+        payload_json = json.dumps(
+            {
+                "type": "block_actions",
+                "user": {"username": "steve"},
+                "actions": [{"action_id": action_id, "value": "x"}],
+            }
+        )
+        raw_body = "payload=" + urllib.parse.quote(payload_json)
+        ts = str(int(time.time()))
+        sig = (
+            "v0=deadbeef"
+            if bad_sig
+            else "v0="
+            + hmac.new(b"test_secret_123", f"v0:{ts}:{raw_body}".encode(), hashlib.sha256).hexdigest()
+        )
+        req = MagicMock()
+        req.text = AsyncMock(return_value=raw_body)
+        req.content_type = "application/x-www-form-urlencoded"
+        req.headers = {"X-Slack-Request-Timestamp": ts, "X-Slack-Signature": sig}
+        return req
+
+    # Invalid signature must be rejected
+    bad_resp = await async_handle_slack_webhook(hass, wh_id, _make_slack_request("pdd_reset_vacant", bad_sig=True))
+    assert bad_resp.status == 401
+    assert tracker.state.count == 2
+
+    # Reset Vacant sets count to 0 without clearing active rooms
+    resp1 = await async_handle_slack_webhook(hass, wh_id, _make_slack_request("pdd_reset_vacant"))
+    assert resp1.status == 200
+    assert tracker.state.count == 0
+    assert store.global_settings["house_occupant_count"] == 0
+    assert sm.is_present is True
+    assert len(updated_cards) >= 1
+
+    # Set 1 Home + +1 sets count to 2
+    await async_handle_slack_webhook(hass, wh_id, _make_slack_request("pdd_set_home_1"))
+    assert tracker.state.count == 1
+    await async_handle_slack_webhook(hass, wh_id, _make_slack_request("pdd_headcount_inc"))
+    assert tracker.state.count == 2
+
+    # Clear Rooms & Vacant sets count to 0 AND force-clears occupied rooms
+    resp2 = await async_handle_slack_webhook(hass, wh_id, _make_slack_request("pdd_clear_all_vacant"))
+    assert resp2.status == 200
+    assert tracker.state.count == 0
+    assert sm.state == OccupancyState.VACANT
+    assert sm.is_present is False

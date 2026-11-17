@@ -26,6 +26,23 @@ def _section(text: str) -> dict[str, Any]:
     return {"type": "section", "text": _mrkdwn(text)}
 
 
+def format_since_time(ts: float | None, now_dt: datetime | None = None) -> str | None:
+    """Format an epoch timestamp as a concise local wall-clock time for Slack."""
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool) or ts <= 0:
+        return None
+    ref = now_dt or now_local()
+    try:
+        dt = datetime.fromtimestamp(float(ts), tz=ref.tzinfo)
+    except (OverflowError, OSError, ValueError):
+        return None
+    time_str = dt.strftime("%I:%M %p").lstrip("0") or "12:00 AM"
+    if dt.date() == ref.date():
+        return time_str
+    if dt.year == ref.year:
+        return f"{dt.strftime('%b')} {dt.day}, {time_str}"
+    return f"{dt.strftime('%b')} {dt.day} {dt.year}, {time_str}"
+
+
 def now_local() -> datetime:
     """Return current local datetime using HA timezone when available."""
     try:
@@ -134,11 +151,18 @@ def collect_room_states(
         )
         if is_occ:
             dur_str = None
+            since_time = None
             raw_occ = getattr(coord, "_occupied_start_time", None)
-            if not isinstance(raw_occ, (int, float)) or raw_occ <= 0:
+            if (
+                not isinstance(raw_occ, (int, float))
+                or isinstance(raw_occ, bool)
+                or raw_occ <= 0
+            ):
                 raw_occ = getattr(coord.state_machine, "last_occupied_time", None)
-            if isinstance(raw_occ, (int, float)) and raw_occ > 0 and format_duration_fn:
-                dur_str = format_duration_fn(max(0.0, time.time() - float(raw_occ)))
+            if isinstance(raw_occ, (int, float)) and not isinstance(raw_occ, bool) and raw_occ > 0:
+                since_time = format_since_time(float(raw_occ))
+                if format_duration_fn:
+                    dur_str = format_duration_fn(max(0.0, time.time() - float(raw_occ)))
             sm = coord.state_machine
             rem = getattr(sm, "cooling_remaining_sec", 0)
             if (
@@ -159,7 +183,9 @@ def collect_room_states(
                 ) or coord.last_spatial_estimate.get("spatial_method")
             else:
                 driver = "Sensor Fusion"
-            occupied.append({"name": name, "duration_str": dur_str, "driver": driver})
+            occupied.append(
+                {"name": name, "since_time": since_time, "duration_str": dur_str, "driver": driver}
+            )
         else:
             clear.append(name)
     occupied.sort(key=lambda x: str(x.get("name", "")))
@@ -228,6 +254,12 @@ def build_transition_card_blocks(
     return blocks
 
 
+def _get_actions_block(*, highlight_set_home: bool = False) -> dict[str, Any]:
+    from .slack_actions import build_vacancy_actions_block
+
+    return build_vacancy_actions_block(highlight_set_home=highlight_set_home)
+
+
 def build_daily_digest_blocks(
     date_display: str,
     occupied_rooms: list[dict[str, Any]],
@@ -249,23 +281,62 @@ def build_daily_digest_blocks(
             },
         }
     ]
+    occ_count, clr_count = len(occupied_rooms), len(clear_rooms)
+    if house_headcount is not None:
+        if house_headcount <= 0 and occ_count > 0:
+            status_line = (
+                f"⚠️ *House Status:* Vacant _(0 occupants)_ · *{occ_count} rooms active*"
+                " — _tap *1 Home* or *Reset Vacant* below_"
+            )
+        elif house_headcount <= 0:
+            status_line = f"⚪ *House Status:* Vacant _(0 occupants)_ · All {clr_count} rooms clear"
+        elif house_headcount == 1:
+            status_line = f"👤 *House Status:* Home _(1 occupant)_ · {occ_count} occupied · {clr_count} clear"
+        else:
+            status_line = (
+                f"👥 *House Status:* Home _({house_headcount} occupants)_"
+                f" · {occ_count} occupied · {clr_count} clear"
+            )
+    else:
+        status_line = f"📊 *House Status:* {occ_count} occupied · {clr_count} clear"
+    blocks.append(_section(status_line))
+
     if occupied_rooms:
         lines = []
         for r in occupied_rooms[:12]:
-            dur = f" _(since {r['duration_str']})_" if r.get("duration_str") else ""
+            if r.get("since_time"):
+                since_part = f" _(since {r['since_time']})_"
+            elif r.get("duration_str"):
+                since_part = f" _(for {r['duration_str']})_"
+            else:
+                since_part = ""
             raw_drv = str(r.get("driver") or "").replace("`", "").strip()
-            drv = f" via `{raw_drv}`" if raw_drv else ""
-            lines.append(f"🟢 *{r.get('name', 'Unknown')}*{dur}{drv}")
+            if raw_drv.startswith("Cooling ("):
+                drv = f" · ⏳ `{raw_drv}`"
+            elif raw_drv:
+                drv = f" via `{raw_drv}`"
+            else:
+                drv = ""
+            lines.append(f"🟢 *{r.get('name', 'Unknown')}*{since_part}{drv}")
+        if occ_count > 12:
+            lines.append(f"_… +{occ_count - 12} more occupied_")
         occ_text = "\n".join(lines)
     else:
         occ_text = "_⚪ All rooms currently clear._"
 
-    clear_text = ", ".join(clear_rooms[:20]) if clear_rooms else "_None_"
+    if clear_rooms:
+        clear_text = ", ".join(clear_rooms[:20])
+        if clr_count > 20:
+            clear_text += f" _(+{clr_count - 20} more)_"
+    else:
+        clear_text = "_None_"
+
     blocks.extend(
         [
-            _section(f"*Currently Occupied ({len(occupied_rooms)}):*\n{occ_text}"),
-            _section(f"*Cleared ({len(clear_rooms)}):*\n{clear_text}"),
+            _section(f"*Currently Occupied ({occ_count}):*\n{occ_text}"),
+            _section(f"*Cleared ({clr_count}):*\n{clear_text}"),
             {"type": "divider"},
+            _get_actions_block(highlight_set_home=(house_headcount == 0 and occ_count > 0)),
         ]
     )
     ctx = [

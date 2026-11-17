@@ -66,6 +66,7 @@ class HousePerimeterTracker:
         self._unsub_trackers: list[Callable[[], None]] = []
         self._door_opened_ts: dict[str, float] = {}
         self._door_is_open: dict[str, bool] = {}
+        self._door_had_interior_motion_on_open: dict[str, bool] = {}
         self._last_vector_by_door: dict[str, str] = {}
         self._last_vector_ts_by_door: dict[str, float] = {}
         self._exterior_last_active_ts: dict[str, float] = {}
@@ -230,14 +231,24 @@ class HousePerimeterTracker:
 
         if is_open:
             self._door_opened_ts[entity_id] = now
+            self._door_had_interior_motion_on_open[entity_id] = (
+                self._host_room_had_recent_activity(host_room, now)
+            )
             return None
 
         # Door just closed
         opened_at = self._door_opened_ts.pop(entity_id, None)
+        had_motion_on_open = self._door_had_interior_motion_on_open.pop(entity_id, None)
         if opened_at is None:
             opened_at = now - 5.0  # reasonable default if we missed open
 
-        vector, confidence, details = self._infer_door_vector(entity_id, host_room, opened_at, now)
+        vector, confidence, details = self._infer_door_vector(
+            entity_id,
+            host_room,
+            opened_at,
+            now,
+            had_motion_on_open=had_motion_on_open,
+        )
         if vector == "pending_egress":
             corroborators = self.get_configured_exit_corroborators().get(entity_id, [])
             self._pending_exit_corroborations.append(
@@ -296,17 +307,31 @@ class HousePerimeterTracker:
 
         return vet_exit_vector(self, door_entity, host_room, opened_ts, confidence, details)
 
+    def _host_room_had_recent_activity(self, host_room: str, now: float) -> bool:
+        """Snapshot whether host_room already had interior motion/presence before door opened."""
+        from .perimeter_helpers import host_room_had_recent_activity
+
+        return host_room_had_recent_activity(self, host_room, now)
+
     def _infer_door_vector(
         self,
         door_entity: str,
         host_room: str,
         opened_ts: float,
         closed_ts: float,
+        had_motion_on_open: bool | None = None,
     ) -> tuple[str, float, str]:
         """Directionally vector door transit into ingress vs egress based on sensor timings."""
         from .perimeter_helpers import infer_door_vector
 
-        return infer_door_vector(self, door_entity, host_room, opened_ts, closed_ts)
+        return infer_door_vector(
+            self,
+            door_entity,
+            host_room,
+            opened_ts,
+            closed_ts,
+            had_motion_on_open=had_motion_on_open,
+        )
 
     def _is_duplicate_vector(self, entity_id: str, vector: str, now: float) -> bool:
         """Return True for a repeated same-direction transit of the same door."""
