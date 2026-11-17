@@ -3615,7 +3615,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                           )}" style="font-family:monospace;font-size:11px;flex:1;" />
                           <button class="btn" id="btn-copy-slack-webhook" style="font-size:11px;white-space:nowrap;">📋 Copy</button>
                         </div>
-                        <div style="font-size:11px;color:var(--ha-muted);margin-top:3px;">Paste this URL into <strong>api.slack.com/apps → Interactivity &amp; Shortcuts → Request URL</strong> so Slack buttons reset vacancy in-place.</div>
+                        <div style="font-size:11px;color:var(--ha-muted);margin-top:3px;">One unified URL for <strong>api.slack.com/apps</strong>: paste into <strong>Interactivity &amp; Shortcuts</strong> (buttons + Control Modal), <strong>Slash Commands</strong> (<code>/presence</code>), and <strong>Event Subscriptions</strong> (<code>app_home_opened</code> for live App Home).</div>
                       </div>
                       <div>
                         <div class="setting-label" style="margin-bottom:4px;">Slack Signing Secret <span style="font-weight:400;color:var(--ha-muted);">(Optional HMAC verification)</span></div>

@@ -267,6 +267,7 @@ class NotificationDispatcher:
             verbosity=verbosity,
             include_snapshot=include_snapshot,
             snapshot_url=snapshot_url,
+            room_id=attribution.room_id,
         )
         return {
             "text": full_text,

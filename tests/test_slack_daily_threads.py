@@ -637,3 +637,254 @@ async def test_slack_webhook_block_actions_reset_vacant_and_clear_rooms(
     assert tracker.state.count == 0
     assert sm.state == OccupancyState.VACANT
     assert sm.is_present is False
+
+
+@pytest.mark.asyncio
+async def test_slack_modal_app_home_slash_commands_and_room_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify native Slack App capabilities: Modal views.open/submission, App Home, /presence, and room buttons."""
+    import json
+    import urllib.parse
+    from types import SimpleNamespace
+
+    from custom_components.presence_detection_designer.const import OccupancyState
+    from custom_components.presence_detection_designer.house_perimeter import (
+        get_house_perimeter_tracker,
+    )
+    from custom_components.presence_detection_designer.notifications import TransitionAttribution
+    from custom_components.presence_detection_designer.slack_actions import (
+        async_ensure_slack_webhook_id,
+        async_handle_slack_webhook,
+    )
+    from custom_components.presence_detection_designer.slack_blocks import (
+        build_transition_card_blocks,
+        now_local,
+    )
+    from custom_components.presence_detection_designer.slack_cards import (
+        get_slack_daily_thread_manager,
+    )
+    from custom_components.presence_detection_designer.state_machine import (
+        RoomEvidenceSnapshot,
+        RoomPresenceStateMachine,
+    )
+
+    hass, store = _make_hass_with_store()
+    await store.async_update_global_settings({"slack_channel": "#presence-alerts"})
+    wh_id = await async_ensure_slack_webhook_id(hass)
+
+    tracker = get_house_perimeter_tracker(hass)
+    tracker.set_headcount(1, persist=False, notify_digest=False)
+
+    sm = RoomPresenceStateMachine(name="Office")
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.office_motion"}),
+            human_present=True,
+            last_trigger_entity="binary_sensor.office_motion",
+        )
+    )
+    verify_mock = AsyncMock()
+    coord = SimpleNamespace(
+        room_name="Office",
+        entry_id="office",
+        camera_entity="camera.office",
+        llm_enabled=True,
+        state_machine=sm,
+        _occupied_start_time=time.time() - 120.0,
+        last_spatial_estimate=None,
+        async_manual_verify=verify_mock,
+        async_refresh_all_states=MagicMock(),
+        async_update_listeners=MagicMock(),
+    )
+    coord.is_present = True
+    hass.data[DOMAIN]["office"] = coord
+
+    mgr = get_slack_daily_thread_manager(hass)
+    monkeypatch.setattr(mgr, "get_slack_token", lambda _h: "xoxb-tok")
+    today = now_local().strftime("%Y-%m-%d")
+    await store.async_save_daily_thread(
+        "C0CBX319XHV",
+        {"date_str": today, "thread_ts": "1794809018.835629", "transition_count": 3},
+    )
+
+    api_calls: list[tuple[str, dict[str, Any] | None]] = []
+
+    def _fake_api(url: str, token: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        api_calls.append((url, payload))
+        if "conversations.list" in url:
+            return {"ok": True, "channels": [{"id": "C0CBX319XHV", "name": "presence-alerts"}]}
+        return {"ok": True}
+
+    monkeypatch.setattr(mgr, "call_slack_web_api", _fake_api)
+
+    response_posts: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer.slack_actions._post_response_url_sync",
+        lambda url, body: response_posts.append((url, body)),
+    )
+
+    # 1. Transition card for occupied room includes per-room interactive buttons
+    attr = TransitionAttribution(
+        room_id="office",
+        room_name="Office",
+        from_state="clear",
+        to_state="occupied",
+        primary_driver="binary_sensor.office_motion",
+        driver_type="sensor",
+        confidence_pct=92.0,
+        threshold_pct=70.0,
+        active_sensors=["binary_sensor.office_motion"],
+        sustaining_conditions=[],
+    )
+    card_blocks = build_transition_card_blocks(attr, verbosity="compact", room_id="office")
+    card_serialized = json.dumps(card_blocks)
+    assert "pdd_room_clear" in card_serialized
+    assert "pdd_room_verify" in card_serialized
+    assert "pdd_room_override" in card_serialized
+
+    def _form_req(payload_obj: dict[str, Any]) -> Any:
+        raw_body = "payload=" + urllib.parse.quote(json.dumps(payload_obj))
+        req = MagicMock()
+        req.text = AsyncMock(return_value=raw_body)
+        req.content_type = "application/x-www-form-urlencoded"
+        req.headers = {}
+        return req
+
+    def _json_req(obj: dict[str, Any]) -> Any:
+        req = MagicMock()
+        req.text = AsyncMock(return_value=json.dumps(obj))
+        req.content_type = "application/json"
+        req.headers = {}
+        return req
+
+    def _slash_req(text_arg: str, *, trigger_id: str = "trig_slash") -> Any:
+        raw_body = urllib.parse.urlencode(
+            {
+                "command": "/presence",
+                "text": text_arg,
+                "user_id": "U123",
+                "user_name": "steve",
+                "trigger_id": trigger_id,
+                "response_url": "https://hooks.slack.com/commands/T/1/abc",
+            }
+        )
+        req = MagicMock()
+        req.text = AsyncMock(return_value=raw_body)
+        req.content_type = "application/x-www-form-urlencoded"
+        req.headers = {}
+        return req
+
+    # 2. App Home opened event triggers views.publish
+    home_resp = await async_handle_slack_webhook(
+        hass, wh_id, _json_req({"type": "event_callback", "event": {"type": "app_home_opened", "user": "U123"}})
+    )
+    assert home_resp.status == 200
+    publish_calls = [p for u, p in api_calls if "views.publish" in u and p]
+    assert len(publish_calls) == 1
+    assert publish_calls[0]["user_id"] == "U123"
+    assert publish_calls[0]["view"]["type"] == "home"
+    assert "pdd_home_room_menu" in json.dumps(publish_calls[0]["view"])
+
+    # 3. Manage button opens native Slack Modal via views.open
+    modal_open_resp = await async_handle_slack_webhook(
+        hass,
+        wh_id,
+        _form_req(
+            {
+                "type": "block_actions",
+                "trigger_id": "trig_modal_1",
+                "user": {"id": "U123", "username": "steve"},
+                "actions": [{"action_id": "pdd_open_manage_modal", "value": "manage"}],
+            }
+        ),
+    )
+    assert modal_open_resp.status == 200
+    open_calls = [p for u, p in api_calls if "views.open" in u and p]
+    assert len(open_calls) == 1
+    assert open_calls[0]["trigger_id"] == "trig_modal_1"
+    assert open_calls[0]["view"]["callback_id"] == "pdd_manage_modal"
+
+    # 4. Modal view_submission applies headcount, toggles, room clear, and room verify
+    sub_resp = await async_handle_slack_webhook(
+        hass,
+        wh_id,
+        _form_req(
+            {
+                "type": "view_submission",
+                "user": {"id": "U123", "username": "steve"},
+                "view": {
+                    "callback_id": "pdd_manage_modal",
+                    "state": {
+                        "values": {
+                            "blk_headcount": {"inp_headcount": {"selected_option": {"value": "3"}}},
+                            "blk_toggles": {
+                                "inp_toggles": {
+                                    "selected_options": [
+                                        {"value": "guest_mode_enabled"},
+                                        {"value": "slack_notify_transitions"},
+                                        {"value": "notifications_enabled"},
+                                    ]
+                                }
+                            },
+                            "blk_clear_rooms": {"inp_clear_rooms": {"selected_options": [{"value": "office"}]}},
+                            "blk_verify_rooms": {"inp_verify_rooms": {"selected_options": [{"value": "office"}]}},
+                        }
+                    },
+                },
+            }
+        ),
+    )
+    assert sub_resp.status == 200
+    assert json.loads(sub_resp.text) == {"response_action": "clear"}
+    assert tracker.state.count == 3
+    assert store.global_settings["guest_mode_enabled"] is True
+    assert store.global_settings["slack_notify_transitions"] is True
+    assert sm.state == OccupancyState.VACANT
+    assert verify_mock.await_count == 1
+
+    # 5. Overflow menu from App Home can toggle override and verify
+    ovr_resp = await async_handle_slack_webhook(
+        hass,
+        wh_id,
+        _form_req(
+            {
+                "type": "block_actions",
+                "user": {"id": "U123", "username": "steve"},
+                "view": {"type": "home"},
+                "response_url": "https://hooks.slack.com/actions/T/1/xyz",
+                "actions": [
+                    {
+                        "action_id": "pdd_home_room_menu",
+                        "selected_option": {"value": "override|office"},
+                    }
+                ],
+            }
+        ),
+    )
+    assert ovr_resp.status == 200
+    assert sm.override is True
+    assert response_posts[-1][1]["replace_original"] is False
+    assert response_posts[-1][1]["response_type"] == "ephemeral"
+    # Disable override back
+    sm.set_override(False)
+
+    # 6. Slash commands: /presence status, /presence help, /presence home 2, /presence guest off, /presence manage
+    s_status = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("status"))).text)
+    assert s_status["response_type"] == "ephemeral"
+    assert "pdd_vacancy_controls" in json.dumps(s_status["blocks"])
+
+    s_help = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("help"))).text)
+    assert "/presence vacant" in s_help["text"]
+
+    s_home = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("home 2"))).text)
+    assert tracker.state.count == 2
+    assert "2" in s_home["text"]
+
+    s_guest = json.loads((await async_handle_slack_webhook(hass, wh_id, _slash_req("guest off"))).text)
+    assert store.global_settings["guest_mode_enabled"] is False
+    assert "DISABLED" in s_guest["text"]
+
+    s_manage = await async_handle_slack_webhook(hass, wh_id, _slash_req("manage", trigger_id="trig_cmd_9"))
+    assert s_manage.status == 200
+    assert any(p and p.get("trigger_id") == "trig_cmd_9" for u, p in api_calls if "views.open" in u)
