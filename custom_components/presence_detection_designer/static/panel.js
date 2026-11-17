@@ -2102,7 +2102,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
       ? `<rect x="${(-pillW / 2 - 6).toFixed(1)}" y="${(-r - 17).toFixed(1)}" width="${(pillW + 12).toFixed(1)}" height="14" rx="7" fill="#0f172a" opacity="0.86" />
          <text x="0" y="${(-r - 7).toFixed(1)}" text-anchor="middle" fill="#f8fafc" font-size="8.5" font-weight="600">${this._escape(subTag)}</text>`
       : "";
-    const showCountBadge = prof.role !== "pet" && Number.isFinite(count) && count >= 1;
+    const showCountBadge = prof.role !== "pet" && Number.isFinite(count) && count > 1;
     const badgeColor = isInferred ? "#0284c7" : "#15803d";
     const countBadgeSvg = showCountBadge
       ? `<g class="tl-occ-count-badge" transform="translate(${(r * 0.74).toFixed(1)}, ${(r * 0.74).toFixed(1)})">
@@ -2172,6 +2172,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         const clr = clearCams.length ? clearCams.slice(0, 2).join(", ") : "camera";
         reasonText = `Active signal from ${drv}. Camera ${clr} shows no person. System infers ${who.toLowerCase()} is in an uncovered area.`;
       }
+    } else if (tr.occupancy_state && tr.probability_pct != null) {
+      const stateLabel = String(tr.occupancy_state).replace(/_/g, " ");
+      const drvSuffix = drivers.length ? ` Active: ${drivers.slice(0, 3).join(", ")}.` : "";
+      reasonText = `Coordinator state ${stateLabel} (${Number(tr.probability_pct).toFixed(1)}% Bayesian probability).${drvSuffix}`;
     } else if (drivers.length) {
       reasonText = `Confirmed by ${drivers.slice(0, 3).join(", ")}.`;
     } else if (tr.explanation) {
@@ -8082,7 +8086,7 @@ action:
     if (visOccEl) {
       const curFr = parts.frames[parts.frameIdx] || {};
       const visHumans = (curFr.occupant_estimates || curFr.occupants || []).length;
-      const houseCap = this._timelineData?.house_occupant_count;
+      const houseCap = curFr.house_occupant_count ?? this._timelineData?.house_occupant_count;
       visOccEl.textContent = houseCap != null ? `${visHumans} / ${houseCap}` : `${visHumans}`;
     }
     root.querySelectorAll("[data-tl-floor-count]").forEach((badge) => {
@@ -8216,7 +8220,7 @@ action:
         <!-- KPI Summary Bar -->
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));gap:10px;margin-bottom:14px;">
           <div style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:8px;padding:8px 12px;">
-            <div style="font-size:11px;color:var(--ha-muted);">Timeline Window (${summary.window_hours || this._timelineHours}h)</div>
+            <div style="font-size:11px;color:var(--ha-muted);">Timeline Window (${summary.window_hours || this._timelineHours}h · ${tl.source === "component_logs" ? "Component Logs" : "Sensor Replay"})</div>
             <div style="font-size:16px;font-weight:700;">${Number(tl.frame_count || frames.length)} frames · ${Number(transitions.length)} events</div>
           </div>
           <div style="background:var(--ha-accent-cyan-bg);border:1px solid var(--ha-accent-cyan-border);border-radius:8px;padding:8px 12px;">
@@ -8308,7 +8312,8 @@ action:
                 Occupants: <strong id="tl-visible-occupants-count">${(() => {
                   const cf = frames[frameIdx] || {};
                   const vh = (cf.occupant_estimates || cf.occupants || []).length;
-                  return tl.house_occupant_count != null ? `${vh} / ${tl.house_occupant_count}` : `${vh}`;
+                  const hc = cf.house_occupant_count ?? tl.house_occupant_count;
+                  return hc != null ? `${vh} / ${hc}` : `${vh}`;
                 })()}</strong>
                 &nbsp;|&nbsp; Active Rooms: <strong id="tl-active-rooms">${this._escape(occupiedRoomsList.join(", ") || "None")}</strong>
               </span>

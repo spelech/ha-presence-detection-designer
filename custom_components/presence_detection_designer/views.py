@@ -89,7 +89,7 @@ class PDDOverviewView(HomeAssistantView):
 
         rooms_payload: list[dict[str, Any]] = []
         domain_data = hass.data.get(DOMAIN, {})
-        for eid, coordinator in domain_data.items():
+        for eid, coordinator in list(domain_data.items()):
             if not isinstance(coordinator, RoomPresenceCoordinator):
                 continue
             revs = store.get_revisions(eid)

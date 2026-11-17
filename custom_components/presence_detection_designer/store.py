@@ -259,7 +259,7 @@ class PDDStore:
         timeline_dict = self._data.setdefault("timeline", {})
         events = list(timeline_dict.get(entry_id) or [])
         now_dt = datetime.datetime.now(datetime.UTC)
-        payload = {
+        payload: dict[str, Any] = {
             "ts": float(event.get("ts") or now_dt.timestamp()),
             "iso": str(event.get("iso") or now_dt.isoformat()),
             "is_present": bool(event.get("is_present", False)),
@@ -267,6 +267,22 @@ class PDDStore:
             "probability_pct": float(event.get("probability_pct", 0.0)),
             "entity_states": dict(event.get("entity_states") or {}),
         }
+        for opt_str in ("verified_by", "reason", "last_handoff_room", "inferred_subregion"):
+            val = event.get(opt_str)
+            if val:
+                payload[opt_str] = str(val)
+        for opt_bool in ("camera_confirmed", "pet_present"):
+            if opt_bool in event and event.get(opt_bool) is not None:
+                payload[opt_bool] = bool(event.get(opt_bool))
+        for opt_list in ("positive_drivers", "negative_exclusions"):
+            val = event.get(opt_list)
+            if isinstance(val, list) and val:
+                payload[opt_list] = list(val)
+        if event.get("house_occupant_count") is not None:
+            try:
+                payload["house_occupant_count"] = max(0, int(event["house_occupant_count"]))
+            except (TypeError, ValueError):
+                pass
         if events:
             last = events[-1]
             if (

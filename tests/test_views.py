@@ -1304,7 +1304,7 @@ assert(ste.reasonText.includes("Sensor Kitchen PIR detected motion. Camera Livin
 
 // 9. Solid vs Dashed rings, lower-right count badge, persistent dashed arrows, and clean cross-floor
 assert(mainPart.arrowsSvg.includes('stroke-dasharray="6,4"'), "Same-floor movement arrow must be dashed");
-assert(mainPart.occupantsSvg.includes('tl-occ-count-badge'), "Human token should render lower-right count badge");
+assert(!mainPart.occupantsSvg.includes('tl-occ-count-badge'), "Count badge must stay hidden when count === 1");
 assert(!mainPart.occupantsSvg.includes('stroke-dasharray="5,3"'), "Confirmed occupant should render solid ring border");
 
 // Test inferred occupant (dashed ring), grouped room count badge (2), persistent arrow past 8 frames, and clean cross-floor
@@ -1329,7 +1329,7 @@ const ringParts = panel._buildTimelineFrameParts();
 const ringMain = ringParts.floorParts.find((fp) => fp.floor.id === "main");
 const ringUp = ringParts.floorParts.find((fp) => fp.floor.id === "upstairs");
 assert(ringMain.occupantsSvg.includes('stroke-dasharray="5,3"'), "Inferred occupant must render dashed ring");
-assert(ringMain.occupantsSvg.includes('>2</text>'), "Grouped identical generic occupants in same room must show count badge 2");
+assert(ringMain.occupantsSvg.includes('tl-occ-count-badge') && ringMain.occupantsSvg.includes('>2</text>'), "Grouped identical generic occupants (>1) in same room must show count badge 2");
 assert(ringMain.arrowsSvg.includes('stroke-dasharray="6,4"'), "Dashed movement arrow must persist beyond 8 frames while in room");
 assert(ringUp.occupantsSvg.includes("From Main"), "Cross-floor transition must show clean From <Floor> pill");
 assert(ringUp.arrowsSvg.includes('stroke-dasharray="4,3"'), "Cross-floor transition must show compact dashed entry stub");
@@ -1372,3 +1372,69 @@ async def test_room_action_verify_presence_camera_override(mock_hass):
     assert status == 200
     assert body["status"] == "ok"
     mock_verify.assert_awaited_once_with(camera_entity="camera.test_override")
+
+
+@pytest.mark.asyncio
+async def test_timeline_reconstruction_view_uses_component_logs(mock_hass):
+    """PDDTimelineReconstructionView plays back recorded PDDStore component logs directly."""
+    import time
+
+    from custom_components.presence_detection_designer.store import async_get_store
+    from custom_components.presence_detection_designer.views import PDDTimelineReconstructionView
+
+    store = await async_get_store(mock_hass)
+    now = time.time()
+    await store.async_save_room("entry_kitchen", {"room_name": "Kitchen"})
+    await store.async_save_room("entry_office", {"room_name": "Office"})
+    store.record_timeline_event(
+        "entry_kitchen",
+        {
+            "ts": now - 120.0,
+            "is_present": True,
+            "occupancy_state": "occupied_confirmed",
+            "probability_pct": 94.5,
+            "verified_by": "camera",
+            "camera_confirmed": True,
+            "house_occupant_count": 1,
+            "entity_states": {"binary_sensor.kitchen_person_occupancy": "on"},
+        },
+    )
+    store.record_timeline_event(
+        "entry_kitchen",
+        {
+            "ts": now - 60.0,
+            "is_present": True,
+            "occupancy_state": "occupied_holding",
+            "probability_pct": 72.0,
+            "entity_states": {},
+        },
+    )
+    store.record_timeline_event(
+        "entry_office",
+        {
+            "ts": now - 55.0,
+            "is_present": True,
+            "occupancy_state": "occupied_confirmed",
+            "probability_pct": 91.2,
+            "entity_states": {
+                "binary_sensor.office_person_occupancy": "on",
+                "sensor.steve_s_s25_ble_area": "Office",
+            },
+        },
+    )
+
+    view = PDDTimelineReconstructionView()
+    req = _make_request(mock_hass, {})
+    req.query = {"hours": "1", "negative_space": "true"}
+    status, body = _unpack(await view.get(req))
+    assert status == 200
+    assert body["source"] == "component_logs"
+    assert len(body["frames"]) >= 2
+    last_occ = body["frames"][-1]["occupant_estimates"]
+    office_occ = next(o for o in last_occ if o["room"] == "Office")
+    kitchen_occ = next(o for o in last_occ if o["room"] == "Kitchen")
+    assert office_occ["method"] == "positive"
+    assert office_occ["occupant_label"] == "Steve"
+    assert office_occ["probability_pct"] == 91.2
+    assert kitchen_occ["method"] == "negative_space"
+    assert kitchen_occ["occupancy_state"] == "occupied_holding"
