@@ -56,7 +56,11 @@ from .const import (
 from .evidence_snapshot import RoomEvidenceSnapshot
 from .llm_verifier import LLMVerifier
 from .pir_validation import PIRValidationStateMachine
-from .sensor_reliability import classify_sensor_reliability, is_human_exclusive_initiator
+from .sensor_reliability import (
+    classify_sensor_reliability,
+    is_camera_entity,
+    is_human_exclusive_initiator,
+)
 from .state_machine import RoomPresenceStateMachine
 
 _LOGGER = logging.getLogger(__name__)
@@ -273,27 +277,34 @@ def build_coordinator_evidence_snapshot(
     sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
     raw_human = bool(sp.get("human_present", False))
     pet_present = bool(sp.get("pet_present", False))
-    drivers = sp.get("positive_drivers") or []
+    raw_drivers = [str(d) for d in (sp.get("positive_drivers") or []) if d]
+    raw_triggers = set(getattr(coord, "_active_triggers", set()))
+    configured_triggers = getattr(coord, "trigger_entities", None)
+    if isinstance(configured_triggers, (list, tuple, set)):
+        allowed_set = {str(t) for t in configured_triggers if t and str(t) in raw_triggers}
+        hass_obj = getattr(coord, "hass", None)
+        if hass_obj and isinstance(getattr(hass_obj, "data", None), dict):
+            st_obj = hass_obj.data.get(DOMAIN, {}).get(DATA_STORE)
+            gs = getattr(st_obj, "global_settings", None) if st_obj is not None else None
+            if isinstance(gs, dict) and gs.get("ble_decider_enabled"):
+                allowed_set.update(str(b) for b in (gs.get("ble_trackers") or []) if b)
+        drivers = [d for d in raw_drivers if d in allowed_set]
+    else:
+        drivers = raw_drivers
+
     is_hold_only_spatial = bool(
         sp.get("method") in ("negative_space", "blind_pocket")
-        or (sp.get("should_hold_occupied", False) and not drivers)
+        or (sp.get("should_hold_occupied", False) and not raw_drivers)
     )
-    human_present = raw_human and not is_hold_only_spatial
+    human_present = bool(
+        raw_human and not is_hold_only_spatial and (bool(drivers) or configured_triggers is None)
+    )
     spatial_hold = bool(
         raw_human
         and is_hold_only_spatial
         and (sp.get("should_hold_occupied", False) or sp.get("should_hold", False))
     )
-    camera_confirmed = bool(
-        human_present
-        and any(
-            k in str(drv).lower()
-            for drv in drivers
-            for k in ("camera", "person", "subzone", "zone")
-        )
-    )
 
-    raw_triggers = set(getattr(coord, "_active_triggers", set()))
     pv = getattr(coord, "pir_validator", None)
     pir_gate_active = bool(getattr(coord, "pir_validation_enabled", False) and pv is not None)
     sm_present = bool(getattr(getattr(coord, "state_machine", None), "is_present", False))
@@ -308,6 +319,17 @@ def build_coordinator_evidence_snapshot(
             pir_confirmed=pir_confirmed,
             pir_gate_active=pir_gate_active and not sm_present,
         )
+    )
+    camera_confirmed = bool(
+        (
+            human_present
+            and any(
+                is_camera_entity(drv)
+                or any(k in drv.lower() for k in ("camera", "person", "subzone", "zone"))
+                for drv in drivers
+            )
+        )
+        or any(is_camera_entity(t) for t in effective_triggers)
     )
     if pir_gate_active and not sm_present and not pir_confirmed:
         if human_present and not camera_confirmed:
@@ -400,6 +422,7 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
     sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
     snap = getattr(coord.state_machine, "snapshot", None)
     house_count: int | None = None
+    house_mode: str | None = None
     try:
         tracker = (
             coord.hass.data.get(DOMAIN, {}).get("_house_perimeter_tracker")
@@ -408,14 +431,25 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
         )
         if tracker is not None and getattr(tracker, "state", None) is not None:
             house_count = max(0, int(tracker.state.count))
+            house_mode = str(tracker.state.mode)
         elif store is not None and isinstance(getattr(store, "global_settings", None), dict):
-            raw_cnt = store.global_settings.get("house_occupant_count")
+            gs = store.global_settings
+            raw_cnt = gs.get("house_occupant_count")
             if raw_cnt is not None:
                 house_count = max(0, int(raw_cnt))
+            if gs.get("guest_mode_enabled"):
+                house_mode = "guest"
+            elif house_count is not None:
+                house_mode = "occupied" if house_count > 0 else "vacant"
     except Exception:  # noqa: BLE001
         house_count = None
+        house_mode = None
 
-    pos_drivers = list(sp.get("positive_drivers") or [])
+    pos_drivers = [
+        str(d)
+        for d in (sp.get("positive_drivers") or [])
+        if d in set(getattr(coord, "trigger_entities", ()) or ())
+    ]
     if not pos_drivers and snap is not None:
         pos_drivers = sorted(getattr(snap, "active_triggers", ()) or ())
 
@@ -434,6 +468,7 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
             "positive_drivers": pos_drivers,
             "negative_exclusions": list(sp.get("negative_exclusions") or []),
             "house_occupant_count": house_count,
+            "house_occupancy_mode": house_mode,
             "entity_states": entity_states,
         },
     )

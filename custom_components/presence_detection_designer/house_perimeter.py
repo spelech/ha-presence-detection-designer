@@ -47,10 +47,10 @@ class DoorTransitionRecord:
 
 @dataclass
 class HouseOccupancyState:
-    """Current state of whole-house occupancy and head count."""
+    """Current state of whole-house occupancy mode (vacant, occupied, guest, pet_only)."""
 
     count: int = 1
-    mode: str = "single_occupant"  # "vacant", "single_occupant", "multi_occupant"
+    mode: str = "occupied"  # "vacant", "occupied", "guest", "pet_only"
     last_event_ts: float = 0.0
     last_event_door: str | None = None
     last_event_type: str | None = None
@@ -58,7 +58,7 @@ class HouseOccupancyState:
 
 
 class HousePerimeterTracker:
-    """Manages house perimeter door events, vectoring, and headcount."""
+    """Manages house perimeter door events, vectoring, and whole-house occupancy state."""
 
     def __init__(self, hass: Any) -> None:
         self.hass = hass
@@ -87,7 +87,7 @@ class HousePerimeterTracker:
         return settings if isinstance(settings, dict) else {}
 
     def _interior_doors(self) -> set[str]:
-        """Return configured interior doors whose transits must not change headcount."""
+        """Return configured interior doors whose transits must not change house state."""
         configured = self._global_settings().get("interior_doors", DEFAULT_INTERIOR_DOORS)
         if not isinstance(configured, (list, tuple, set)):
             configured = DEFAULT_INTERIOR_DOORS
@@ -111,6 +111,9 @@ class HousePerimeterTracker:
 
     def _exit_corroboration_window(self) -> float:
         return self._setting_num(CONF_EXIT_CORROBORATION_WINDOW, DEFAULT_EXIT_CORROBORATION_WINDOW)
+
+    def _is_guest_mode_enabled(self) -> bool:
+        return bool(self._global_settings().get("guest_mode_enabled", False))
 
     def get_configured_exit_corroborators(self) -> dict[str, list[str]]:
         """Return dict of exit corroborator motion sensors per door entity."""
@@ -152,23 +155,51 @@ class HousePerimeterTracker:
         return resolve_pending_exit_corroborations(self, now_ts=now_ts)
 
     def _load_initial_count(self) -> None:
-        """Load initial headcount from store global_settings if present."""
+        """Load initial house state from store global_settings if present."""
         if not self.hass or not hasattr(self.hass, "data") or not isinstance(self.hass.data, dict):
             return
         store = self.hass.data.get(DOMAIN, {}).get(DATA_STORE)
         if store is not None and hasattr(store, "global_settings"):
             gs = store.global_settings or {}
-            self.state.count = max(0, int(gs.get("house_occupant_count", 1)))
+            saved_mode = str(gs.get("house_occupancy_mode") or "").strip().lower()
+            raw_count = max(0, int(gs.get("house_occupant_count", 1)))
+            if saved_mode == "pet_only":
+                self.state.count = 0
+                self.state.mode = "pet_only"
+                return
+            if saved_mode == "guest" or gs.get("guest_mode_enabled"):
+                self.state.count = 2
+                self.state.mode = "guest"
+                return
+            self.state.count = 2 if raw_count >= 2 else (1 if raw_count == 1 else 0)
             self._update_mode()
 
-    def _update_mode(self) -> None:
-        """Update occupancy mode string based on current head count."""
-        if self.state.count <= 0:
-            self.state.mode = "vacant"
-        elif self.state.count == 1:
-            self.state.mode = "single_occupant"
+    def _update_mode(self, *, explicit_mode: str | None = None) -> None:
+        """Resolve canonical house occupancy mode: vacant, occupied, guest, or pet_only."""
+        from .perimeter_helpers import has_active_pet_presence
+
+        if explicit_mode in ("vacant", "occupied", "guest", "pet_only"):
+            self.state.mode = explicit_mode
+            if explicit_mode in ("vacant", "pet_only"):
+                self.state.count = 0
+            elif explicit_mode == "occupied":
+                self.state.count = 1
+            else:
+                self.state.count = 2
+            return
+
+        if self._is_guest_mode_enabled() and self.state.count > 0:
+            self.state.mode = "guest"
+            self.state.count = 2
+        elif self.state.count <= 0:
+            self.state.count = 0
+            self.state.mode = "pet_only" if has_active_pet_presence(self) else "vacant"
+        elif self.state.count >= 2:
+            self.state.mode = "guest"
+            self.state.count = 2
         else:
-            self.state.mode = "multi_occupant"
+            self.state.count = 1
+            self.state.mode = "occupied"
 
     def async_add_listener(self, update_callback: Callable[[], None]) -> Callable[[], None]:
         """Register listener for headcount changes."""
@@ -231,8 +262,8 @@ class HousePerimeterTracker:
 
         if is_open:
             self._door_opened_ts[entity_id] = now
-            self._door_had_interior_motion_on_open[entity_id] = (
-                self._host_room_had_recent_activity(host_room, now)
+            self._door_had_interior_motion_on_open[entity_id] = self._host_room_had_recent_activity(
+                host_room, now
             )
             return None
 
@@ -347,20 +378,20 @@ class HousePerimeterTracker:
         return False
 
     def _apply_vector(self, record: DoorTransitionRecord) -> None:
-        """Update headcount and mode based on vector transition."""
-        old_count = self.state.count
-        old_mode = self.state.mode
+        """Update house occupancy mode based on perimeter vector transition."""
+        old_count, old_mode = self.state.count, self.state.mode
+        explicit_mode: str | None = None
         if record.vector == "ingress":
-            self.state.count = min(self._max_occupants(), max(1, self.state.count + 1))
+            explicit_mode = "guest" if self._is_guest_mode_enabled() else "occupied"
             self._last_vector_by_door[record.entity_id] = "ingress"
             self._last_vector_ts_by_door[record.entity_id] = record.closed_ts
         elif record.vector == "egress":
-            self.state.count = max(0, self.state.count - 1)
+            self.state.count = 0
+            if self.state.mode == "pet_only":
+                self.state.mode = "vacant"
             self._last_vector_by_door[record.entity_id] = "egress"
             self._last_vector_ts_by_door[record.entity_id] = record.closed_ts
 
-        # A real perimeter cycle means the house is not necessarily all-clear;
-        # reset the stale-count vacancy timer.
         if record.vector in ("ingress", "egress"):
             self._all_clear_since = None
 
@@ -371,18 +402,16 @@ class HousePerimeterTracker:
         if len(self.state.history) > 20:
             self.state.history.pop(0)
 
-        self._update_mode()
+        self._update_mode(explicit_mode=explicit_mode)
         _LOGGER.info(
-            "House Perimeter: %s on %s (%s). Count %d -> %d (mode: %s)",
+            "House Perimeter: %s on %s (%s). Mode %s -> %s (count=%d)",
             record.vector,
             record.entity_id,
             record.room_name,
-            old_count,
-            self.state.count,
+            old_mode,
             self.state.mode,
+            self.state.count,
         )
-
-        # Enforce conservation law if count dropped to 0 or 1
         self.enforce_conservation_law()
         self._notify_listeners()
         if self.state.count != old_count or self.state.mode != old_mode:
@@ -390,20 +419,44 @@ class HousePerimeterTracker:
 
             persist_and_notify_headcount(self, persist=True, force_digest=False)
 
-    def set_headcount(
-        self, count: int, *, persist: bool = True, notify_digest: bool = True
+    def set_house_mode(
+        self, mode: str, *, persist: bool = True, notify_digest: bool = True
     ) -> None:
-        """Manually override the current house occupant count."""
-        self.state.count = max(0, int(count))
+        """Explicitly set canonical whole-house mode: vacant, occupied, guest, or pet_only."""
+        norm = str(mode or "").strip().lower()
+        if norm not in ("vacant", "occupied", "guest", "pet_only"):
+            norm = "occupied"
         self._all_clear_since = None
-        self._update_mode()
+        self._update_mode(explicit_mode=norm)
+        gs = self._global_settings()
+        if gs:
+            gs["guest_mode_enabled"] = norm == "guest"
         self.enforce_conservation_law()
         self._notify_listeners()
         from .perimeter_helpers import persist_and_notify_headcount
 
         persist_and_notify_headcount(
-            self, persist=persist, notify_digest=notify_digest, force_digest=True
+            self,
+            persist=persist,
+            notify_digest=notify_digest,
+            force_digest=True,
+            sync_guest_flag=True,
         )
+
+    def set_headcount(
+        self, count: int, *, persist: bool = True, notify_digest: bool = True
+    ) -> None:
+        """Map numeric override to categorical house mode (0->vacant/pet_only, 1->occupied, >=2->guest)."""
+        from .perimeter_helpers import has_active_pet_presence
+
+        val = int(count)
+        if val <= 0:
+            target = "pet_only" if has_active_pet_presence(self) else "vacant"
+        elif val == 1:
+            target = "occupied"
+        else:
+            target = "guest"
+        self.set_house_mode(target, persist=persist, notify_digest=notify_digest)
 
     def reconcile_headcount(
         self,
@@ -411,12 +464,9 @@ class HousePerimeterTracker:
         occupied_room_names: list[str] | None = None,
         force: bool = False,
     ) -> bool:
-        """Apply automatic head-count safety constraints and return True if changed.
+        """Reconcile house occupancy mode on missed exits or pet presence updates."""
+        from .perimeter_helpers import active_ble_resident_count, has_active_pet_presence
 
-        - Caps an automatically accumulated count at ``max_occupants``.
-        - Resets a positive count to zero when every room has been clear for
-          ``stale_count_timeout`` seconds (catches missed egress events).
-        """
         now = now_ts if now_ts is not None else time.time()
         self.check_pending_exit_corroborations(now_ts=now)
         if not force and (now - self._last_reconcile_ts) < 60.0:
@@ -424,16 +474,7 @@ class HousePerimeterTracker:
         self._last_reconcile_ts = now
 
         changed = False
-        cap = self._max_occupants()
-        if self.state.count > cap:
-            _LOGGER.info(
-                "House Perimeter: clamping stale headcount %d -> %d (max_occupants)",
-                self.state.count,
-                cap,
-            )
-            self.state.count = cap
-            changed = True
-
+        old_mode, old_count = self.state.mode, self.state.count
         if occupied_room_names is None:
             from .trajectory_validator import get_all_room_coordinators
 
@@ -443,25 +484,42 @@ class HousePerimeterTracker:
                 if getattr(c, "state_machine", None) and c.state_machine.is_present
             ]
 
-        from .perimeter_helpers import active_ble_resident_count
-
         ble_active = active_ble_resident_count(self)
         if self.state.count > 0 and not occupied_room_names and ble_active == 0:
             if self._all_clear_since is None:
                 self._all_clear_since = now
             elif now - self._all_clear_since >= self._stale_count_timeout():
                 _LOGGER.info(
-                    "House Perimeter: all rooms clear for %.0fs; resetting headcount %d -> 0",
+                    "House Perimeter: all rooms clear for %.0fs; resetting mode %s -> vacant/pet_only",
                     now - self._all_clear_since,
-                    self.state.count,
+                    self.state.mode,
                 )
                 self.state.count = 0
+                if self.state.mode == "pet_only":
+                    self.state.mode = "vacant"
                 changed = True
         else:
             self._all_clear_since = None
 
+        if self.state.count <= 0:
+            self.state.count = 0
+            if self.state.mode != "pet_only" and has_active_pet_presence(self):
+                self.state.mode = "pet_only"
+                changed = True
+            elif self.state.mode not in ("vacant", "pet_only"):
+                self.state.mode = "vacant"
+                changed = True
+        elif self._is_guest_mode_enabled() or self.state.mode == "guest":
+            self.state.mode = "guest"
+            self.state.count = 2
+        else:
+            self.state.mode = "occupied"
+            self.state.count = 1
+
+        if self.state.mode != old_mode or self.state.count != old_count:
+            changed = True
+
         if changed:
-            self._update_mode()
             self.enforce_conservation_law()
             self._notify_listeners()
             from .perimeter_helpers import persist_and_notify_headcount

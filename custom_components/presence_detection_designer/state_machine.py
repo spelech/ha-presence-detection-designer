@@ -219,8 +219,21 @@ class RoomPresenceStateMachine:
         return self.llm_enabled
 
     def _guard_can_handoff_clear(self, _event: Any) -> bool:
-        if self.snapshot.human_evidence_active or self.snapshot.active_conditions:
+        from .sensor_reliability import classify_sensor_reliability
+
+        if self.snapshot.active_conditions or self.snapshot.camera_confirmed:
             return False
+        if self.snapshot.human_evidence_active:
+            if self.snapshot.active_triggers:
+                if any(
+                    not classify_sensor_reliability(t).is_pir for t in self.snapshot.active_triggers
+                ):
+                    return False
+            elif not (
+                self.snapshot.last_trigger_entity
+                and classify_sensor_reliability(self.snapshot.last_trigger_entity).is_pir
+            ):
+                return False
         return self.state in (
             OccupancyState.OCCUPIED_COOLING,
             OccupancyState.OCCUPIED_HOLDING,

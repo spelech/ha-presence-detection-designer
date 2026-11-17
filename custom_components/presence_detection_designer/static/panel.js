@@ -1678,6 +1678,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     try {
       const payload = { ...this._globalDraft };
       delete payload.house_occupant_count;
+      delete payload.house_occupancy_mode;
       const res = await this._apiCall(
         "POST",
         "/api/presence_detection_designer/global_settings",
@@ -8085,9 +8086,7 @@ action:
     const visOccEl = root.querySelector("#tl-visible-occupants-count");
     if (visOccEl) {
       const curFr = parts.frames[parts.frameIdx] || {};
-      const visHumans = (curFr.occupant_estimates || curFr.occupants || []).length;
-      const houseCap = curFr.house_occupant_count ?? this._timelineData?.house_occupant_count;
-      visOccEl.textContent = houseCap != null ? `${visHumans} / ${houseCap}` : `${visHumans}`;
+      visOccEl.textContent = this._formatTimelineHouseMode(curFr, this._timelineData);
     }
     root.querySelectorAll("[data-tl-floor-count]").forEach((badge) => {
       const fid = badge.getAttribute("data-tl-floor-count");
@@ -8110,6 +8109,27 @@ action:
       row.classList.toggle("active", Number(row.getAttribute("data-frame-idx") || -1) === parts.frameIdx);
     });
     return true;
+  }
+
+  _formatTimelineHouseMode(frame, tlData) {
+    const fr = frame || {};
+    const tl = tlData || {};
+    let mode = String(fr.house_occupancy_mode || tl.house_occupancy_mode || "").trim().toLowerCase();
+    if (!mode) {
+      const hc = fr.house_occupant_count ?? tl.house_occupant_count;
+      const hasPet = (fr.pet_estimates || []).length > 0;
+      const hasHuman = (fr.occupant_estimates || fr.occupants || []).length > 0;
+      if (!hasHuman && hasPet) mode = "pet_only";
+      else if (hc != null) mode = hc <= 0 ? "vacant" : hc >= 2 ? "guest" : "occupied";
+      else mode = hasHuman ? "occupied" : "vacant";
+    }
+    const labels = {
+      vacant: "Vacant",
+      occupied: "Occupied",
+      guest: "Guest",
+      pet_only: "Pet Only",
+    };
+    return labels[mode] || "Occupied";
   }
 
   _renderTimelinePane() {
@@ -8309,12 +8329,7 @@ action:
                 <span>🩵 Clear Camera Cone</span>
               </span>
               <span>
-                Occupants: <strong id="tl-visible-occupants-count">${(() => {
-                  const cf = frames[frameIdx] || {};
-                  const vh = (cf.occupant_estimates || cf.occupants || []).length;
-                  const hc = cf.house_occupant_count ?? tl.house_occupant_count;
-                  return hc != null ? `${vh} / ${hc}` : `${vh}`;
-                })()}</strong>
+                House Mode: <strong id="tl-visible-occupants-count">${this._escape(this._formatTimelineHouseMode(frames[frameIdx] || {}, tl))}</strong>
                 &nbsp;|&nbsp; Active Rooms: <strong id="tl-active-rooms">${this._escape(occupiedRoomsList.join(", ") || "None")}</strong>
               </span>
             </div>

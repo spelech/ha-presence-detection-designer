@@ -84,8 +84,11 @@ def infer_door_vector(
         for r, c in coords.items()
         if r != host_room and getattr(c, "state_machine", None) and c.state_machine.is_present
     ]
+    guest_mode = bool(tracker._global_settings().get("guest_mode_enabled", False)) or (
+        getattr(getattr(tracker, "state", None), "mode", "") == "guest"
+    )
 
-    # Case 1: House count is vacant (0) -> never emit an egress that stays stuck at 0.
+    # Case 1: House is vacant or pet_only -> arrival sets house to occupied (never egress at 0).
     if tracker.state.count <= 0:
         if not interior_motion_before:
             return "ingress", 0.95, "Arrival from vacant state"
@@ -95,8 +98,17 @@ def infer_door_vector(
             f"Interior motion in {host_room} with vacant count; skipping egress",
         )
 
-    # Case 2: Interior motion in the host room before the door opened -> egress.
+    # Case 2: Interior motion in host room before door opened -> only vacate when no other
+    # interior rooms remain occupied and Guest Mode is not active (prevents dog let-outs or
+    # single-person departures from marking the house vacant while others remain inside).
     if interior_motion_before:
+        if other_occupied or guest_mode:
+            active_ctx = ", ".join(other_occupied) if other_occupied else "Guest Mode"
+            return (
+                "ambiguous",
+                0.45,
+                f"Door cycled on {host_room} while {active_ctx} remains active",
+            )
         return vet_exit_vector(
             tracker,
             door_entity,
@@ -106,23 +118,8 @@ def infer_door_vector(
             f"Occupant in {host_room} exited through perimeter",
         )
 
-    # Case 3: No prior interior motion. An arrival is only plausible while the
-    # head count does not already exceed the rooms we can physically observe.
-    observed_rooms = len(other_occupied)
-    if host_coord and getattr(host_coord, "state_machine", None):
-        if host_coord.state_machine.is_present:
-            observed_rooms += 1
-    if observed_rooms > 0 and tracker.state.count <= observed_rooms:
-        return "ingress", 0.80, f"Arrival while {', '.join(other_occupied)} occupied"
-
-    if other_occupied:
-        return (
-            "ambiguous",
-            0.40,
-            f"Door cycled while headcount ({tracker.state.count}) exceeds observed rooms",
-        )
-
-    return "ambiguous", 0.50, f"Door cycled on {host_room} with neutral priors"
+    # Case 3: House is already occupied -> door contact sensors do not increment integer headcount.
+    return "ambiguous", 0.50, f"Door cycled on {host_room} while house already occupied"
 
 
 def resolve_pending_exit_corroborations(tracker: Any, now_ts: float | None = None) -> list[Any]:
@@ -173,13 +170,40 @@ def resolve_pending_exit_corroborations(tracker: Any, now_ts: float | None = Non
 
 
 def enforce_conservation_law(tracker: Any, newly_occupied_room: str | None = None) -> list[str]:
-    """No-op under GUARD-03: whole-house headcount is decoupled from room state machines."""
+    """No-op under GUARD-03: whole-house state is decoupled from room state machines."""
     _LOGGER.debug(
-        "Headcount conservation law skipped (GUARD-03 decoupled; newly_occupied_room=%s, count=%s)",
+        "Headcount conservation law skipped (GUARD-03 decoupled; newly_occupied_room=%s, mode=%s)",
         newly_occupied_room,
-        getattr(getattr(tracker, "state", None), "count", None),
+        getattr(getattr(tracker, "state", None), "mode", None),
     )
     return []
+
+
+def has_active_pet_presence(tracker: Any) -> bool:
+    """Return True if any room coordinator or Frigate dog sensor currently detects a pet."""
+    hass = getattr(tracker, "hass", None)
+    if not hass:
+        return False
+    from .spatial_catalog import ROOM_DOG_OCCUPANCY_ENTITIES
+    from .trajectory_validator import get_all_room_coordinators
+
+    for coord in get_all_room_coordinators(hass):
+        sm = getattr(coord, "state_machine", None)
+        snap = getattr(sm, "snapshot", None) if sm is not None else None
+        if snap is not None and bool(getattr(snap, "pet_present", False)):
+            return True
+        sp = getattr(coord, "last_spatial_estimate", None)
+        if isinstance(sp, dict) and bool(sp.get("pet_present", False)):
+            return True
+
+    states_obj = getattr(hass, "states", None)
+    if states_obj is not None and callable(getattr(states_obj, "get", None)):
+        for dog_eids in ROOM_DOG_OCCUPANCY_ENTITIES.values():
+            for dog_eid in dog_eids:
+                st = states_obj.get(dog_eid)
+                if st is not None and str(getattr(st, "state", "")).strip().lower() == "on":
+                    return True
+    return False
 
 
 def persist_and_notify_headcount(
@@ -188,8 +212,9 @@ def persist_and_notify_headcount(
     persist: bool = True,
     notify_digest: bool = True,
     force_digest: bool = False,
+    sync_guest_flag: bool = False,
 ) -> None:
-    """Persist updated headcount to global_settings and schedule a Slack digest refresh."""
+    """Persist updated house occupancy state to global_settings and schedule a Slack digest refresh."""
     hass = getattr(tracker, "hass", None)
     if not hass or not isinstance(getattr(hass, "data", None), dict):
         return
@@ -199,13 +224,23 @@ def persist_and_notify_headcount(
     if persist:
         store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
         gs = getattr(store, "global_settings", None) if store else None
-        if isinstance(gs, dict) and gs.get("house_occupant_count") != tracker.state.count:
-            gs["house_occupant_count"] = tracker.state.count
-            updater = getattr(store, "async_update_global_settings", None)
-            if callable(updater):
-                res = updater({"house_occupant_count": tracker.state.count})
-                if inspect.isawaitable(res):
-                    schedule_coro_safely(hass, res)
+        if isinstance(gs, dict):
+            updates: dict[str, Any] = {}
+            if gs.get("house_occupant_count") != tracker.state.count:
+                updates["house_occupant_count"] = tracker.state.count
+            if gs.get("house_occupancy_mode") != tracker.state.mode:
+                updates["house_occupancy_mode"] = tracker.state.mode
+            if sync_guest_flag:
+                want_guest = tracker.state.mode == "guest"
+                if bool(gs.get("guest_mode_enabled", False)) != want_guest:
+                    updates["guest_mode_enabled"] = want_guest
+            if updates:
+                gs.update(updates)
+                updater = getattr(store, "async_update_global_settings", None)
+                if callable(updater):
+                    res = updater(updates)
+                    if inspect.isawaitable(res):
+                        schedule_coro_safely(hass, res)
 
     if notify_digest:
         schedule_slack_daily_digest_update(hass, force=force_digest)
@@ -219,12 +254,23 @@ async def async_apply_global_settings_side_effects(
     from .slack_blocks import async_refresh_slack_daily_digest
 
     tracker = get_house_perimeter_tracker(hass)
-    if "house_occupant_count" in body and body["house_occupant_count"] is not None:
+    if "house_occupancy_mode" in body and body["house_occupancy_mode"] is not None:
+        tracker.set_house_mode(
+            str(updated_gs.get("house_occupancy_mode", "occupied")),
+            persist=False,
+            notify_digest=False,
+        )
+    elif "house_occupant_count" in body and body["house_occupant_count"] is not None:
         tracker.set_headcount(
             int(updated_gs.get("house_occupant_count", 0)),
             persist=False,
             notify_digest=False,
         )
+    elif "guest_mode_enabled" in body and body["guest_mode_enabled"] is not None:
+        if bool(updated_gs.get("guest_mode_enabled", False)):
+            tracker.set_house_mode("guest", persist=False, notify_digest=False)
+        elif tracker.state.mode == "guest":
+            tracker.set_house_mode("occupied", persist=False, notify_digest=False)
     if any(k in body for k in ("perimeter_doors", "exit_corroborators")):
         await tracker.async_setup()
     if "slack_webhook_id" in body:
@@ -233,6 +279,8 @@ async def async_apply_global_settings_side_effects(
         await async_setup_slack_webhook(hass, updated_gs.get("slack_webhook_id"))
     digest_keys = (
         "house_occupant_count",
+        "house_occupancy_mode",
+        "guest_mode_enabled",
         "slack_notify_transitions",
         "slack_channel",
         "slack_daily_thread",

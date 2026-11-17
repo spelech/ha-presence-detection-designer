@@ -356,13 +356,14 @@ def test_build_daily_digest_blocks_structure():
         transition_count=42,
         last_updated_time="07:30 PM",
         house_headcount=1,
-        occupancy_mode="single_occupant",
+        occupancy_mode="occupied",
         notify_transitions=False,
     )
     serialized = str(blocks)
     assert "Office" in serialized
     assert "Kitchen, Living Room" in serialized
-    assert "Headcount:* 1 (single occupant)" in serialized
+    assert "*House Status:* Occupied" in serialized
+    assert "*Mode:* Occupied" in serialized
     assert "Transitions muted" in serialized
 
 

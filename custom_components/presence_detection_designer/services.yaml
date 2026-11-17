@@ -146,18 +146,29 @@ clear_manual_intent:
         text:
 
 set_house_occupant_count:
-  name: Set House Occupant Count
-  description: Manually set the whole-house occupant headcount metadata.
+  name: Set House Presence Mode
+  description: Manually set the whole-house presence mode (vacant, pet_only, occupied, or guest) or mapped count (0, 1, 2).
   fields:
+    mode:
+      name: House Presence Mode
+      description: Categorical whole-house presence mode (vacant, pet_only, occupied, or guest).
+      required: false
+      selector:
+        select:
+          options:
+            - vacant
+            - pet_only
+            - occupied
+            - guest
     count:
-      name: Headcount
-      description: Number of human occupants currently inside the house (0 for vacant, 1 for single occupant, 2+ for multi-occupant).
-      required: true
+      name: Mapped Count
+      description: Optional numeric mapping when mode is omitted (0 for vacant/pet_only, 1 for occupied, 2+ for guest).
+      required: false
       default: 1
       selector:
         number:
           min: 0
-          max: 20
+          max: 2
           mode: box
 
 update_slack_digest:

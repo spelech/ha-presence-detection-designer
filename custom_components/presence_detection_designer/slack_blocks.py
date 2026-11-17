@@ -153,11 +153,7 @@ def collect_room_states(
             dur_str = None
             since_time = None
             raw_occ = getattr(coord, "_occupied_start_time", None)
-            if (
-                not isinstance(raw_occ, (int, float))
-                or isinstance(raw_occ, bool)
-                or raw_occ <= 0
-            ):
+            if not isinstance(raw_occ, (int, float)) or isinstance(raw_occ, bool) or raw_occ <= 0:
                 raw_occ = getattr(coord.state_machine, "last_occupied_time", None)
             if isinstance(raw_occ, (int, float)) and not isinstance(raw_occ, bool) and raw_occ > 0:
                 since_time = format_since_time(float(raw_occ))
@@ -288,43 +284,48 @@ def build_daily_digest_blocks(
         }
     ]
     occ_count, clr_count = len(occupied_rooms), len(clear_rooms)
-    if house_headcount is not None:
-        if house_headcount <= 0 and occ_count > 0:
-            status_line = (
-                f"⚠️ *House Status:* Vacant _(0 occupants)_ · *{occ_count} rooms active*"
-                " — _tap *1 Home* or *Reset Vacant* below_"
-            )
-        elif house_headcount <= 0:
-            status_line = f"⚪ *House Status:* Vacant _(0 occupants)_ · All {clr_count} rooms clear"
-        elif house_headcount == 1:
-            status_line = f"👤 *House Status:* Home _(1 occupant)_ · {occ_count} occupied · {clr_count} clear"
-        else:
-            status_line = (
-                f"👥 *House Status:* Home _({house_headcount} occupants)_"
-                f" · {occ_count} occupied · {clr_count} clear"
-            )
+    eff_mode = str(occupancy_mode or "").strip().lower()
+    if eff_mode not in ("vacant", "occupied", "guest", "pet_only") and house_headcount is not None:
+        eff_mode = (
+            "vacant"
+            if house_headcount <= 0
+            else ("guest" if (guest_mode or house_headcount >= 2) else "occupied")
+        )
+    if eff_mode == "pet_only":
+        status_line = f"🐾 *House Status:* Pet Only · {occ_count} occupied · {clr_count} clear"
+    elif eff_mode == "vacant" and occ_count > 0:
+        status_line = (
+            f"⚠️ *House Status:* Vacant · *{occ_count} rooms active*"
+            " — _tap *Occupied* or *Reset Vacant* below_"
+        )
+    elif eff_mode == "vacant":
+        status_line = f"⚪ *House Status:* Vacant · All {clr_count} rooms clear"
+    elif eff_mode == "guest":
+        status_line = f"👥 *House Status:* Guest Mode · {occ_count} occupied · {clr_count} clear"
+    elif eff_mode == "occupied":
+        status_line = f"👤 *House Status:* Occupied · {occ_count} occupied · {clr_count} clear"
     else:
         status_line = f"📊 *House Status:* {occ_count} occupied · {clr_count} clear"
     from .slack_views import build_refresh_button
 
-    blocks.append({"type": "section", "text": _mrkdwn(status_line), "accessory": build_refresh_button()})
+    blocks.append(
+        {"type": "section", "text": _mrkdwn(status_line), "accessory": build_refresh_button()}
+    )
 
     if occupied_rooms:
         lines = []
         for r in occupied_rooms[:12]:
-            if r.get("since_time"):
-                since_part = f" _(since {r['since_time']})_"
-            elif r.get("duration_str"):
-                since_part = f" _(for {r['duration_str']})_"
-            else:
-                since_part = ""
+            since_part = (
+                f" _(since {r['since_time']})_"
+                if r.get("since_time")
+                else (f" _(for {r['duration_str']})_" if r.get("duration_str") else "")
+            )
             raw_drv = str(r.get("driver") or "").replace("`", "").strip()
-            if raw_drv.startswith("Cooling ("):
-                drv = f" · ⏳ `{raw_drv}`"
-            elif raw_drv:
-                drv = f" via `{raw_drv}`"
-            else:
-                drv = ""
+            drv = (
+                f" · ⏳ `{raw_drv}`"
+                if raw_drv.startswith("Cooling (")
+                else (f" via `{raw_drv}`" if raw_drv else "")
+            )
             lines.append(f"🟢 *{r.get('name', 'Unknown')}*{since_part}{drv}")
         if occ_count > 12:
             lines.append(f"_… +{occ_count - 12} more occupied_")
@@ -332,30 +333,35 @@ def build_daily_digest_blocks(
     else:
         occ_text = "_⚪ All rooms currently clear._"
 
-    if clear_rooms:
-        clear_text = ", ".join(clear_rooms[:20])
-        if clr_count > 20:
-            clear_text += f" _(+{clr_count - 20} more)_"
-    else:
-        clear_text = "_None_"
-
+    clear_text = (
+        (", ".join(clear_rooms[:20]) + (f" _(+{clr_count - 20} more)_" if clr_count > 20 else ""))
+        if clear_rooms
+        else "_None_"
+    )
     blocks.extend(
         [
             _section(f"*Currently Occupied ({occ_count}):*\n{occ_text}"),
             _section(f"*Cleared ({clr_count}):*\n{clear_text}"),
             {"type": "divider"},
-            _get_actions_block(highlight_set_home=(house_headcount == 0 and occ_count > 0)),
+            _get_actions_block(
+                highlight_set_home=(eff_mode in ("vacant", "pet_only") and occ_count > 0)
+            ),
         ]
     )
     ctx = [
         _mrkdwn(f"⏱️ *Updated:* {last_updated_time}"),
         _mrkdwn(f"🔄 *Today's Transitions:* {transition_count}"),
     ]
-    if house_headcount is not None:
-        mode_str = f" ({occupancy_mode.replace('_', ' ')})" if occupancy_mode else ""
-        icon = "👤" if house_headcount == 1 else ("👥" if house_headcount > 1 else "⚪")
-        ctx.append(_mrkdwn(f"{icon} *Headcount:* {house_headcount}{mode_str}"))
-    if guest_mode:
+    if eff_mode:
+        m_map = {
+            "vacant": ("⚪", "Vacant"),
+            "pet_only": ("🐾", "Pet Only"),
+            "occupied": ("👤", "Occupied"),
+            "guest": ("👥", "Guest"),
+        }
+        m_icon, m_lbl = m_map.get(eff_mode, ("📊", eff_mode.replace("_", " ").title()))
+        ctx.append(_mrkdwn(f"{m_icon} *Mode:* {m_lbl}"))
+    if guest_mode and eff_mode != "guest":
         ctx.append(_mrkdwn("🧑‍🤝‍🧑 *Guest Mode:* ON"))
     subtext = (
         "🧵 _Transitions logged below_"

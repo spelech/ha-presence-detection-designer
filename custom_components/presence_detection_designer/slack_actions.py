@@ -50,16 +50,24 @@ _MENU_ACTION_MAP = {
     "verify": SLACK_ACTION_ROOM_VERIFY,
     "override": SLACK_ACTION_ROOM_OVERRIDE,
 }
-_ROOM_ACTIONS = frozenset({SLACK_ACTION_ROOM_CLEAR, SLACK_ACTION_ROOM_VERIFY, SLACK_ACTION_ROOM_OVERRIDE})
+_ROOM_ACTIONS = frozenset(
+    {SLACK_ACTION_ROOM_CLEAR, SLACK_ACTION_ROOM_VERIFY, SLACK_ACTION_ROOM_OVERRIDE}
+)
 
 
 async def async_handle_reset_vacancy_service(hass: Any, call: Any) -> None:
     """Handle presence_detection_designer.reset_vacancy service calls."""
-    act = SLACK_ACTION_CLEAR_ALL_VACANT if bool(call.data.get("clear_rooms", False)) else SLACK_ACTION_RESET_VACANT
+    act = (
+        SLACK_ACTION_CLEAR_ALL_VACANT
+        if bool(call.data.get("clear_rooms", False))
+        else SLACK_ACTION_RESET_VACANT
+    )
     await async_process_slack_action(hass, act, actor="Service")
 
 
-def verify_slack_signature(signing_secret: str, timestamp: str, raw_body: str, signature: str) -> bool:
+def verify_slack_signature(
+    signing_secret: str, timestamp: str, raw_body: str, signature: str
+) -> bool:
     """Verify Slack v0 HMAC-SHA256 request signature with a 5-minute replay guard."""
     if not signing_secret:
         return True
@@ -71,9 +79,12 @@ def verify_slack_signature(signing_secret: str, timestamp: str, raw_body: str, s
         return False
     if abs(time.time() - req_ts) > 300:
         return False
-    expected = "v0=" + hmac.new(
-        signing_secret.encode("utf-8"), f"v0:{req_ts}:{raw_body}".encode(), hashlib.sha256
-    ).hexdigest()
+    expected = (
+        "v0="
+        + hmac.new(
+            signing_secret.encode("utf-8"), f"v0:{req_ts}:{raw_body}".encode(), hashlib.sha256
+        ).hexdigest()
+    )
     return hmac.compare_digest(expected, signature)
 
 
@@ -94,7 +105,9 @@ async def async_ensure_slack_webhook_id(hass: Any) -> str:
     return new_id
 
 
-async def _call_slack_api_async(hass: Any, endpoint: str, payload: dict[str, Any], label: str) -> bool:
+async def _call_slack_api_async(
+    hass: Any, endpoint: str, payload: dict[str, Any], label: str
+) -> bool:
     from .slack_cards import get_slack_daily_thread_manager
 
     mgr = get_slack_daily_thread_manager(hass)
@@ -118,7 +131,10 @@ async def async_open_manage_modal(hass: Any, trigger_id: str) -> bool:
     if not trigger_id:
         return False
     return await _call_slack_api_async(
-        hass, "views.open", {"trigger_id": trigger_id, "view": build_manage_modal_view(hass)}, "modal"
+        hass,
+        "views.open",
+        {"trigger_id": trigger_id, "view": build_manage_modal_view(hass)},
+        "modal",
     )
 
 
@@ -129,9 +145,6 @@ async def async_publish_app_home(hass: Any, user_id: str) -> bool:
     return await _call_slack_api_async(
         hass, "views.publish", {"user_id": user_id, "view": build_app_home_view(hass)}, user_id
     )
-
-
-
 
 
 def _resolve_room_coord(hass: Any, room_query: str) -> Any | None:
@@ -157,7 +170,7 @@ def _refresh_all_coordinators(hass: Any) -> None:
             _notify_coord(coord)
 
 
-async def _set_headcount(hass: Any, count: int, *, clear_pending: bool = False) -> Any:
+async def _set_house_mode(hass: Any, mode: str, *, clear_pending: bool = False) -> Any:
     from .house_perimeter import get_house_perimeter_tracker
     from .store import async_get_store
 
@@ -165,8 +178,14 @@ async def _set_headcount(hass: Any, count: int, *, clear_pending: bool = False) 
     store = await async_get_store(hass)
     if clear_pending:
         tracker._pending_exit_corroborations.clear()
-    tracker.set_headcount(count, persist=False, notify_digest=False)
-    await store.async_update_global_settings({"house_occupant_count": count})
+    tracker.set_house_mode(mode, persist=False, notify_digest=False)
+    await store.async_update_global_settings(
+        {
+            "house_occupancy_mode": tracker.state.mode,
+            "house_occupant_count": tracker.state.count,
+            "guest_mode_enabled": tracker.state.mode == "guest",
+        }
+    )
     return tracker
 
 
@@ -188,8 +207,12 @@ async def _trigger_room_verify(
     url = getattr(coord, "camera_snapshot_url", None)
     if upload_snapshot and (cam or url):
         coro = async_upload_room_snapshot(
-            hass, str(coord.room_name), camera_entity=cam, snapshot_url=url,
-            channel=channel, initial_comment=f"👁️ Verification snapshot for *{coord.room_name}*",
+            hass,
+            str(coord.room_name),
+            camera_entity=cam,
+            snapshot_url=url,
+            channel=channel,
+            initial_comment=f"👁️ Verification snapshot for *{coord.room_name}*",
         )
         act = getattr(hass, "async_create_task", None)
         if callable(act) and type(act).__name__ != "MagicMock":
@@ -232,7 +255,7 @@ async def async_process_slack_action(
     from_home: bool = False,
     home_user_id: str | None = None,
 ) -> dict[str, Any]:
-    """Execute a Slack interactive action (vacancy reset, headcount, room controls, refresh)."""
+    """Execute a Slack interactive action (house mode, room controls, refresh)."""
     from .coordinator import RoomPresenceCoordinator
     from .house_perimeter import get_house_perimeter_tracker
 
@@ -246,31 +269,37 @@ async def async_process_slack_action(
         action_id = _MENU_ACTION_MAP.get(verb, action_id)
 
     if action_id == SLACK_ACTION_RESET_VACANT:
-        await _set_headcount(hass, 0, clear_pending=True)
-        note = "✅ Reset house headcount to *0 (vacant)*."
-        _LOGGER.info("Slack action (%s): reset house headcount to 0 (vacant)", actor_label)
+        await _set_house_mode(hass, "vacant", clear_pending=True)
+        note = "✅ Set house mode to *Vacant*."
+        _LOGGER.info("Slack action (%s): set house mode to vacant", actor_label)
     elif action_id == SLACK_ACTION_CLEAR_ALL_VACANT:
-        await _set_headcount(hass, 0, clear_pending=True)
+        await _set_house_mode(hass, "vacant", clear_pending=True)
         for coord in list(hass.data.get(DOMAIN, {}).values()):
             if isinstance(coord, RoomPresenceCoordinator) or (
                 hasattr(coord, "state_machine") and hasattr(coord, "room_name")
             ):
-                if getattr(coord, "is_present", False) or getattr(coord.state_machine, "is_present", False):
+                if getattr(coord, "is_present", False) or getattr(
+                    coord.state_machine, "is_present", False
+                ):
                     coord.state_machine.force_clear(reason=f"Reset vacant via {actor_label}")
                     cleared_rooms.append(str(getattr(coord, "room_name", "Room")))
                     _notify_coord(coord)
-        note = f"🧹 Cleared {len(cleared_rooms)} occupied room(s) and reset house to *0 (vacant)*."
-        _LOGGER.info("Slack action (%s): cleared %d rooms and reset house to vacant", actor_label, len(cleared_rooms))
+        note = f"🧹 Cleared {len(cleared_rooms)} occupied room(s) and set house mode to *Vacant*."
+        _LOGGER.info(
+            "Slack action (%s): cleared %d rooms and reset house to vacant",
+            actor_label,
+            len(cleared_rooms),
+        )
     elif action_id == SLACK_ACTION_SET_HOME_1:
-        await _set_headcount(hass, 1)
-        note = "👤 Set house headcount to *1 occupant*."
-        _LOGGER.info("Slack action (%s): set house headcount to 1", actor_label)
+        await _set_house_mode(hass, "occupied")
+        _refresh_all_coordinators(hass)
+        note = "👤 Set house mode to *Occupied*."
+        _LOGGER.info("Slack action (%s): set house mode to occupied", actor_label)
     elif action_id == SLACK_ACTION_HEADCOUNT_INC:
-        cap = tracker._max_occupants() if hasattr(tracker, "_max_occupants") else 12
-        new_count = min(cap, max(1, int(tracker.state.count) + 1))
-        await _set_headcount(hass, new_count)
-        note = f"👥 Incremented house headcount to *{new_count}*."
-        _LOGGER.info("Slack action (%s): incremented house headcount to %d", actor_label, new_count)
+        await _set_house_mode(hass, "guest")
+        _refresh_all_coordinators(hass)
+        note = "👥 Enabled *Guest Mode*."
+        _LOGGER.info("Slack action (%s): enabled guest mode", actor_label)
     elif action_id in _ROOM_ACTIONS:
         coord = _resolve_room_coord(hass, value)
         if not coord:
@@ -296,15 +325,19 @@ async def async_process_slack_action(
 
     await _refresh_digest_and_homes(hass, from_home=from_home, home_user_id=home_user_id)
     return {
-        "ok": True, "action": action_id, "headcount": tracker.state.count,
-        "mode": tracker.state.mode, "cleared_rooms": cleared_rooms, "note": note,
+        "ok": True,
+        "action": action_id,
+        "headcount": tracker.state.count,
+        "mode": tracker.state.mode,
+        "cleared_rooms": cleared_rooms,
+        "note": note,
     }
 
 
 async def async_process_manage_modal_submission(
     hass: Any, view_state: dict[str, Any], *, actor: str | None = None
 ) -> dict[str, Any]:
-    """Apply headcount, global toggles, room clears, and room verifications from Control modal."""
+    """Apply house mode, global toggles, room clears, and room verifications from Control modal."""
     from .house_perimeter import get_house_perimeter_tracker
     from .store import async_get_store
 
@@ -314,9 +347,14 @@ async def async_process_manage_modal_submission(
     actor_label = actor or "Slack Modal"
 
     updates = dict(parsed["toggles"])
-    if parsed["headcount"] is not None:
-        tracker.set_headcount(parsed["headcount"], persist=False, notify_digest=False)
-        updates["house_occupant_count"] = parsed["headcount"]
+    sel_mode = parsed.get("mode")
+    if sel_mode in ("vacant", "pet_only", "occupied", "guest"):
+        if updates.get("guest_mode_enabled") and sel_mode == "occupied":
+            sel_mode = "guest"
+        tracker.set_house_mode(sel_mode, persist=False, notify_digest=False)
+        updates["house_occupancy_mode"] = tracker.state.mode
+        updates["house_occupant_count"] = tracker.state.count
+        updates["guest_mode_enabled"] = tracker.state.mode == "guest"
     await store.async_update_global_settings(updates)
     _refresh_all_coordinators(hass)
 
@@ -333,8 +371,16 @@ async def async_process_manage_modal_submission(
             await _trigger_room_verify(hass, coord)
 
     await _refresh_digest_and_homes(hass)
-    _LOGGER.info("Slack modal (%s) applied: updates=%s cleared=%s", actor_label, updates, cleared_rooms)
-    return {"ok": True, "headcount": tracker.state.count, "cleared_rooms": cleared_rooms, "updates": updates}
+    _LOGGER.info(
+        "Slack modal (%s) applied: updates=%s cleared=%s", actor_label, updates, cleared_rooms
+    )
+    return {
+        "ok": True,
+        "mode": tracker.state.mode,
+        "headcount": tracker.state.count,
+        "cleared_rooms": cleared_rooms,
+        "updates": updates,
+    }
 
 
 async def async_handle_slash_command(hass: Any, form: dict[str, str]) -> dict[str, Any]:
@@ -346,18 +392,41 @@ async def async_handle_slash_command(hass: Any, form: dict[str, str]) -> dict[st
     if verb in ("manage", "modal", "settings"):
         if await async_open_manage_modal(hass, str(form.get("trigger_id") or "")):
             return {"_raw_empty": True}
-        return build_ephemeral_status_response(hass, note="⚠️ Could not open modal (`trigger_id` missing/expired).")
+        return build_ephemeral_status_response(
+            hass, note="⚠️ Could not open modal (`trigger_id` missing/expired)."
+        )
     if verb in ("vacant", "reset"):
         res = await async_process_slack_action(hass, SLACK_ACTION_RESET_VACANT, actor=actor)
         return build_ephemeral_status_response(hass, note=res.get("note"))
-    if verb == "home":
-        try:
-            count = max(1, min(12, int(arg))) if arg else 1
-        except ValueError:
-            return {"response_type": "ephemeral", "text": f"❌ Invalid occupant count: `{arg}`"}
-        await _set_headcount(hass, count)
+    if verb in ("pet", "pet_only"):
+        await _set_house_mode(hass, "pet_only")
         await _refresh_digest_and_homes(hass)
-        return build_ephemeral_status_response(hass, note=f"👥 Set house headcount to *{count}*.")
+        return build_ephemeral_status_response(hass, note="🐾 Set house mode to *Pet Only*.")
+    if verb in ("home", "occupied"):
+        arg_low = arg.strip().lower()
+        if arg_low in ("guest", "guests"):
+            target_mode = "guest"
+        elif arg_low in ("pet", "pet_only"):
+            target_mode = "pet_only"
+        elif arg_low in ("vacant", "0"):
+            target_mode = "vacant"
+        elif arg_low:
+            try:
+                target_mode = (
+                    "guest"
+                    if int(arg_low) >= 2
+                    else ("vacant" if int(arg_low) <= 0 else "occupied")
+                )
+            except ValueError:
+                return {"response_type": "ephemeral", "text": f"❌ Invalid mode: `{arg}`"}
+        else:
+            target_mode = "occupied"
+        await _set_house_mode(hass, target_mode)
+        _refresh_all_coordinators(hass)
+        await _refresh_digest_and_homes(hass)
+        return build_ephemeral_status_response(
+            hass, note=f"🏠 Set house mode to *{target_mode.replace('_', ' ').title()}*."
+        )
     if verb == "snapshot" and arg:
         coord = _resolve_room_coord(hass, arg)
         if not coord:
@@ -366,7 +435,9 @@ async def async_handle_slash_command(hass: Any, form: dict[str, str]) -> dict[st
         return await async_handle_snapshot_slash(hass, coord, actor=actor, channel_id=ch)
     if verb in ("clear", "verify"):
         act = (
-            SLACK_ACTION_ROOM_VERIFY if verb == "verify" else (SLACK_ACTION_ROOM_CLEAR if arg else SLACK_ACTION_CLEAR_ALL_VACANT)
+            SLACK_ACTION_ROOM_VERIFY
+            if verb == "verify"
+            else (SLACK_ACTION_ROOM_CLEAR if arg else SLACK_ACTION_CLEAR_ALL_VACANT)
         )
         res = await async_process_slack_action(hass, act, value=arg, actor=actor)
         if not res.get("ok"):
@@ -376,18 +447,24 @@ async def async_handle_slash_command(hass: Any, form: dict[str, str]) -> dict[st
         from .store import async_get_store
 
         store = await async_get_store(hass)
-        curr = bool((getattr(store, "global_settings", None) or {}).get("guest_mode_enabled", False))
+        curr = bool(
+            (getattr(store, "global_settings", None) or {}).get("guest_mode_enabled", False)
+        )
         nxt = not curr if not arg else arg.lower() in ("on", "true", "1", "yes", "enable")
-        await store.async_update_global_settings({"guest_mode_enabled": nxt})
+        await _set_house_mode(hass, "guest" if nxt else "occupied")
         _refresh_all_coordinators(hass)
         await _refresh_digest_and_homes(hass)
-        return build_ephemeral_status_response(hass, note=f"🧑‍🤝‍🧑 Guest Mode {'*ENABLED*' if nxt else '*DISABLED*'}.")
+        return build_ephemeral_status_response(
+            hass, note=f"🧑‍🤝‍🧑 Guest Mode {'*ENABLED*' if nxt else '*DISABLED*'}."
+        )
     return build_ephemeral_status_response(hass)
 
 
 def _parse_slack_payload(raw_body: str, content_type: str) -> tuple[dict[str, Any], str]:
     """Parse Slack form-encoded interactivity, slash commands, or JSON Events API/action POSTs."""
-    if "application/x-www-form-urlencoded" in content_type or raw_body.startswith(("payload=", "token=", "command=")):
+    if "application/x-www-form-urlencoded" in content_type or raw_body.startswith(
+        ("payload=", "token=", "command=")
+    ):
         parsed_qs = urllib.parse.parse_qs(raw_body, keep_blank_values=True)
         if "payload" in parsed_qs and parsed_qs["payload"]:
             obj = json.loads(parsed_qs["payload"][0])
@@ -402,11 +479,16 @@ async def async_handle_slack_webhook(hass: Any, _webhook_id: str, request: Any) 
     """Handle Slack Interactivity, Modals, Slash Commands, and Events API callbacks."""
     raw_body = await request.text()
     store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
-    signing_secret = str(((getattr(store, "global_settings", None) or {}).get(CONF_SLACK_SIGNING_SECRET)) or "").strip()
+    signing_secret = str(
+        ((getattr(store, "global_settings", None) or {}).get(CONF_SLACK_SIGNING_SECRET)) or ""
+    ).strip()
     if signing_secret:
         headers = getattr(request, "headers", {}) or {}
         if not verify_slack_signature(
-            signing_secret, str(headers.get("X-Slack-Request-Timestamp") or ""), raw_body, str(headers.get("X-Slack-Signature") or "")
+            signing_secret,
+            str(headers.get("X-Slack-Request-Timestamp") or ""),
+            raw_body,
+            str(headers.get("X-Slack-Signature") or ""),
         ):
             return web.json_response({"ok": False, "error": "invalid_signature"}, status=401)
 
@@ -429,7 +511,11 @@ async def async_handle_slack_webhook(hass: Any, _webhook_id: str, request: Any) 
 
     if kind == "slash":
         slash_res = await async_handle_slash_command(hass, payload)
-        return web.Response(status=200, text="") if slash_res.pop("_raw_empty", False) else web.json_response(slash_res)
+        return (
+            web.Response(status=200, text="")
+            if slash_res.pop("_raw_empty", False)
+            else web.json_response(slash_res)
+        )
 
     user_obj = payload.get("user") if isinstance(payload.get("user"), dict) else {}
     actor = str(user_obj.get("username") or user_obj.get("name") or user_obj.get("id") or "Slack")
@@ -446,24 +532,44 @@ async def async_handle_slack_webhook(hass: Any, _webhook_id: str, request: Any) 
     if not action_id and isinstance(actions, list) and actions and isinstance(actions[0], dict):
         first = actions[0]
         action_id = str(first.get("action_id") or "").strip()
-        sel_opt = first.get("selected_option") if isinstance(first.get("selected_option"), dict) else {}
+        sel_opt = (
+            first.get("selected_option") if isinstance(first.get("selected_option"), dict) else {}
+        )
         action_value = str(sel_opt.get("value") or first.get("value") or "").strip()
 
-    if payload.get("type") in ("shortcut", "message_action") or action_id == SLACK_ACTION_OPEN_MANAGE_MODAL:
+    if (
+        payload.get("type") in ("shortcut", "message_action")
+        or action_id == SLACK_ACTION_OPEN_MANAGE_MODAL
+    ):
         opened = await async_open_manage_modal(hass, str(payload.get("trigger_id") or ""))
-        return web.Response(status=200, text="") if kind == "interactive" else web.json_response({"ok": opened})
+        return (
+            web.Response(status=200, text="")
+            if kind == "interactive"
+            else web.json_response({"ok": opened})
+        )
     if not action_id:
         return web.json_response({"ok": False, "error": "missing_action_id"}, status=400)
 
-    view_type = str((payload.get("view") or {}).get("type") or "") if isinstance(payload.get("view"), dict) else ""
+    view_type = (
+        str((payload.get("view") or {}).get("type") or "")
+        if isinstance(payload.get("view"), dict)
+        else ""
+    )
     uid = str(user_obj.get("id") or "") or None
     result = await async_process_slack_action(
-        hass, action_id, value=action_value, actor=actor, from_home=(view_type == "home"), home_user_id=uid
+        hass,
+        action_id,
+        value=action_value,
+        actor=actor,
+        from_home=(view_type == "home"),
+        home_user_id=uid,
     )
     resp_url = str(payload.get("response_url") or "")
     if resp_url and result.get("note") and action_id != SLACK_ACTION_REFRESH_DIGEST:
         await async_post_response_url(
-            hass, resp_url, {"response_type": "ephemeral", "replace_original": False, "text": result["note"]}
+            hass,
+            resp_url,
+            {"response_type": "ephemeral", "replace_original": False, "text": result["note"]},
         )
     if kind == "interactive":
         return web.Response(status=200, text="")
@@ -490,7 +596,13 @@ async def async_setup_slack_webhook(hass: Any, webhook_id: str | None = None) ->
             except Exception:  # noqa: BLE001
                 pass
         if hasattr(webhook, "async_register"):
-            webhook.async_register(hass, DOMAIN, "Presence Designer Slack Actions", target_id, async_handle_slack_webhook)
+            webhook.async_register(
+                hass,
+                DOMAIN,
+                "Presence Designer Slack Actions",
+                target_id,
+                async_handle_slack_webhook,
+            )
             dom_data["_slack_webhook_id"] = target_id
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Skipping Slack webhook registration: %s", err)
