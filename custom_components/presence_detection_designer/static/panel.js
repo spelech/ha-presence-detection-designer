@@ -82,6 +82,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     this._timelineNegativeSpace = true;
     this._replayNegSpace = true;
     this._replayNegativeSpace = true;
+    this._lastRenderedView = null;
+    this._verifyingRoomId = null;
+    this._lastVerifyFeedback = {};
   }
 
   set narrow(value) {
@@ -966,6 +969,15 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
   _selectRoomObject(room, renderAfter = true) {
     if (!room) return;
     this._selectedRoomId = room.entry_id;
+    this._selectedRoomBoxName = room.room_name;
+    if (renderAfter && (this._studioView === "floorplan" || this._studioView === "timeline")) {
+      const box = (this._floorplan?.rooms || []).find(
+        (b) => (b.name || b.room_name) === room.room_name
+      );
+      if (box && box.floor) {
+        this._selectedFloorId = box.floor;
+      }
+    }
     this._draftConfig = JSON.parse(JSON.stringify(room.config || {}));
     if (!Array.isArray(this._draftConfig.bayesian_observations)) {
       this._draftConfig.bayesian_observations = [];
@@ -1413,10 +1425,17 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         if (firstOcc && firstOcc.floor) {
           this._selectedFloorId = firstOcc.floor;
         }
-        this.render();
+        if (!this._updateTimelineFrameInPlace()) {
+          this.render();
+        }
       }, intervalMs);
     }
-    this.render();
+    const playBtn = this.shadowRoot?.querySelector?.("#btn-tl-play");
+    if (playBtn && this._studioView === "timeline") {
+      playBtn.textContent = this._timelinePlaying ? "⏸ Pause" : "▶ Play";
+    } else {
+      this.render();
+    }
   }
 
   async runReplay() {
@@ -1556,14 +1575,45 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
   async runRoomAction(action, extra = {}) {
     if (!this._selectedRoomId) return;
+    const targetRoomId = this._selectedRoomId;
+    if (action === "verify_presence") {
+      this._verifyingRoomId = targetRoomId;
+      const vBtn = this.shadowRoot?.querySelector?.("#btn-room-verify");
+      if (vBtn) {
+        vBtn.disabled = true;
+        vBtn.textContent = "⏳ Checking...";
+      }
+      const vBadge = this.shadowRoot?.querySelector?.("#cfg-verify-feedback");
+      if (vBadge) {
+        vBadge.textContent = "Capturing camera snapshot and running Vision AI check...";
+        vBadge.style.color = "var(--ha-primary-text)";
+      }
+    }
     try {
       const res = await this._apiCall(
         "POST",
-        `/api/presence_detection_designer/room/${this._selectedRoomId}/action`,
+        `/api/presence_detection_designer/room/${targetRoomId}/action`,
         { action, ...extra }
       );
+      if (action === "verify_presence") {
+        this._verifyingRoomId = null;
+      }
       if (res && res.room) {
-        const idx = this._overview.rooms.findIndex((r) => r.entry_id === this._selectedRoomId);
+        if (action === "verify_presence") {
+          const llm = res.room.last_llm_result || {};
+          const reason = llm.reason || res.room.state_reason || res.room.last_transition_reason || "Check completed";
+          const detected = Boolean(llm.person_detected ?? res.room.is_present);
+          this._lastVerifyFeedback = {
+            ...(this._lastVerifyFeedback || {}),
+            [targetRoomId]: {
+              ts: llm.timestamp || new Date().toISOString(),
+              detected,
+              reason,
+              camera_entity: extra.camera_entity || res.room.config?.camera_entity || "",
+            },
+          };
+        }
+        const idx = this._overview.rooms.findIndex((r) => r.entry_id === targetRoomId);
         if (idx >= 0) this._overview.rooms[idx] = res.room;
         if (!this._dirty) {
           this._selectRoomObject(res.room, true);
@@ -1571,8 +1621,27 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           this.render();
         }
       }
-      this.showToast("Updated room state", "success");
+      if (action === "verify_presence") {
+        const fb = this._lastVerifyFeedback?.[targetRoomId];
+        if (fb) {
+          const failedSnap = String(fb.reason || "").toLowerCase().includes("failed to capture");
+          this.showToast(
+            `Vision AI (${fb.camera_entity || "camera"}): ${
+              failedSnap ? fb.reason : `${fb.detected ? "Person detected" : "Clear"} — ${fb.reason}`
+            }`,
+            failedSnap ? "warning" : fb.detected ? "success" : "info"
+          );
+        } else {
+          this.showToast("Vision AI check completed", "success");
+        }
+      } else {
+        this.showToast("Updated room state", "success");
+      }
     } catch (err) {
+      if (action === "verify_presence") {
+        this._verifyingRoomId = null;
+        this.render();
+      }
       this.showToast(`Action failed: ${err.message}`, "error");
     }
   }
@@ -1788,7 +1857,118 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
     };
   }
 
+  _getRoomColor(roomName) {
+    const palette = [
+      "#0284c7",
+      "#7c3aed",
+      "#db2777",
+      "#ea580c",
+      "#0d9488",
+      "#4f46e5",
+      "#c026d3",
+      "#ca8a04",
+      "#2563eb",
+      "#9333ea",
+      "#e11d48",
+      "#059669",
+      "#0891b2",
+      "#d97706",
+      "#6366f1",
+      "#be123c",
+    ];
+    const key = String(roomName || "").trim();
+    if (!key) return { hex: "#64748b", border: "rgba(100, 116, 139, 0.45)", bg: "rgba(100, 116, 139, 0.1)" };
+    const knownSet = new Set();
+    ((this._overview && this._overview.rooms) || []).forEach((r) => {
+      if (r && r.room_name) knownSet.add(r.room_name);
+    });
+    ((this._floorplan && this._floorplan.rooms) || []).forEach((b) => {
+      const n = b && (b.name || b.room_name);
+      if (n) knownSet.add(n);
+    });
+    const sortedNames = Array.from(knownSet).sort((a, b) => a.localeCompare(b));
+    let idx = sortedNames.indexOf(key);
+    if (idx < 0) {
+      let h = 0;
+      for (let i = 0; i < key.length; i++) {
+        h = (h * 31 + key.charCodeAt(i)) >>> 0;
+      }
+      idx = h;
+    }
+    const hex = palette[idx % palette.length];
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return {
+      hex,
+      border: `rgba(${r}, ${g}, ${b}, 0.48)`,
+      bg: `rgba(${r}, ${g}, ${b}, 0.12)`,
+    };
+  }
+
+  _formatInlineCode(text) {
+    const escaped = this._escape(text || "");
+    return escaped.replace(/`([^`]+)`/g, '<code class="pdd-inline-code">$1</code>');
+  }
+
+  _renderCameraSelectOptions(selectedEntityId, entities) {
+    const cur = String(selectedEntityId || "").trim();
+    const cams = (entities || [])
+      .filter((e) => e.domain === "camera" || String(e.entity_id || "").startsWith("camera."))
+      .slice()
+      .sort((a, b) =>
+        String(a.name || a.entity_id || "").localeCompare(String(b.name || b.entity_id || ""))
+      );
+    const hasCur = !cur || cams.some((c) => c.entity_id === cur);
+    const opts = [
+      `<option value="" ${!cur ? "selected" : ""}>None (No AI Vision Camera)</option>`,
+    ];
+    cams.forEach((c) => {
+      const label =
+        c.name && c.name !== c.entity_id ? `${c.name} (${c.entity_id})` : c.entity_id;
+      opts.push(
+        `<option value="${this._escape(c.entity_id)}" ${
+          c.entity_id === cur ? "selected" : ""
+        }>${this._escape(label)}</option>`
+      );
+    });
+    if (!hasCur) {
+      opts.push(
+        `<option value="${this._escape(cur)}" selected>${this._escape(cur)} (custom / offline)</option>`
+      );
+    }
+    return opts.join("");
+  }
+
+  _getFpPresetsMap() {
+    return {
+      clean: { underlay: true, rooms: true, cameras: false, subzones: false, pir: false, doors: true, ble: false, connections: false, overlaps: false, occupants: true },
+      cameras: { underlay: true, rooms: true, cameras: true, subzones: true, pir: false, doors: true, ble: false, connections: false, overlaps: true, occupants: true },
+      motion: { underlay: true, rooms: true, cameras: false, subzones: false, pir: true, doors: true, ble: true, connections: false, overlaps: true, occupants: true },
+      all: { underlay: true, rooms: true, cameras: true, subzones: true, pir: true, doors: true, ble: true, connections: true, overlaps: true, occupants: true },
+    };
+  }
+
+  _detectActiveFpPreset() {
+    const layers = this._fpLayers || {};
+    const presets = this._getFpPresetsMap();
+    for (const [key, spec] of Object.entries(presets)) {
+      const match = Object.entries(spec).every(([lk, lv]) => (layers[lk] !== false) === lv);
+      if (match) return key;
+    }
+    return null;
+  }
+
   render() {
+    const scrollPanel = this.shadowRoot?.querySelector?.(".panel-scroll-frame");
+    const prevScroll = scrollPanel
+      ? { top: scrollPanel.scrollTop, left: scrollPanel.scrollLeft }
+      : null;
+    const scrollRoomList = this.shadowRoot?.querySelector?.(".room-list");
+    const prevRoomListScroll = scrollRoomList ? scrollRoomList.scrollTop : null;
+    const scrollTlLog = this.shadowRoot?.querySelector?.("#tl-log-scroll");
+    const prevTlLogScroll = scrollTlLog ? scrollTlLog.scrollTop : null;
+    const keepMainScroll = this._lastRenderedView === this._studioView;
     const rooms = (this._overview && this._overview.rooms) || [];
     const areas = (this._overview && this._overview.areas) || [];
     const entities = (this._overview && this._overview.entities) || [];
@@ -1920,7 +2100,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           background: var(--ha-card);
           border-bottom: 1px solid var(--ha-divider);
           position: relative;
-          z-index: 2;
+          z-index: 20;
         }
         .panel-scroll-frame {
           flex: 1;
@@ -2182,10 +2362,19 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
         }
         .fp-layer-chip.active {
           opacity: 1;
-          color: var(--ha-text);
+          color: var(--ha-primary-text);
           border-color: var(--ha-primary-text);
-          background: rgba(3, 105, 161, 0.1);
+          background: rgba(3, 105, 161, 0.16);
           font-weight: 600;
+          box-shadow: 0 1px 2px rgba(3, 105, 161, 0.16);
+        }
+        .fp-layer-chip .fp-layer-check {
+          display: none;
+          font-size: 10.5px;
+          font-weight: 700;
+        }
+        .fp-layer-chip.active .fp-layer-check {
+          display: inline;
         }
         .fp-layer-dot {
           width: 8px;
@@ -2280,9 +2469,10 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           cursor: pointer;
         }
         .seg-btn.active {
-          background: var(--ha-card);
-          color: var(--ha-text);
-          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+          background: var(--ha-primary);
+          color: #ffffff;
+          font-weight: 600;
+          box-shadow: 0 1px 3px rgba(3, 105, 161, 0.28);
         }
         .room-list {
           max-height: calc(100vh - 190px);
@@ -2371,7 +2561,155 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           padding: 20px;
           min-width: 0;
           max-width: 100%;
-          overflow-x: hidden;
+          overflow-x: clip;
+        }
+        .room-color-dot {
+          width: 9px;
+          height: 9px;
+          border-radius: 3px;
+          flex-shrink: 0;
+          display: inline-block;
+        }
+        .pdd-inline-code {
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-radius: 4px;
+          padding: 1px 5px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: 11.5px;
+          color: var(--ha-text);
+        }
+        .pdd-hint-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          border: 1px solid var(--ha-divider);
+          background: var(--ha-subtle);
+          color: var(--ha-muted);
+          font-size: 10.5px;
+          font-weight: 700;
+          line-height: 1;
+          cursor: help;
+          flex-shrink: 0;
+        }
+        [data-tip] {
+          position: relative;
+        }
+        [data-tip]:hover::after,
+        [data-tip]:focus-visible::after {
+          content: attr(data-tip);
+          position: absolute;
+          left: 50%;
+          bottom: calc(100% + 7px);
+          transform: translateX(-50%);
+          width: max-content;
+          max-width: 270px;
+          padding: 7px 10px;
+          border-radius: 8px;
+          background: #0f172a;
+          color: #f8fafc;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+          font-size: 11.5px;
+          font-weight: 400;
+          line-height: 1.4;
+          text-align: left;
+          white-space: normal;
+          pointer-events: none;
+          z-index: 9999;
+        }
+        [data-tip][data-tip-pos="bottom"]:hover::after,
+        [data-tip][data-tip-pos="bottom"]:focus-visible::after {
+          bottom: auto;
+          top: calc(100% + 7px);
+        }
+        [data-tip][data-tip-align="right"]:hover::after,
+        [data-tip][data-tip-align="right"]:focus-visible::after {
+          left: auto;
+          right: 0;
+          transform: none;
+        }
+        [data-tip][data-tip-align="left"]:hover::after,
+        [data-tip][data-tip-align="left"]:focus-visible::after {
+          left: 0;
+          transform: none;
+        }
+        .fp-control-section {
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-radius: 10px;
+          padding: 10px 12px;
+          margin-bottom: 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .fp-section-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .fp-section-title {
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--ha-text);
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .fp-section-sub {
+          font-size: 11.5px;
+          color: var(--ha-muted);
+        }
+        .fp-map-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 8px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+        }
+        .cov-notes-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .cov-note-card {
+          background: var(--ha-subtle);
+          border: 1px solid var(--ha-divider);
+          border-left-width: 4px;
+          border-radius: 10px;
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .cov-note-card.sev-high { border-left-color: #dc2626; }
+        .cov-note-card.sev-medium { border-left-color: #d97706; }
+        .cov-note-card.sev-low { border-left-color: #0284c7; }
+        .cov-badge {
+          font-size: 10.5px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          padding: 2px 7px;
+          border-radius: 999px;
+          border: 1px solid transparent;
+        }
+        .cov-badge.sev-high { background: rgba(220, 38, 38, 0.12); color: var(--ha-danger-text); border-color: rgba(220, 38, 38, 0.35); }
+        .cov-badge.sev-medium { background: rgba(217, 119, 6, 0.12); color: var(--ha-warning-text); border-color: rgba(217, 119, 6, 0.35); }
+        .cov-badge.sev-low { background: rgba(2, 132, 199, 0.12); color: var(--ha-primary-text); border-color: rgba(2, 132, 199, 0.35); }
+        .tl-transition-row.active {
+          border-color: var(--ha-primary-text) !important;
+          box-shadow: 0 0 0 1px var(--ha-primary-text);
+          background: rgba(3, 105, 161, 0.08) !important;
         }
         .card-head {
           display: flex;
@@ -3226,6 +3564,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <button
             class="btn btn-sm"
             id="btn-quick-toggle-guest-mode"
+            data-tip="Pauses Negative-Space localization, blind-pocket holds, adjacent-room hand-offs, LLM camera checks, and Slack transition alerts when multiple people or guests are visiting."
+            data-tip-pos="bottom"
+            data-tip-align="right"
             title="Guest Mode: Pause Negative-Space raycasting, blind-pocket holds, adjacent-room timer clearing, LLM snapshot checks, and per-room Slack transition alerts when guests or multiple untracked occupants are moving around"
             style="border-color:${
               this._overview?.global_settings?.guest_mode_enabled
@@ -3248,6 +3589,9 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <button
             class="btn btn-sm"
             id="btn-quick-toggle-neg-space"
+            data-tip="Master switch for 'Where It Isn't' spatial exclusion: subtracts clear camera & PIR cones to pinpoint occupants in blind pockets and subregions."
+            data-tip-pos="bottom"
+            data-tip-align="right"
             title="Global Master Switch: Toggle Negative-Space Spatial Exclusion in live Bayesian room inference"
             style="border-color:${
               this._overview?.global_settings?.negative_space_enabled !== false &&
@@ -3325,12 +3669,14 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               ${filteredRooms
                 .map((r) => {
                   const st = this._roomStatusSummary(r);
+                  const rc = this._getRoomColor(r.room_name);
                   return `
                     <div class="room-row ${
                       r.entry_id === this._selectedRoomId ? "selected" : ""
-                    }" data-room-id="${this._escape(r.entry_id)}">
+                    }" data-room-id="${this._escape(r.entry_id)}" style="box-shadow:inset 4px 0 0 ${rc.hex};">
                       <div class="room-row-left">
-                        <span class="status-dot ${st.dotClass}"></span>
+                        <span class="status-dot ${st.dotClass}" title="Occupancy: ${this._escape(st.label)}"></span>
+                        <span class="room-color-dot" style="background:${rc.hex};" title="Assigned color for ${this._escape(r.room_name)}"></span>
                         <span class="room-row-name">${this._escape(r.room_name)}</span>
                       </div>
                       <span class="room-row-status ${st.dotClass}">${this._escape(st.label)}</span>
@@ -3344,7 +3690,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <div class="room-badge-strip">
             <div class="room-badge-strip-head">
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <span style="font-size:12px;font-weight:600;color:var(--ha-muted);">Rooms (${occupiedCount}/${rooms.length} occupied)</span>
+                <span style="font-size:12px;font-weight:700;color:var(--ha-text);">${
+                  this._studioView === "floorplan" || this._studioView === "timeline"
+                    ? `Focus Room on Map (${occupiedCount}/${rooms.length} occupied)`
+                    : `Rooms (${occupiedCount}/${rooms.length} occupied)`
+                }</span>
                 <div class="seg-group" style="margin-top:0;">
                   ${[
                     { id: "all", label: "All" },
@@ -3359,24 +3709,35 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                     )
                     .join("")}
                 </div>
+                <span style="font-size:11.5px;color:var(--ha-muted);">
+                  ${
+                    this._studioView === "floorplan" || this._studioView === "timeline"
+                      ? "Click a room pill to jump to its floor &amp; highlight it on the map."
+                      : "Click a room pill to inspect its history."
+                  }
+                </span>
               </div>
-              <button class="btn-text" id="btn-jump-edit-selected-room" style="font-size:12px;padding:3px 8px;">
-                Edit Selected Room &rarr;
+              <button class="btn-text" id="btn-jump-edit-selected-room" style="font-size:12px;padding:3px 8px;font-weight:600;color:var(--ha-primary-text);">
+                Edit ${this._escape(selRoom?.room_name || "Selected Room")} &rarr;
               </button>
             </div>
             <div class="room-badge-list">
               ${filteredRooms
                 .map((r) => {
                   const st = this._roomStatusSummary(r);
+                  const rc = this._getRoomColor(r.room_name);
                   const isSel = r.entry_id === this._selectedRoomId;
                   return `
                     <button
                       type="button"
                       class="room-badge-pill ${st.dotClass} ${isSel ? "selected" : ""}"
                       data-room-badge-id="${this._escape(r.entry_id)}"
+                      style="border-color:${isSel ? rc.hex : rc.border};background:${isSel ? rc.bg : ""};box-shadow:${isSel ? `0 0 0 1px ${rc.hex}` : `inset 3px 0 0 ${rc.hex}`};"
+                      data-tip="${this._escape(r.room_name)}: ${this._escape(st.label)}. Click to focus on map or edit."
                       title="${this._escape(r.room_name)} — ${this._escape(st.label)}"
                     >
                       <span class="status-dot ${st.dotClass}"></span>
+                      <span class="room-color-dot" style="background:${rc.hex};"></span>
                       <span>${this._escape(r.room_name)}</span>
                     </button>`;
                 })
@@ -3450,8 +3811,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 <div class="settings-pane ${this._settingsTab === "interface" ? "active" : ""}" data-settings-pane="interface">
                   <div class="settings-item">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;">
-                      <span class="setting-label" style="font-weight:600;">🔬 Show Advanced Room &amp; Bayesian Controls</span>
-                      <input type="checkbox" id="gl-ui-advanced-mode" ${
+                      <span class="setting-label" style="font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                        🔬 Show Advanced Room &amp; Bayesian Controls
+                        <span class="pdd-hint-badge" data-tip="Exposes Bayesian probability tables, Max Hold Timeout, per-room PIR Gate overrides, Truth Table, YAML editor, and Blueprints.">i</span>
+                      </span>
+                      <input type="checkbox" id="gl-ui-advanced-mode" data-tip="Toggle expert Bayesian &amp; YAML editing tools across Rooms." data-tip-align="right" title="Toggle expert Bayesian & YAML editing tools" ${
                         this._isAdvancedMode() ? "checked" : ""
                       } />
                     </div>
@@ -3465,8 +3829,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 <div class="settings-pane ${this._settingsTab === "detection" ? "active" : ""}" data-settings-pane="detection">
                   <div class="settings-item">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
-                      <span class="setting-label" style="font-weight:600;">🎯 Negative-Space Bayesian Inference ("Where It Isn't")</span>
-                      <input type="checkbox" id="gl-neg-space-enabled" ${
+                      <span class="setting-label" style="font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                        🎯 Negative-Space Bayesian Inference ("Where It Isn't")
+                        <span class="pdd-hint-badge" data-tip="Uses clear cameras and PIR sensors to rule out empty zones and pinpoint occupants inside blind pockets or adjacent sub-zones.">i</span>
+                      </span>
+                      <input type="checkbox" id="gl-neg-space-enabled" data-tip="Enable or pause Negative-Space spatial exclusion globally." data-tip-align="right" title="Enable or pause Negative-Space spatial exclusion" ${
                         this._globalDraft?.negative_space_enabled !== false ? "checked" : ""
                       } />
                     </div>
@@ -3477,8 +3844,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
                   <div class="settings-item">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
-                      <span class="setting-label" style="font-weight:600;">🛡️ PIR Validation Gate (Corroborated Motion Entry)</span>
-                      <input type="checkbox" id="gl-pir-validation-enabled" ${
+                      <span class="setting-label" style="font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                        🛡️ PIR Validation Gate (Corroborated Motion Entry)
+                        <span class="pdd-hint-badge" data-tip="Prevents false triggers from HVAC drafts, sunlight, or pets by requiring a second corroborating signal within the candidate window.">i</span>
+                      </span>
+                      <input type="checkbox" id="gl-pir-validation-enabled" data-tip="Require corroboration before solo PIR trips mark a room occupied." data-tip-align="right" title="Require corroboration before solo PIR trips mark a room occupied" ${
                         this._globalDraft?.pir_validation_enabled !== false ? "checked" : ""
                       } />
                     </div>
@@ -3495,8 +3865,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
                   <div class="settings-item">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
-                      <span class="setting-label" style="font-weight:600;">👥 Guest Mode (Multi-Occupant / Low-Compute Mode)</span>
-                      <input type="checkbox" id="gl-guest-mode-enabled" ${
+                      <span class="setting-label" style="font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                        👥 Guest Mode (Multi-Occupant / Low-Compute Mode)
+                        <span class="pdd-hint-badge" data-tip="Recommended when hosting guests: pauses single-person trajectory clearing, blind-pocket holds, LLM checks, and transition alerts.">i</span>
+                      </span>
+                      <input type="checkbox" id="gl-guest-mode-enabled" data-tip="Pause multi-room hand-off clearing &amp; LLM alerts when guests are visiting." data-tip-align="right" title="Pause single-occupant inference heuristics when guests are visiting" ${
                         this._globalDraft?.guest_mode_enabled ? "checked" : ""
                       } />
                     </div>
@@ -3511,8 +3884,11 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                       (this._globalDraft?.ble_trackers || []).join(", ")
                     )}" style="margin-bottom:10px;" />
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
-                      <span class="setting-label" style="font-weight:600;">📱 Use BLE Position as Presence Decider</span>
-                      <input type="checkbox" id="gl-ble-decider-enabled" ${
+                      <span class="setting-label" style="font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                        📱 Use BLE Position as Presence Decider
+                        <span class="pdd-hint-badge" data-tip="OFF = BLE area only logs/pins diagnostics (avoids floor-to-floor bleed); ON = BLE area actively drives room occupancy.">i</span>
+                      </span>
+                      <input type="checkbox" id="gl-ble-decider-enabled" data-tip="Allow Bermuda/BLE area trackers to directly trigger room occupancy." data-tip-align="right" title="Allow Bermuda/BLE area trackers to trigger room occupancy" ${
                         this._globalDraft?.ble_decider_enabled ? "checked" : ""
                       } />
                     </div>
@@ -3569,7 +3945,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   <div class="settings-item" style="display:flex;flex-direction:column;gap:10px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;">
                       <span class="setting-label" style="font-weight:600;">Slack Presence Notifications</span>
-                      <input type="checkbox" id="gl-notify-enabled" ${
+                      <input type="checkbox" id="gl-notify-enabled" data-tip="Master toggle for all Slack presence transition alerts." data-tip-align="right" title="Master toggle for Slack presence notifications" ${
                         this._globalDraft?.notifications_enabled !== false ? "checked" : ""
                       } />
                     </div>
@@ -3675,6 +4051,26 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
     this.renderToastOnly();
     this._bindEvents();
+
+    const nextPanel = this.shadowRoot?.querySelector?.(".panel-scroll-frame");
+    if (nextPanel) {
+      if (keepMainScroll && prevScroll) {
+        nextPanel.scrollTop = prevScroll.top;
+        nextPanel.scrollLeft = prevScroll.left;
+      } else if (!keepMainScroll) {
+        nextPanel.scrollTop = 0;
+        nextPanel.scrollLeft = 0;
+      }
+    }
+    const nextRoomList = this.shadowRoot?.querySelector?.(".room-list");
+    if (nextRoomList && prevRoomListScroll !== null) {
+      nextRoomList.scrollTop = prevRoomListScroll;
+    }
+    const nextTlLog = this.shadowRoot?.querySelector?.("#tl-log-scroll");
+    if (nextTlLog && prevTlLogScroll !== null) {
+      nextTlLog.scrollTop = prevTlLogScroll;
+    }
+    this._lastRenderedView = this._studioView;
   }
 
   _renderSimpleRoomEditor(
@@ -3715,6 +4111,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <span class="status-dot ${st.dotClass}" style="width:12px;height:12px;"></span>
           <div>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span class="room-color-dot" style="width:12px;height:12px;background:${this._getRoomColor(cfg.room_name || selRoom.room_name).hex};" title="Assigned color for ${this._escape(cfg.room_name || selRoom.room_name)}"></span>
               <h2 style="margin:0;font-size:20px;font-weight:500;">${this._escape(
                 cfg.room_name || selRoom.room_name
               )}</h2>
@@ -3935,17 +4332,35 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
               <div>
                 <div class="setting-label">Primary AI Vision Camera (optional)</div>
                 <div class="setting-help">Frigate or HA camera used to visually confirm or verify room occupancy.</div>
+                ${(() => {
+                  const fb = this._lastVerifyFeedback?.[selRoom.entry_id];
+                  const isVerifying = this._verifyingRoomId === selRoom.entry_id;
+                  if (isVerifying) {
+                    return `<div id="cfg-verify-feedback" style="font-size:12px;color:var(--ha-primary-text);margin-top:4px;font-weight:500;">⏳ Capturing camera snapshot and running Vision AI check...</div>`;
+                  }
+                  if (fb) {
+                    const tStr = fb.ts ? new Date(fb.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+                    const failedSnap = String(fb.reason || "").toLowerCase().includes("failed to capture");
+                    const color = failedSnap ? "var(--ha-warning-text)" : fb.detected ? "var(--ha-success-text)" : "var(--ha-muted)";
+                    const badge = failedSnap ? "⚠️ Snapshot issue" : fb.detected ? "✓ Person detected" : "○ Clear";
+                    return `<div id="cfg-verify-feedback" style="font-size:12px;color:${color};margin-top:4px;font-weight:500;">Last check (${this._escape(tStr)}): <strong>${badge}</strong> — ${this._escape(fb.reason)}</div>`;
+                  }
+                  return `<div id="cfg-verify-feedback" style="font-size:11.5px;color:var(--ha-muted);margin-top:4px;">Click <strong>Check</strong> to test live Vision AI on the selected camera.</div>`;
+                })()}
               </div>
-              <div style="display:flex;align-items:center;gap:6px;min-width:240px;">
-                <input
-                  type="text"
-                  class="input"
-                  id="cfg-camera-entity"
-                  list="pdd-all-entities"
-                  value="${this._escape(cfg.camera_entity || "")}"
-                  placeholder="camera.living_room"
-                />
-                <button class="btn btn-sm" id="btn-room-verify" title="Run AI Vision Check now">Check</button>
+              <div style="display:flex;align-items:center;gap:6px;min-width:280px;max-width:380px;">
+                <select class="select" id="cfg-camera-entity" title="Select Home Assistant camera entity by friendly name">
+                  ${this._renderCameraSelectOptions(cfg.camera_entity || "", entities)}
+                </select>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  id="btn-room-verify"
+                  data-tip="Captures a live snapshot from the selected camera and asks Vision AI whether a person is present."
+                  data-tip-align="right"
+                  title="Run AI Vision Check now"
+                  ${this._verifyingRoomId === selRoom.entry_id ? "disabled" : ""}
+                >${this._verifyingRoomId === selRoom.entry_id ? "⏳ Checking..." : "Check"}</button>
               </div>
             </div>
 
@@ -3977,7 +4392,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 <div class="setting-help">Require transient PIR motion to be corroborated within the candidate window (camera, adjacent room, door, BLE, or second pulse) before confirming occupancy.</div>
               </div>
               <div style="display:flex;align-items:center;gap:12px;">
-                <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;" data-tip="Hold solo PIR motion briefly until corroborated by an adjacent room, door, camera, BLE, or second pulse." data-tip-align="right">
                   <input
                     type="checkbox"
                     id="cfg-pir-validation-enabled"
@@ -4038,13 +4453,15 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   connectedRooms.length === 0
                     ? `<span style="font-size:13px;color:var(--ha-muted);">No adjacent rooms linked.</span>`
                     : connectedRooms
-                        .map(
-                          (rname, i) => `
-                        <span class="ha-chip">
-                          ${this._escape(rname)}
-                          <button class="del-connected-room" data-idx="${i}" title="Unlink room">×</button>
-                        </span>`
-                        )
+                        .map((rname, i) => {
+                          const rc = this._getRoomColor(rname);
+                          return `
+                        <span class="ha-chip" style="border-color:${rc.border};background:${rc.bg};">
+                          <span class="room-color-dot" style="background:${rc.hex};"></span>
+                          <span>${this._escape(rname)}</span>
+                          <button class="del-connected-room" data-idx="${i}" title="Unlink ${this._escape(rname)}">×</button>
+                        </span>`;
+                        })
                         .join("")
                 }
                 <div style="display:inline-flex;gap:6px;align-items:center;">
@@ -4070,7 +4487,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
 
             <!-- Closed Door Latch Toggle -->
             <div class="setting-row" style="align-items:flex-start;flex-direction:column;">
-              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;" data-tip="Track door contact sensors for room perimeter topology &amp; closed-door corridor validation." data-tip-align="left">
                 <input
                   type="checkbox"
                   id="cfg-bounded-toggle"
@@ -4293,7 +4710,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 <div class="setting-help">Send real-time cards detailing what sensor or rule caused this room to occupy or clear.</div>
               </div>
               <div>
-                <input type="checkbox" id="cfg-notify-slack" ${cfg.notify_slack ? "checked" : ""} style="width:16px;height:16px;" />
+                <input type="checkbox" id="cfg-notify-slack" data-tip="Send Slack alerts when this room transitions between occupied and vacant." data-tip-align="right" title="Send Slack alerts for this room" ${cfg.notify_slack ? "checked" : ""} style="width:16px;height:16px;" />
               </div>
             </div>
 
@@ -4320,7 +4737,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                 <div class="setting-help">Attach Frigate detection capture to alert card to audit light vs human/pet (defaults to OFF).</div>
               </div>
               <div>
-                <input type="checkbox" id="cfg-include-camera-snapshot" ${cfg.include_camera_snapshot ? "checked" : ""} style="width:16px;height:16px;" />
+                <input type="checkbox" id="cfg-include-camera-snapshot" data-tip="Attach the triggering camera snapshot to Slack cards to review false positives." data-tip-align="right" title="Attach camera snapshot to Slack cards" ${cfg.include_camera_snapshot ? "checked" : ""} style="width:16px;height:16px;" />
               </div>
             </div>
           </div>
@@ -4732,10 +5149,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
             <div>
               <div class="setting-label" style="font-size:12.5px;margin-bottom:4px;">Camera Entity (AI Vision)</div>
               <div style="display:flex;gap:6px;">
-                <input type="text" class="input" id="cfg-camera-entity" list="pdd-all-entities" value="${this._escape(
-                  cfg.camera_entity || ""
-                )}" placeholder="camera.living_room" />
-                <button class="btn btn-sm" id="btn-room-verify" title="Run AI Vision Check now">Check</button>
+                <select class="select" id="cfg-camera-entity" title="Select Home Assistant camera entity by friendly name">
+                  ${this._renderCameraSelectOptions(cfg.camera_entity || "", entities)}
+                </select>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  id="btn-room-verify"
+                  data-tip="Captures a live snapshot from the selected camera and runs Vision AI."
+                  data-tip-align="right"
+                  title="Run AI Vision Check now"
+                  ${this._verifyingRoomId === selRoom.entry_id ? "disabled" : ""}
+                >${this._verifyingRoomId === selRoom.entry_id ? "⏳ Checking..." : "Check"}</button>
               </div>
             </div>
           </div>
@@ -5349,19 +5774,21 @@ action:
       }
     }
 
+    const focusedName = this.selectedRoom?.room_name || ctx.selBox?.name || ctx.selBox?.room_name || "";
+    const focusTag = focusedName ? ` · Focused: <strong>${this._escape(focusedName)}</strong>` : "";
     if (mode === "rooms") {
       if (this._roomsLocked) {
-        return `<span><strong>🏠 Rooms Locked</strong> — Click a room to inspect or adjust doors. Click <strong>🔓 Rooms Unlocked</strong> above to move/resize boxes.</span><span>Ctrl+Z to Undo</span>`;
+        return `<span><strong>🏠 Rooms Locked</strong> — Click a room to inspect or adjust doors. Click <strong>🔓 Rooms Unlocked</strong> to move/resize boxes.${focusTag}</span><span>Ctrl+Z to Undo</span>`;
       }
-      return `<span><strong>🔓 Editing Room Boxes</strong> — Drag rooms or corners (polygons stay intact). Lock rooms again when finished.</span><span>${snapHint}</span>`;
+      return `<span><strong>🔓 Editing Room Boxes</strong> — Drag rooms or corners (polygons stay intact). Lock rooms again when finished.${focusTag}</span><span>${snapHint}</span>`;
     }
     if (mode === "cameras") {
-      return `<span><strong>📹 Camera Mode</strong> — Drag any camera pin, its <strong>LOS arrow</strong> (rotate), <strong>tip square</strong> (range), cone edges (FOV), or sub-zones.</span><span>Arrow keys nudge · [ ] rotate</span>`;
+      return `<span><strong>📹 Camera Mode</strong> — Drag any camera pin, its <strong>LOS arrow</strong> (rotate), <strong>tip square</strong> (range), cone edges (FOV), or sub-zones.${focusTag}</span><span>Arrow keys nudge · [ ] rotate</span>`;
     }
     if (mode === "sensors") {
-      return `<span><strong>📡 Sensor Mode</strong> — Drag PIR, door, or BLE pins &amp; <strong>LOS vector handles</strong> freely; rooms cannot be moved here.</span><span>Arrow keys nudge · [ ] rotate</span>`;
+      return `<span><strong>📡 Sensor Mode</strong> — Drag PIR, door, or BLE pins &amp; <strong>LOS vector handles</strong> freely; rooms cannot be moved here.${focusTag}</span><span>Arrow keys nudge · [ ] rotate</span>`;
     }
-    return `<span><strong>🎯 Devices Mode (Rooms Locked)</strong> — Click any camera, PIR, door sensor, BLE proxy, or sub-zone to move or aim its <strong>LOS vector</strong>.</span><span>Arrow keys nudge · [ ] rotate</span>`;
+    return `<span><strong>🎯 Devices Mode (Rooms Locked)</strong> — Click any camera, PIR, door sensor, BLE proxy, or sub-zone to move or aim its <strong>LOS vector</strong>.${focusTag}</span><span>Arrow keys nudge · [ ] rotate</span>`;
   }
 
   _renderFloorplanSvgBundle(selRoom) {
@@ -5489,14 +5916,16 @@ action:
       .map((box) => {
         const rName = box.name || box.room_name;
         const live = liveRoomsByName[rName];
+        const rc = this._getRoomColor(rName);
+        const isFocused = Boolean(selRoom && selRoom.room_name === rName);
         const isSel = selBox && (selBox.name || selBox.room_name) === rName && isRoomMode;
         const isOcc = live ? Boolean(live.is_present) : false;
         const isTransit = box.room_type === "transit" || Boolean(box.is_transit);
         const covPct = Number(roomCoverage[rName]?.max_coverage_pct ?? 100);
         const hasBlindSpot = !isTransit && covPct === 0;
 
-        let strokeColor = "#0284c7";
-        let fillColor = isSel ? "rgba(2, 132, 199, 0.16)" : "rgba(2, 132, 199, 0.08)";
+        let strokeColor = isFocused ? rc.hex : rc.border;
+        let fillColor = isSel || isFocused ? rc.bg : "rgba(148, 163, 184, 0.08)";
         if (isOcc) {
           strokeColor = "#16a34a";
           fillColor = "rgba(22, 163, 74, 0.18)";
@@ -5597,7 +6026,7 @@ action:
               d="${this._escape(box.svg_path)}"
               fill="${fillColor}"
               stroke="${strokeColor}"
-              stroke-width="${isSel ? "2.5" : "1.6"}"
+              stroke-width="${isSel || isFocused ? "3" : "1.7"}"
               stroke-dasharray="${isTransit ? "4,4" : "none"}"
               style="${roomPointerStyle}"
             />`
@@ -5611,7 +6040,7 @@ action:
               rx="6"
               fill="${fillColor}"
               stroke="${strokeColor}"
-              stroke-width="${isSel ? "2.5" : "1.6"}"
+              stroke-width="${isSel || isFocused ? "3" : "1.7"}"
               stroke-dasharray="${isTransit ? "4,4" : "none"}"
               style="${roomPointerStyle}"
             />`;
@@ -5633,8 +6062,14 @@ action:
             <title>${this._escape(rName)} — ${this._escape(rawSub)}</title>
             ${roomShapeSvg}
             ${
+              isFocused && !box.svg_path
+                ? `<rect x="${(rx - 3).toFixed(1)}" y="${(ry - 3).toFixed(1)}" width="${(rw + 6).toFixed(1)}" height="${(rh + 6).toFixed(1)}" rx="8" fill="none" stroke="${rc.hex}" stroke-width="2" stroke-dasharray="6,3" style="pointer-events:none;" />`
+                : ""
+            }
+            ${
               roomTitle
-                ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 22).toFixed(1)}" fill="#1e293b" font-size="${titleFs}" font-weight="600" style="pointer-events:none;user-select:none;">${this._escape(roomTitle)}</text>`
+                ? `<rect x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 12.5).toFixed(1)}" width="8" height="8" rx="2" fill="${rc.hex}" style="pointer-events:none;" />
+                   <text x="${(anchor.x + padX + 12).toFixed(1)}" y="${(anchor.y + 21).toFixed(1)}" fill="#1e293b" font-size="${titleFs}" font-weight="600" style="pointer-events:none;user-select:none;">${this._escape(roomTitle)}</text>`
                 : ""
             }
             ${
@@ -6282,80 +6717,117 @@ action:
             </div>
           </div>
 
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <div class="seg-group" id="fp-mode-switcher" style="margin-top:0;">
-              <button class="seg-btn ${this._floorplanMode === "devices" ? "active" : ""}" id="btn-fp-mode-devices" style="padding:6px 10px;font-weight:600;" title="Move & aim any camera, PIR, door sensor, BLE proxy, or sub-zone">
-                🎯 Sensors &amp; Cameras
+        </div>
+
+        <!-- Section 1: Canvas Edit Tool (what clicking/dragging grabs) -->
+        <div class="fp-control-section">
+          <div class="fp-section-head">
+            <span class="fp-section-title">
+              1. Canvas Edit Tool (What Click &amp; Drag Grabs)
+              <span class="pdd-hint-badge" data-tip="Controls which pins or boxes respond to dragging on the map. Unlike Map Visibility layers below, this does not hide anything.">i</span>
+            </span>
+            <span class="fp-section-sub">Choose what your mouse grabs on the map</span>
+          </div>
+          <div class="seg-group" id="fp-mode-switcher" style="margin-top:0;">
+            <button class="seg-btn ${this._floorplanMode === "devices" ? "active" : ""}" id="btn-fp-mode-devices" style="padding:6px 12px;" data-tip="Move &amp; aim any camera, PIR, door sensor, BLE proxy, or sub-zone without grabbing rooms." title="Move & aim any camera, PIR, door sensor, BLE proxy, or sub-zone">
+              🎯 Sensors &amp; Cameras
+            </button>
+            <button class="seg-btn ${this._floorplanMode === "cameras" ? "active" : ""}" id="btn-fp-mode-cameras" style="padding:6px 12px;" data-tip="Only cameras, camera LOS arrows, FOV handles, and sub-zones are draggable." title="Drag cameras, LOS arrows, and sub-zones only">
+              📹 Cameras Only
+            </button>
+            <button class="seg-btn ${this._floorplanMode === "sensors" ? "active" : ""}" id="btn-fp-mode-sensors" style="padding:6px 12px;" data-tip="Only PIR motion cones, door contact pins, and BLE proxies are draggable." title="Drag PIR, door, and BLE pins only">
+              📡 PIR &amp; BLE Only
+            </button>
+            <button class="seg-btn ${this._floorplanMode === "rooms" ? "active" : ""}" id="btn-fp-mode-rooms" style="padding:6px 12px;" data-tip="Click rooms &amp; doorway handles to inspect or reposition room boundaries (unlock rooms to resize)." title="Select/edit room boxes and doorways">
+              🏠 Rooms &amp; Doors
+            </button>
+          </div>
+        </div>
+
+        <!-- Section: Map Editing & Room Sync -->
+        <div class="fp-utility-bar" style="flex-direction:column;align-items:stretch;">
+          <div class="fp-section-head">
+            <span class="fp-section-title">
+              🛠️ Map Editing &amp; Room Sync
+              <span class="pdd-hint-badge" data-tip="Lock room walls while placing sensors, undo/redo map edits, save layout, or sync hallway/door connections back to every room's config.">i</span>
+            </span>
+            <span class="fp-section-sub">Protect walls, save floorplan changes, or push map room connections to room hand-off rules</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div class="fp-utility-group">
+              <button type="button" class="btn btn-sm fp-lock-btn ${this._roomsLocked ? "locked" : "unlocked"}" id="btn-fp-lock-rooms" data-tip="${this._roomsLocked ? "Currently locked so clicking sensors never drags a room. Click to unlock room boxes." : "Rooms are unlocked and draggable. Click to lock room walls again."}" title="${this._roomsLocked ? "Unlock to allow dragging/resizing room boxes" : "Lock room boxes so clicks never move rooms"}">
+                ${this._roomsLocked ? "🔒 Rooms Locked" : "🔓 Rooms Unlocked"}
               </button>
-              <button class="seg-btn ${this._floorplanMode === "cameras" ? "active" : ""}" id="btn-fp-mode-cameras" style="padding:6px 10px;font-weight:600;">
-                📹 Cameras Only
+              <button type="button" class="btn btn-sm" id="btn-fp-undo" ${undoCount === 0 ? "disabled" : ""} title="Undo last edit (Ctrl+Z)">
+                ↩ Undo${undoCount > 0 ? ` (${undoCount})` : ""}
               </button>
-              <button class="seg-btn ${this._floorplanMode === "sensors" ? "active" : ""}" id="btn-fp-mode-sensors" style="padding:6px 10px;font-weight:600;">
-                📡 PIR &amp; BLE Only
+              <button type="button" class="btn btn-sm" id="btn-fp-redo" ${redoCount === 0 ? "disabled" : ""} title="Redo edit (Ctrl+Shift+Z)">
+                ↪ Redo
               </button>
-              <button class="seg-btn ${this._floorplanMode === "rooms" ? "active" : ""}" id="btn-fp-mode-rooms" style="padding:6px 10px;font-weight:600;">
-                🏠 Rooms &amp; Doors
+              <button type="button" class="btn btn-sm" id="btn-fp-reset-rooms" data-tip="Restores default wall shapes on this floor without moving your cameras or sensors." title="Restore exact default room boxes on this floor without moving your cameras or sensors">
+                ↺ Reset Floor Rooms
+              </button>
+              <button type="button" class="btn btn-sm" id="btn-fp-reset-all" data-tip="Resets all floors, rooms, cameras, and sensors back to factory layout." title="Restore entire floorplan (rooms + sensors) to default">
+                ↺ Reset All
               </button>
             </div>
-            <div class="seg-group" style="margin-top:0;">
-              ${floors
+
+            <div class="fp-utility-group">
+              <div style="display:flex;align-items:center;gap:6px;background:var(--ha-subtle);padding:3px 9px;border-radius:6px;border:1px solid var(--ha-divider);font-size:12px;" data-tip="Show or adjust opacity of the underlying architectural floorplan image.">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                  <input type="checkbox" id="toggle-blueprint-underlay" ${layerOn("underlay") ? "checked" : ""} style="cursor:pointer;" />
+                  <span>Blueprint</span>
+                </label>
+                ${
+                  layerOn("underlay")
+                    ? `<input type="range" id="blueprint-opacity-slider" min="5" max="100" step="5" value="${Math.round(this._underlayOpacity * 100)}" style="width:68px;cursor:pointer;" title="Underlay Opacity" />
+                       <span style="font-size:11px;color:var(--ha-muted);min-width:24px;">${Math.round(this._underlayOpacity * 100)}%</span>`
+                    : ""
+                }
+              </div>
+              <span id="fp-save-state" class="fp-save-badge ${this._fpDirty ? "dirty" : "saved"}">${this._fpDirty ? "Unsaved" : "Saved ✓"}</span>
+              <button type="button" class="btn btn-sm" id="btn-fp-save-top" data-tip="Save pin positions, camera angles, and room geometry to storage.">💾 Save</button>
+              <button type="button" class="btn btn-sm" id="btn-toggle-fp-inspector" data-tip="Open the side panel to add cameras, PIR/door sensors, BLE proxies, or edit exact coordinates.">
+                ${this._showFloorplanInspector ? "Hide Details" : "Edit Details &amp; Add"}
+              </button>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-fp-compile" data-tip="Analyzes adjacent rooms &amp; doorways on the map and writes those links into each room's Connected Adjacent Rooms." data-tip-align="right">Apply Connections to Rooms</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: Map Visibility (Layers & Quick Presets) -->
+        ${(() => {
+          const activePreset = this._detectActiveFpPreset();
+          return `
+        <div class="fp-layer-bar" style="flex-direction:column;align-items:stretch;">
+          <div class="fp-section-head">
+            <span class="fp-section-title">
+              2. Map Visibility (Layers &amp; Quick Presets)
+              <span class="pdd-hint-badge" data-tip="Controls what is drawn on the map. Presets on the right are 1-click bundles of the individual Layer toggles below.">i</span>
+            </span>
+            <div class="fp-layer-presets">
+              <span style="font-size:11px;font-weight:600;color:var(--ha-muted);margin-right:2px;">Quick Presets:</span>
+              ${[
+                { id: "clean", label: "Clean", tip: "Rooms, doors, blueprint & live targets only" },
+                { id: "cameras", label: "Cameras", tip: "Rooms, cameras, sub-zones, doors & overlaps" },
+                { id: "motion", label: "Motion + BLE", tip: "Rooms, PIR cones, doors, BLE proxies & overlaps" },
+                { id: "all", label: "All Layers", tip: "Turn every visual overlay ON" },
+              ]
                 .map(
-                  (fl) => `
-                <button class="seg-btn ${fl.id === activeFloor.id ? "active" : ""}" data-floor-id="${this._escape(fl.id)}" style="padding:6px 10px;">
-                  ${this._escape(fl.name.replace(/\s*\(.*\)/, ""))}
-                </button>`
+                  (pr) => `
+                <button
+                  type="button"
+                  class="btn btn-sm ${activePreset === pr.id ? "btn-primary active" : ""}"
+                  data-fp-preset="${pr.id}"
+                  data-tip="${this._escape(pr.tip)}"
+                  style="padding:3px 9px;font-size:11px;"
+                >${pr.label}</button>`
                 )
                 .join("")}
             </div>
           </div>
-        </div>
-
-        <!-- Toolbar: Lock Rooms, Undo/Redo, Reset, Underlay, Save & Apply -->
-        <div class="fp-utility-bar">
-          <div class="fp-utility-group">
-            <button type="button" class="btn btn-sm fp-lock-btn ${this._roomsLocked ? "locked" : "unlocked"}" id="btn-fp-lock-rooms" title="${this._roomsLocked ? "Unlock to allow dragging/resizing room boxes" : "Lock room boxes so clicks never move rooms"}">
-              ${this._roomsLocked ? "🔒 Rooms Locked" : "🔓 Rooms Unlocked"}
-            </button>
-            <button type="button" class="btn btn-sm" id="btn-fp-undo" ${undoCount === 0 ? "disabled" : ""} title="Undo last edit (Ctrl+Z)">
-              ↩ Undo${undoCount > 0 ? ` (${undoCount})` : ""}
-            </button>
-            <button type="button" class="btn btn-sm" id="btn-fp-redo" ${redoCount === 0 ? "disabled" : ""} title="Redo edit (Ctrl+Shift+Z)">
-              ↪ Redo
-            </button>
-            <button type="button" class="btn btn-sm" id="btn-fp-reset-rooms" title="Restore exact default room boxes on this floor without moving your cameras or sensors">
-              ↺ Reset Floor Rooms
-            </button>
-            <button type="button" class="btn btn-sm" id="btn-fp-reset-all" title="Restore entire floorplan (rooms + sensors) to default">
-              ↺ Reset All
-            </button>
-          </div>
-
-          <div class="fp-utility-group">
-            <div style="display:flex;align-items:center;gap:6px;background:var(--ha-subtle);padding:3px 9px;border-radius:6px;border:1px solid var(--ha-divider);font-size:12px;">
-              <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                <input type="checkbox" id="toggle-blueprint-underlay" ${layerOn("underlay") ? "checked" : ""} style="cursor:pointer;" />
-                <span>Blueprint</span>
-              </label>
-              ${
-                layerOn("underlay")
-                  ? `<input type="range" id="blueprint-opacity-slider" min="5" max="100" step="5" value="${Math.round(this._underlayOpacity * 100)}" style="width:68px;cursor:pointer;" title="Underlay Opacity" />
-                     <span style="font-size:11px;color:var(--ha-muted);min-width:24px;">${Math.round(this._underlayOpacity * 100)}%</span>`
-                  : ""
-              }
-            </div>
-            <span id="fp-save-state" class="fp-save-badge ${this._fpDirty ? "dirty" : "saved"}">${this._fpDirty ? "Unsaved" : "Saved ✓"}</span>
-            <button type="button" class="btn btn-sm" id="btn-fp-save-top">💾 Save</button>
-            <button type="button" class="btn btn-sm" id="btn-toggle-fp-inspector">
-              ${this._showFloorplanInspector ? "Hide Details" : "Edit Details &amp; Add"}
-            </button>
-            <button type="button" class="btn btn-primary btn-sm" id="btn-fp-compile">Apply Connections to Rooms</button>
-          </div>
-        </div>
-
-        <!-- Layer Controls Bar -->
-        <div class="fp-layer-bar">
           <div class="fp-layer-chips">
-            <span style="font-size:11.5px;font-weight:600;color:var(--ha-muted);margin-right:2px;">Layers:</span>
+            <span style="font-size:11.5px;font-weight:600;color:var(--ha-muted);margin-right:2px;">Show Layers:</span>
             ${[
               { id: "rooms", label: `Rooms (${fRooms.length})`, color: "#0284c7" },
               { id: "cameras", label: `Cameras (${fCams.length})`, color: "#0ea5e9" },
@@ -6375,21 +6847,33 @@ action:
                 data-fp-layer="${ly.id}"
                 title="Toggle ${this._escape(ly.label)} layer"
               >
+                <span class="fp-layer-check">✓</span>
                 <span class="fp-layer-dot" style="background:${ly.color};"></span>
                 <span>${this._escape(ly.label)}</span>
               </button>`
               )
               .join("")}
           </div>
-          <div class="fp-layer-presets">
-            <button type="button" class="btn btn-sm" data-fp-preset="clean" style="padding:3px 8px;font-size:11px;">Clean</button>
-            <button type="button" class="btn btn-sm" data-fp-preset="cameras" style="padding:3px 8px;font-size:11px;">Cameras</button>
-            <button type="button" class="btn btn-sm" data-fp-preset="motion" style="padding:3px 8px;font-size:11px;">Motion + BLE</button>
-            <button type="button" class="btn btn-sm" data-fp-preset="all" style="padding:3px 8px;font-size:11px;">All Layers</button>
-          </div>
-        </div>
+        </div>`;
+        })()}
 
         <div class="fp-canvas-wrap">
+          <div class="fp-map-toolbar">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:12px;font-weight:700;color:#0f172a;">Floor:</span>
+              <div class="seg-group" style="margin-top:0;background:rgba(15,23,42,0.06);border-color:rgba(15,23,42,0.12);">
+                ${floors
+                  .map(
+                    (fl) => `
+                  <button class="seg-btn ${fl.id === activeFloor.id ? "active" : ""}" data-floor-id="${this._escape(fl.id)}" style="padding:4px 11px;">
+                    ${this._escape(fl.name.replace(/\s*\(.*\)/, ""))}
+                  </button>`
+                  )
+                  .join("")}
+              </div>
+            </div>
+            <span style="font-size:11.5px;color:#475569;">${fRooms.length} rooms · ${fCams.length} cameras · ${fSensors.length} sensors on ${this._escape(activeFloor.name.replace(/\s*\(.*\)/, ""))}</span>
+          </div>
           <div id="fp-live-hud" class="fp-live-hud">${hudHtml}</div>
           <svg id="fp-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:420px;display:block;user-select:none;touch-action:none;">
             ${svgInner}
@@ -6790,30 +7274,285 @@ action:
 
       ${
         this._showFloorplanNotes
-          ? `
+          ? (() => {
+              const catLabels = {
+                camera_spillover: "Camera Spillover",
+                blind_pocket: "Blind Pocket",
+                unsealed_perimeter: "Unsealed Exit",
+                vertical_ble_bleed: "Vertical BLE Bleed",
+              };
+              const hiCnt = ambiguities.filter((a) => a.severity === "high").length;
+              const medCnt = ambiguities.filter((a) => a.severity === "medium").length;
+              const lowCnt = ambiguities.length - hiCnt - medCnt;
+              return `
         <div class="ha-card">
-          <div class="list-divider" style="border-top:none;">
-            ${ambiguities
-              .map(
-                (amb) => `
-              <div style="padding:12px 0;border-bottom:1px solid var(--ha-divider);">
-                <div style="font-size:14px;font-weight:500;">${this._escape(
-                  amb.title || amb.room || (amb.rooms || []).join(" ↔ ")
-                )}</div>
-                <div style="font-size:13px;color:var(--ha-muted);margin-top:2px;">${this._escape(
-                  amb.description
-                )}</div>
-                <div style="font-size:12.5px;color:var(--ha-primary-text);margin-top:4px;">${this._escape(
-                  amb.resolution || amb.recommendation || ""
-                )}</div>
-              </div>`
-              )
-              .join("")}
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+            <div style="font-size:12.5px;color:var(--ha-muted);">
+              Detected spatial overlaps &amp; sensor coverage edge cases. Use the buttons on any card to inspect the camera on the map or tune the room.
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${hiCnt > 0 ? `<span class="cov-badge sev-high">${hiCnt} High</span>` : ""}
+              ${medCnt > 0 ? `<span class="cov-badge sev-medium">${medCnt} Medium</span>` : ""}
+              ${lowCnt > 0 ? `<span class="cov-badge sev-low">${lowCnt} Info</span>` : ""}
+            </div>
           </div>
-        </div>`
+          ${
+            ambiguities.length === 0
+              ? `<div style="font-size:13px;color:var(--ha-success-text);padding:8px 0;">✓ No coverage ambiguities detected on this floorplan.</div>`
+              : `<div class="cov-notes-grid">
+            ${ambiguities
+              .map((amb) => {
+                const sev = ["high", "medium", "low"].includes(amb.severity) ? amb.severity : "low";
+                const cat = catLabels[amb.category] || "Spatial Note";
+                const roomList = Array.isArray(amb.rooms) && amb.rooms.length ? amb.rooms : amb.room ? [amb.room] : [];
+                const primaryRoom = roomList[0] || "";
+                const rec = amb.resolution || amb.recommendation || "";
+                return `
+              <div class="cov-note-card sev-${sev}">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+                  <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+                    <span class="cov-badge sev-${sev}">${this._escape(sev)}</span>
+                    <span style="font-size:11px;font-weight:600;color:var(--ha-muted);background:var(--ha-card);border:1px solid var(--ha-divider);padding:2px 7px;border-radius:999px;">${this._escape(cat)}</span>
+                    <span style="font-size:14px;font-weight:600;color:var(--ha-text);">${this._formatInlineCode(
+                      amb.title || amb.room || roomList.join(" ↔ ")
+                    )}</span>
+                  </div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    ${
+                      amb.camera_id
+                        ? `<button type="button" class="btn btn-sm" data-focus-fp-cam="${this._escape(amb.camera_id)}" title="Highlight this camera on the floorplan">📹 Locate Camera</button>`
+                        : ""
+                    }
+                    ${
+                      primaryRoom
+                        ? `<button type="button" class="btn btn-sm" data-jump-room-name="${this._escape(primaryRoom)}" title="Open ${this._escape(primaryRoom)} room settings">Edit ${this._escape(primaryRoom)} &rarr;</button>`
+                        : ""
+                    }
+                  </div>
+                </div>
+                <div style="font-size:12.5px;color:var(--ha-text);line-height:1.5;">
+                  <strong style="color:var(--ha-muted);font-size:11.5px;text-transform:uppercase;letter-spacing:0.03em;">Issue:</strong>
+                  ${this._formatInlineCode(amb.description)}
+                </div>
+                ${
+                  rec
+                    ? `<div style="font-size:12.5px;color:var(--ha-primary-text);line-height:1.5;">
+                  <strong style="font-size:11.5px;text-transform:uppercase;letter-spacing:0.03em;">Suggested Fix:</strong>
+                  ${this._formatInlineCode(rec)}
+                </div>`
+                    : ""
+                }
+                ${
+                  roomList.length > 0
+                    ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;">
+                  <span style="font-size:11px;color:var(--ha-muted);">Affected rooms:</span>
+                  ${roomList
+                    .map((rn) => {
+                      const rc = this._getRoomColor(rn);
+                      return `<span class="ha-chip" style="padding:2px 8px;font-size:11.5px;border-color:${rc.border};background:${rc.bg};"><span class="room-color-dot" style="background:${rc.hex};"></span>${this._escape(rn)}</span>`;
+                    })
+                    .join("")}
+                </div>`
+                    : ""
+                }
+              </div>`;
+              })
+              .join("")}
+          </div>`
+          }
+        </div>`;
+            })()
           : ""
       }
     `;
+  }
+
+  _buildTimelineFrameParts() {
+    const tl = this._timelineData;
+    const fp = this._floorplan || this._overview?.floorplan || PDD_DEFAULT_FLOORPLAN;
+    const floors = fp.floors || [];
+    const activeFloor =
+      floors.find((f) => f.id === this._selectedFloorId) || floors[1] || floors[0] || { id: "main", name: "Main Floor" };
+    this._selectedFloorId = activeFloor.id;
+    const frames = tl?.frames || [];
+    const frameIdx = Math.max(0, Math.min(Math.max(0, frames.length - 1), Number(this._timelineFrameIdx || 0)));
+    const curFrame = frames[frameIdx] || {
+      iso: new Date().toISOString(),
+      occupant_estimates: [],
+      negative_space_exclusions: [],
+    };
+    const frameOccupants = curFrame.occupant_estimates || curFrame.occupants || [];
+    const occupiedRoomsList =
+      curFrame.occupied_rooms ||
+      curFrame.active_rooms ||
+      frameOccupants.map((o) => o.room).filter(Boolean);
+    const occSet = new Set(occupiedRoomsList);
+    const roomEstimates = { ...(curFrame.room_estimates || {}) };
+    frameOccupants.forEach((o) => {
+      if (o.room && !roomEstimates[o.room]) {
+        roomEstimates[o.room] = o;
+      }
+    });
+    const negZones = curFrame.negative_space_exclusions || curFrame.negative_space_zones || [];
+    const focusedRoomName = this.selectedRoom?.room_name || "";
+
+    const allFpRooms = fp.rooms || [];
+    const allFpCams = fp.cameras || [];
+    const fRooms = activeFloor.rooms || allFpRooms.filter((r) => r.floor === activeFloor.id);
+    const fCams = activeFloor.cameras || allFpCams.filter((c) => c.floor === activeFloor.id);
+
+    const trailPts = [];
+    const startTrailIdx = Math.max(0, frameIdx - 12);
+    for (let i = startTrailIdx; i <= frameIdx; i++) {
+      const f = frames[i];
+      const fOccs = f?.occupant_estimates || f?.occupants || [];
+      if (!Array.isArray(fOccs)) continue;
+      fOccs.forEach((occ) => {
+        if ((occ.floor || "main") === activeFloor.id && occ.x !== undefined && occ.y !== undefined) {
+          trailPts.push({ x: Number(occ.x), y: Number(occ.y), idx: i });
+        }
+      });
+    }
+    const trailSvg =
+      trailPts.length >= 2
+        ? `<polyline points="${trailPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="5,4" opacity="0.75" style="pointer-events:none;" />`
+        : "";
+
+    const pbRoomsSvg = fRooms
+      .map((box) => {
+        const rName = box.name || box.room_name;
+        const rc = this._getRoomColor(rName);
+        const isFocused = focusedRoomName && focusedRoomName === rName;
+        const isOcc = occSet.has(rName);
+        const est = roomEstimates[rName] || {};
+        const infType = est.method || est.inference_type || "clear";
+        const isNegLocalized =
+          isOcc && (String(infType).startsWith("negative_space") || infType === "hybrid");
+        const strokeColor = isNegLocalized ? "#7c3aed" : isOcc ? "#16a34a" : isFocused ? rc.hex : rc.border;
+        const fillColor = isNegLocalized
+          ? "rgba(124, 58, 237, 0.18)"
+          : isOcc
+          ? "rgba(22, 163, 74, 0.18)"
+          : isFocused
+          ? rc.bg
+          : "rgba(148, 163, 184, 0.08)";
+        const rx = Number(box.x);
+        const ry = Number(box.y);
+        const rw = Number(box.width ?? 200);
+        const rh = Number(box.height ?? 150);
+        const locLabel = est.subregion || est.inferred_location || (isOcc ? "Occupied" : "Clear");
+        const anchor = this._roomLabelAnchor(box);
+        const padX = anchor.w < 95 ? 8 : 12;
+        const titleFontSize = anchor.w < 95 ? 10.5 : 12.5;
+        const availW = Math.max(0, anchor.w - padX * 2 - 12);
+        const titleText = this._fitSvgLabel(rName, availW, titleFontSize);
+        const locText = rh >= 48 ? this._fitSvgLabel(locLabel, availW + 12, 10.5) : "";
+        const pbShape = box.svg_path
+          ? `<path d="${this._escape(box.svg_path)}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc || isFocused ? "2.6" : "1.5"}" />`
+          : `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="6" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc || isFocused ? "2.6" : "1.5"}" />`;
+        return `
+          <g>
+            <title>${this._escape(rName)} — ${this._escape(locLabel)}</title>
+            ${pbShape}
+            ${isFocused && !box.svg_path ? `<rect x="${(rx - 3).toFixed(1)}" y="${(ry - 3).toFixed(1)}" width="${(rw + 6).toFixed(1)}" height="${(rh + 6).toFixed(1)}" rx="8" fill="none" stroke="${rc.hex}" stroke-width="2" stroke-dasharray="6,3" />` : ""}
+            ${titleText ? `<rect x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 13).toFixed(1)}" width="8" height="8" rx="2" fill="${rc.hex}" /><text x="${(anchor.x + padX + 12).toFixed(1)}" y="${(anchor.y + 21).toFixed(1)}" fill="#0f172a" font-size="${titleFontSize}" font-weight="600">${this._escape(titleText)}</text>` : ""}
+            ${locText ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 38).toFixed(1)}" fill="${isNegLocalized ? "#6d28d9" : isOcc ? "#15803d" : "#64748b"}" font-size="10.5" font-weight="${isOcc ? "600" : "400"}">${this._escape(locText)}</text>` : ""}
+          </g>`;
+      })
+      .join("");
+
+    const clearCamEntities = new Set(
+      negZones.map((z) => z.entity_id || z.sensor_id || z.id).filter(Boolean)
+    );
+    frameOccupants.forEach((o) => {
+      (o.negative_exclusions || []).forEach((cid) => clearCamEntities.add(cid));
+    });
+    const pbSolidSegments = this._extractFloorWallSegments(fRooms);
+    const pbConesSvg = fCams
+      .map((cam) => {
+        const camId = cam.id || cam.camera_entity;
+        const isClearExclusion = clearCamEntities.has(camId) || clearCamEntities.has(cam.person_binary_sensor);
+        const pathD = this._coneSvgPath(cam, pbSolidSegments);
+        return `
+          <g style="pointer-events:none;">
+            <path d="${pathD}" fill="${isClearExclusion ? "#06b6d4" : "#64748b"}" fill-opacity="${isClearExclusion ? "0.14" : "0.06"}" stroke="${isClearExclusion ? "#0891b2" : "#94a3b8"}" stroke-width="1.4" stroke-dasharray="${isClearExclusion ? "5,3" : "3,3"}" />
+            <circle cx="${Number(cam.x)}" cy="${Number(cam.y)}" r="4.5" fill="${isClearExclusion ? "#0891b2" : "#64748b"}" />
+          </g>`;
+      })
+      .join("");
+
+    const pbOccupantsSvg = frameOccupants
+      .filter((occ) => (occ.floor || "main") === activeFloor.id)
+      .map((occ) => {
+        const ox = Number(occ.x || 0);
+        const oy = Number(occ.y || 0);
+        const infMethod = String(occ.method || occ.inference_type || "");
+        const isNeg = infMethod.startsWith("negative_space") || infMethod === "hybrid";
+        const color = isNeg ? "#7c3aed" : "#15803d";
+        const label = (occ.subregion || occ.inferred_location || occ.room || "").slice(0, 32);
+        return `
+          <g style="pointer-events:none;">
+            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="15" fill="${color}" fill-opacity="0.22" />
+            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="8.5" fill="${color}" stroke="#ffffff" stroke-width="2" />
+            <rect x="${Math.max(8, Math.min(780, ox - 105)).toFixed(1)}" y="${Math.max(6, oy - 32).toFixed(1)}" width="210" height="19" rx="9.5" fill="${color}" opacity="0.94" />
+            <text x="${Math.max(113, Math.min(885, ox)).toFixed(1)}" y="${Math.max(19, oy - 19).toFixed(1)}" text-anchor="middle" fill="#ffffff" font-size="9.5" font-weight="600">🎯 ${this._escape(label)}</text>
+          </g>`;
+      })
+      .join("");
+
+    const underlaySvg =
+      typeof PDD_FLOOR_UNDERLAYS !== "undefined" && PDD_FLOOR_UNDERLAYS[activeFloor.id] && this._showBlueprintUnderlay
+        ? `<image href="${PDD_FLOOR_UNDERLAYS[activeFloor.id].url}" x="${PDD_FLOOR_UNDERLAYS[activeFloor.id].x}" y="${PDD_FLOOR_UNDERLAYS[activeFloor.id].y}" width="${PDD_FLOOR_UNDERLAYS[activeFloor.id].width}" height="${PDD_FLOOR_UNDERLAYS[activeFloor.id].height}" opacity="${this._underlayOpacity}" preserveAspectRatio="xMidYMid meet" style="pointer-events:none;" />`
+        : "";
+
+    const rawFrameTs = curFrame.iso || curFrame.timestamp;
+    const curTimeStr = rawFrameTs
+      ? new Date(rawFrameTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "--:--";
+
+    return {
+      floors,
+      activeFloor,
+      frames,
+      frameIdx,
+      curTimeStr,
+      occupiedRoomsList,
+      svgInner: `${underlaySvg}${pbRoomsSvg}${pbConesSvg}${trailSvg}${pbOccupantsSvg}`,
+    };
+  }
+
+  _updateTimelineFrameInPlace() {
+    const root = this.shadowRoot;
+    const tlSvg = root?.querySelector?.("#tl-svg-canvas");
+    if (!tlSvg || !this._timelineData) return false;
+    const parts = this._buildTimelineFrameParts();
+    tlSvg.innerHTML = parts.svgInner;
+
+    const slider = root.querySelector("#tl-scrubber-slider");
+    if (slider) slider.value = String(parts.frameIdx);
+
+    const timeReadout = root.querySelector("#tl-time-readout");
+    if (timeReadout) {
+      timeReadout.innerHTML = `${this._escape(parts.curTimeStr)} <span style="color:var(--ha-muted);font-weight:400;">(${parts.frameIdx + 1}/${parts.frames.length})</span>`;
+    }
+
+    const activeRoomsEl = root.querySelector("#tl-active-rooms");
+    if (activeRoomsEl) {
+      activeRoomsEl.textContent = parts.occupiedRoomsList.join(", ") || "None";
+    }
+
+    root.querySelectorAll(".seg-btn[data-floor-id]").forEach((btn) => {
+      btn.classList.toggle("active", btn.getAttribute("data-floor-id") === parts.activeFloor.id);
+    });
+    const floorSummaryEl = root.querySelector("#tl-floor-label");
+    if (floorSummaryEl) {
+      floorSummaryEl.textContent = parts.activeFloor.name.replace(/\s*\(.*\)/, "");
+    }
+
+    root.querySelectorAll(".tl-transition-row[data-frame-idx]").forEach((row) => {
+      row.classList.toggle("active", Number(row.getAttribute("data-frame-idx") || -1) === parts.frameIdx);
+    });
+    return true;
   }
 
   _renderTimelinePane() {
@@ -6837,136 +7576,10 @@ action:
         </div>`;
     }
 
-    const frames = tl.frames || [];
+    const parts = this._buildTimelineFrameParts();
+    const { frames, frameIdx, curTimeStr, occupiedRoomsList, svgInner } = parts;
     const transitions = tl.transitions || [];
     const summary = tl.comparison_summary || tl.summary || {};
-    const frameIdx = Math.max(0, Math.min(frames.length - 1, Number(this._timelineFrameIdx || 0)));
-    const curFrame = frames[frameIdx] || {
-      iso: new Date().toISOString(),
-      occupant_estimates: [],
-      negative_space_exclusions: [],
-    };
-    const frameOccupants = curFrame.occupant_estimates || curFrame.occupants || [];
-    const occupiedRoomsList =
-      curFrame.occupied_rooms ||
-      curFrame.active_rooms ||
-      frameOccupants.map((o) => o.room).filter(Boolean);
-    const occSet = new Set(occupiedRoomsList);
-    const roomEstimates = curFrame.room_estimates || {};
-    frameOccupants.forEach((o) => {
-      if (o.room && !roomEstimates[o.room]) {
-        roomEstimates[o.room] = o;
-      }
-    });
-    const negZones = curFrame.negative_space_exclusions || curFrame.negative_space_zones || [];
-
-    const allFpRooms = fp.rooms || [];
-    const allFpCams = fp.cameras || [];
-    const fRooms = activeFloor.rooms || allFpRooms.filter((r) => r.floor === activeFloor.id);
-    const fCams = activeFloor.cameras || allFpCams.filter((c) => c.floor === activeFloor.id);
-
-    // Build breadcrumb trail from recent frames up to frameIdx on this floor
-    const trailPts = [];
-    const startTrailIdx = Math.max(0, frameIdx - 12);
-    for (let i = startTrailIdx; i <= frameIdx; i++) {
-      const f = frames[i];
-      const fOccs = f?.occupant_estimates || f?.occupants || [];
-      if (!Array.isArray(fOccs)) continue;
-      fOccs.forEach((occ) => {
-        if ((occ.floor || "main") === activeFloor.id && occ.x !== undefined && occ.y !== undefined) {
-          trailPts.push({ x: Number(occ.x), y: Number(occ.y), idx: i });
-        }
-      });
-    }
-    const trailSvg =
-      trailPts.length >= 2
-        ? `<polyline points="${trailPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="5,4" opacity="0.75" style="pointer-events:none;" />`
-        : "";
-
-    // Render rooms for playback
-    const pbRoomsSvg = fRooms
-      .map((box) => {
-        const rName = box.name || box.room_name;
-        const isOcc = occSet.has(rName);
-        const est = roomEstimates[rName] || {};
-        const infType = est.method || est.inference_type || "clear";
-        const isNegLocalized =
-          isOcc && (String(infType).startsWith("negative_space") || infType === "hybrid");
-        const strokeColor = isNegLocalized ? "#7c3aed" : isOcc ? "#16a34a" : "#0284c7";
-        const fillColor = isNegLocalized
-          ? "rgba(124, 58, 237, 0.18)"
-          : isOcc
-          ? "rgba(22, 163, 74, 0.18)"
-          : "rgba(2, 132, 199, 0.08)";
-        const rx = Number(box.x);
-        const ry = Number(box.y);
-        const rw = Number(box.width ?? 200);
-        const rh = Number(box.height ?? 150);
-        const locLabel = est.subregion || est.inferred_location || (isOcc ? "Occupied" : "Clear");
-        const anchor = this._roomLabelAnchor(box);
-        const padX = anchor.w < 95 ? 8 : 12;
-        const titleFontSize = anchor.w < 95 ? 10.5 : 12.5;
-        const availW = Math.max(0, anchor.w - padX * 2);
-        const titleText = this._fitSvgLabel(rName, availW, titleFontSize);
-        const locText = rh >= 48 ? this._fitSvgLabel(locLabel, availW, 10.5) : "";
-        const pbShape = box.svg_path
-          ? `<path d="${this._escape(box.svg_path)}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc ? "2.5" : "1.5"}" />`
-          : `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="6" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${isOcc ? "2.5" : "1.5"}" />`;
-        return `
-          <g>
-            <title>${this._escape(rName)} — ${this._escape(locLabel)}</title>
-            ${pbShape}
-            ${titleText ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 22).toFixed(1)}" fill="#0f172a" font-size="${titleFontSize}" font-weight="600">${this._escape(titleText)}</text>` : ""}
-            ${locText ? `<text x="${(anchor.x + padX).toFixed(1)}" y="${(anchor.y + 38).toFixed(1)}" fill="${isNegLocalized ? "#6d28d9" : isOcc ? "#15803d" : "#64748b"}" font-size="10.5" font-weight="${isOcc ? "600" : "400"}">${this._escape(locText)}</text>` : ""}
-          </g>`;
-      })
-      .join("");
-
-    // Render camera cones (highlighting active negative-space exclusion cones in cyan dashed)
-    const clearCamEntities = new Set(
-      negZones.map((z) => z.entity_id || z.sensor_id || z.id).filter(Boolean)
-    );
-    frameOccupants.forEach((o) => {
-      (o.negative_exclusions || []).forEach((cid) => clearCamEntities.add(cid));
-    });
-    const pbSolidSegments = this._extractFloorWallSegments(fRooms);
-    const pbConesSvg = fCams
-      .map((cam) => {
-        const camId = cam.id || cam.camera_entity;
-        const isClearExclusion = clearCamEntities.has(camId) || clearCamEntities.has(cam.person_binary_sensor);
-        const pathD = this._coneSvgPath(cam, pbSolidSegments);
-        return `
-          <g style="pointer-events:none;">
-            <path d="${pathD}" fill="${isClearExclusion ? "#06b6d4" : "#64748b"}" fill-opacity="${isClearExclusion ? "0.14" : "0.06"}" stroke="${isClearExclusion ? "#0891b2" : "#94a3b8"}" stroke-width="1.4" stroke-dasharray="${isClearExclusion ? "5,3" : "3,3"}" />
-            <circle cx="${Number(cam.x)}" cy="${Number(cam.y)}" r="4.5" fill="${isClearExclusion ? "#0891b2" : "#64748b"}" />
-          </g>`;
-      })
-      .join("");
-
-    // Render occupant pins for current frame
-    const pbOccupantsSvg = frameOccupants
-      .filter((occ) => (occ.floor || "main") === activeFloor.id)
-      .map((occ) => {
-        const ox = Number(occ.x || 0);
-        const oy = Number(occ.y || 0);
-        const infMethod = String(occ.method || occ.inference_type || "");
-        const isNeg = infMethod.startsWith("negative_space") || infMethod === "hybrid";
-        const color = isNeg ? "#7c3aed" : "#15803d";
-        const label = (occ.subregion || occ.inferred_location || occ.room || "").slice(0, 32);
-        return `
-          <g style="pointer-events:none;">
-            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="15" fill="${color}" fill-opacity="0.22" />
-            <circle cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="8.5" fill="${color}" stroke="#ffffff" stroke-width="2" />
-            <rect x="${Math.max(8, Math.min(780, ox - 105)).toFixed(1)}" y="${Math.max(6, oy - 32).toFixed(1)}" width="210" height="19" rx="9.5" fill="${color}" opacity="0.94" />
-            <text x="${Math.max(113, Math.min(885, ox)).toFixed(1)}" y="${Math.max(19, oy - 19).toFixed(1)}" text-anchor="middle" fill="#ffffff" font-size="9.5" font-weight="600">🎯 ${this._escape(label)}</text>
-          </g>`;
-      })
-      .join("");
-
-    const rawFrameTs = curFrame.iso || curFrame.timestamp;
-    const curTimeStr = rawFrameTs
-      ? new Date(rawFrameTs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-      : "--:--";
     const totalSubregionFrames = Number(
       summary.uncovered_subregion_localizations ?? summary.negative_space_subregion_frames ?? 0
     );
@@ -6996,6 +7609,8 @@ action:
               class="btn btn-sm"
               id="btn-timeline-toggle-neg-space"
               style="background:${this._timelineNegativeSpace ? "var(--ha-accent-purple-bg)" : "var(--ha-subtle)"};color:${this._timelineNegativeSpace ? "var(--ha-accent-purple-text)" : "var(--ha-text)"};border-color:${this._timelineNegativeSpace ? "var(--ha-accent-purple-border)" : "var(--ha-divider)"};font-weight:600;"
+              data-tip="A/B compare timeline reconstruction WITH vs WITHOUT Negative-Space Exclusion."
+              data-tip-align="right"
               title="A/B compare timeline reconstruction WITH vs WITHOUT Negative-Space Exclusion"
             >
               🎯 A/B Negative-Space: ${this._timelineNegativeSpace ? "ON (Active)" : "OFF (Standard Bayesian)"}
@@ -7013,19 +7628,6 @@ action:
                     `<button class="seg-btn ${
                       Number(this._timelineHours) === w.h ? "active" : ""
                     }" data-timeline-hours="${w.h}" style="padding:5px 10px;">${w.label}</button>`
-                )
-                .join("")}
-            </div>
-
-            <div class="seg-group" style="margin-top:0;">
-              ${floors
-                .map(
-                  (fl) => `
-                <button class="seg-btn ${
-                  fl.id === activeFloor.id ? "active" : ""
-                }" data-floor-id="${this._escape(fl.id)}" style="padding:5px 10px;">
-                  ${this._escape(fl.name.replace(/\s*\(.*\)/, ""))}
-                </button>`
                 )
                 .join("")}
             </div>
@@ -7081,7 +7683,7 @@ action:
             style="flex:1;min-width:180px;cursor:pointer;"
           />
 
-          <div style="font-family:var(--ha-mono);font-size:12.5px;font-weight:600;min-width:155px;text-align:right;">
+          <div id="tl-time-readout" style="font-family:var(--ha-mono);font-size:12.5px;font-weight:600;min-width:155px;text-align:right;">
             ${this._escape(curTimeStr)} <span style="color:var(--ha-muted);font-weight:400;">(${frameIdx + 1}/${frames.length})</span>
           </div>
         </div>
@@ -7089,24 +7691,32 @@ action:
         <!-- Split 2D Floorplan Playback + Movement Transitions Log -->
         <div class="timeline-split-grid">
           <div style="background:#f8fafc;color:#0f172a;border:1px solid var(--ha-divider);border-radius:10px;padding:10px;">
-            <svg viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:360px;display:block;">
-              ${
-                typeof PDD_FLOOR_UNDERLAYS !== "undefined" && PDD_FLOOR_UNDERLAYS[activeFloor.id] && this._showBlueprintUnderlay
-                  ? `<image href="${PDD_FLOOR_UNDERLAYS[activeFloor.id].url}" x="${PDD_FLOOR_UNDERLAYS[activeFloor.id].x}" y="${PDD_FLOOR_UNDERLAYS[activeFloor.id].y}" width="${PDD_FLOOR_UNDERLAYS[activeFloor.id].width}" height="${PDD_FLOOR_UNDERLAYS[activeFloor.id].height}" opacity="${this._underlayOpacity}" preserveAspectRatio="xMidYMid meet" style="pointer-events:none;" />`
-                  : ""
-              }
-              ${pbRoomsSvg}
-              ${pbConesSvg}
-              ${trailSvg}
-              ${pbOccupantsSvg}
+            <div class="fp-map-toolbar">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="font-size:12px;font-weight:700;color:#0f172a;">Floor:</span>
+                <div class="seg-group" style="margin-top:0;background:rgba(15,23,42,0.06);border-color:rgba(15,23,42,0.12);">
+                  ${floors
+                    .map(
+                      (fl) => `
+                    <button class="seg-btn ${fl.id === activeFloor.id ? "active" : ""}" data-floor-id="${this._escape(fl.id)}" style="padding:4px 11px;">
+                      ${this._escape(fl.name.replace(/\s*\(.*\)/, ""))}
+                    </button>`
+                    )
+                    .join("")}
+                </div>
+              </div>
+              <span id="tl-floor-label" style="font-size:11.5px;color:#475569;font-weight:500;">${this._escape(activeFloor.name.replace(/\s*\(.*\)/, ""))}</span>
+            </div>
+            <svg id="tl-svg-canvas" viewBox="0 0 1000 580" style="width:100%;height:auto;min-height:360px;display:block;">
+              ${svgInner}
             </svg>
             <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;font-size:11.5px;color:#475569;flex-wrap:wrap;gap:8px;">
               <span>🟢 Direct Positive Detection &nbsp;|&nbsp; 🟣 Negative-Space Localization &nbsp;|&nbsp; 🩵 Dashed Cyan = Clear Camera Exclusion Cone</span>
-              <span>Active Rooms: <strong>${occupiedRoomsList.join(", ") || "None"}</strong></span>
+              <span>Active Rooms: <strong id="tl-active-rooms">${this._escape(occupiedRoomsList.join(", ") || "None")}</strong></span>
             </div>
           </div>
 
-          <div style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;max-height:430px;overflow:auto;">
+          <div id="tl-log-scroll" style="background:var(--ha-subtle);border:1px solid var(--ha-divider);border-radius:10px;padding:12px;max-height:430px;overflow:auto;">
             <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Chronological Movement &amp; Inference Log (${transitions.length})</div>
             ${
               transitions.length === 0
@@ -7306,7 +7916,7 @@ action:
             )}" />
           </div>
           <div style="padding:8px 10px;background:var(--ha-accent-purple-bg);border:1px solid var(--ha-accent-purple-border);border-radius:8px;">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ha-accent-purple-text);">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ha-accent-purple-text);" data-tip="Compare what the historical Bayesian curve would look like with Negative-Space Exclusion ON vs OFF." data-tip-align="right">
               <input type="checkbox" id="rep-neg-space-toggle" ${
                 this._replayNegativeSpace ? "checked" : ""
               } />
@@ -7477,12 +8087,7 @@ action:
     root.querySelectorAll("[data-fp-preset]").forEach((el) => {
       el.addEventListener("click", () => {
         const pr = el.getAttribute("data-fp-preset");
-        const presetsMap = {
-          clean: { underlay: true, rooms: true, cameras: false, subzones: false, pir: false, doors: true, ble: false, connections: false, overlaps: false, occupants: true },
-          cameras: { underlay: true, rooms: true, cameras: true, subzones: true, pir: false, doors: true, ble: false, connections: false, overlaps: true, occupants: true },
-          motion: { underlay: true, rooms: true, cameras: false, subzones: false, pir: true, doors: true, ble: true, connections: false, overlaps: true, occupants: true },
-          all: { underlay: true, rooms: true, cameras: true, subzones: true, pir: true, doors: true, ble: true, connections: true, overlaps: true, occupants: true },
-        };
+        const presetsMap = this._getFpPresetsMap();
         if (presetsMap[pr]) {
           this._fpLayers = { ...presetsMap[pr] };
           this._showBlueprintUnderlay = this._fpLayers.underlay;
@@ -7734,6 +8339,36 @@ action:
     root.querySelector("#btn-toggle-fp-notes")?.addEventListener("click", () => {
       this._showFloorplanNotes = !this._showFloorplanNotes;
       this.render();
+    });
+    root.querySelectorAll("[data-focus-fp-cam]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const camId = el.getAttribute("data-focus-fp-cam");
+        const cam = (this._floorplan?.cameras || []).find(
+          (c) => (c.id || c.camera_entity) === camId || c.camera_entity === camId
+        );
+        if (cam) {
+          if (cam.floor) this._selectedFloorId = cam.floor;
+          this._selectedCamEntity = cam.id || cam.camera_entity;
+          this._selectedDeviceType = "camera";
+          if (this._floorplanMode === "sensors" || this._floorplanMode === "rooms") {
+            this._floorplanMode = "cameras";
+          }
+          this._fpLayers = { ...(this._fpLayers || {}), cameras: true, subzones: true };
+          this._saveFpLayers();
+          this.render();
+          this.shadowRoot?.querySelector?.(".fp-canvas-wrap")?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        }
+      });
+    });
+    root.querySelectorAll("[data-jump-room-name]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const rName = el.getAttribute("data-jump-room-name");
+        const room = (this._overview?.rooms || []).find((r) => r.room_name === rName);
+        if (room) {
+          this._studioView = "design";
+          this._selectRoomObject(room, true);
+        }
+      });
     });
     root.querySelector("#btn-fp-save")?.addEventListener("click", () =>
       this.saveOrCompileFloorplan("save")
@@ -8627,13 +9262,13 @@ action:
     root.querySelector("#btn-tl-prev")?.addEventListener("click", () => {
       if (this._timelinePlaying) this._toggleTimelinePlay(false);
       this._timelineFrameIdx = Math.max(0, Number(this._timelineFrameIdx || 0) - 1);
-      this.render();
+      if (!this._updateTimelineFrameInPlace()) this.render();
     });
     root.querySelector("#btn-tl-next")?.addEventListener("click", () => {
       if (this._timelinePlaying) this._toggleTimelinePlay(false);
       const maxIdx = Math.max(0, (this._timelineData?.frames?.length || 1) - 1);
       this._timelineFrameIdx = Math.min(maxIdx, Number(this._timelineFrameIdx || 0) + 1);
-      this.render();
+      if (!this._updateTimelineFrameInPlace()) this.render();
     });
     root.querySelectorAll(".tl-speed-btn[data-tl-speed]").forEach((el) => {
       el.addEventListener("click", () => {
@@ -8649,13 +9284,13 @@ action:
     root.querySelector("#tl-scrubber-slider")?.addEventListener("input", (e) => {
       if (this._timelinePlaying) this._toggleTimelinePlay(false);
       this._timelineFrameIdx = Number(e.target.value || 0);
-      this.render();
+      if (!this._updateTimelineFrameInPlace()) this.render();
     });
     root.querySelectorAll(".tl-transition-row[data-frame-idx]").forEach((el) => {
       el.addEventListener("click", () => {
         if (this._timelinePlaying) this._toggleTimelinePlay(false);
         this._timelineFrameIdx = Number(el.getAttribute("data-frame-idx") || 0);
-        this.render();
+        if (!this._updateTimelineFrameInPlace()) this.render();
       });
     });
 
@@ -8859,9 +9494,18 @@ action:
     root.querySelector("#btn-room-refresh")?.addEventListener("click", () =>
       this.runRoomAction("force_refresh")
     );
-    root.querySelector("#btn-room-verify")?.addEventListener("click", () =>
-      this.runRoomAction("verify_presence")
-    );
+    root.querySelector("#btn-room-verify")?.addEventListener("click", () => {
+      const camEntity =
+        root.querySelector("#cfg-camera-entity")?.value ??
+        this._draftConfig?.camera_entity ??
+        this.selectedRoom?.config?.camera_entity ??
+        "";
+      if (!String(camEntity).trim()) {
+        this.showToast("Select a Primary AI Vision Camera first to run a Check.", "warning");
+        return;
+      }
+      this.runRoomAction("verify_presence", { camera_entity: String(camEntity).trim() });
+    });
     root.querySelector("#btn-room-override")?.addEventListener("click", () =>
       this.runRoomAction("set_override")
     );
@@ -8885,6 +9529,7 @@ action:
     root.querySelector("#cfg-camera-entity")?.addEventListener("change", (e) => {
       this._draftConfig.camera_entity = e.target.value;
       this._dirty = true;
+      this.render();
     });
     root.querySelector("#cfg-prior-slider")?.addEventListener("change", (e) => {
       this._draftConfig.bayesian_prior = Number(e.target.value) / 100.0;
