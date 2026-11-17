@@ -219,7 +219,7 @@ def build_manage_modal_view(hass: Any) -> dict[str, Any]:
         ("guest_mode_enabled", "🧑‍🤝‍🧑 Guest Mode (pause handoff & negative-space auto-clear)"),
         ("slack_notify_transitions", "🧵 Log individual room transitions in daily thread"),
         ("notifications_enabled", "🔔 Slack notifications enabled"),
-        ("include_camera_snapshot", "📸 Include camera snapshot URLs on alerts"),
+        ("include_camera_snapshot", "📸 Upload camera snapshots on alerts (files:write)"),
     ]
     toggle_opts = [{"text": _pt(label), "value": key} for key, label in toggle_defs]
     init_toggles = [
@@ -458,7 +458,8 @@ def build_slash_help_response() -> dict[str, Any]:
         "• `/presence home [N]` — Set house headcount to `N` (default `1`)\n"
         "• `/presence clear [room]` — Clear one room (e.g. `Office`) or all rooms + vacant\n"
         "• `/presence guest [on|off]` — Toggle or set Guest Mode\n"
-        "• `/presence verify <room>` — Run camera/sensor verification on a room"
+        "• `/presence verify <room>` — Run verification & upload camera snapshot\n"
+        "• `/presence snapshot <room>` — Upload a live camera JPEG into this channel"
     )
     return {"response_type": "ephemeral", "text": help_text, "blocks": [{"type": "section", "text": _mrkdwn(help_text)}]}
 

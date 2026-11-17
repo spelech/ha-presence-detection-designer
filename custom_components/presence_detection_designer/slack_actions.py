@@ -10,12 +10,16 @@ import logging
 import secrets
 import time
 import urllib.parse
-import urllib.request
 from typing import Any
 
 from aiohttp import web
 
 from .const import CONF_SLACK_SIGNING_SECRET, CONF_SLACK_WEBHOOK_ID, DATA_STORE, DOMAIN
+from .slack_files import (
+    async_handle_snapshot_slash,
+    async_post_response_url,
+    async_upload_room_snapshot,
+)
 from .slack_views import (
     SLACK_ACTION_CLEAR_ALL_VACANT,
     SLACK_ACTION_HEADCOUNT_INC,
@@ -127,26 +131,7 @@ async def async_publish_app_home(hass: Any, user_id: str) -> bool:
     )
 
 
-def _post_response_url_sync(response_url: str, payload: dict[str, Any]) -> None:
-    req = urllib.request.Request(
-        response_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=5):
-        pass
 
-
-async def async_post_response_url(hass: Any, response_url: str, payload: dict[str, Any]) -> None:
-    """Send an asynchronous ephemeral confirmation to a Slack interaction response_url."""
-    url = str(response_url or "").strip()
-    if not url.startswith("https://"):
-        return
-    try:
-        if hasattr(hass, "async_add_executor_job"):
-            await hass.async_add_executor_job(_post_response_url_sync, url, payload)
-        else:
-            _post_response_url_sync(url, payload)
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("Slack response_url post failed: %s", err)
 
 
 def _resolve_room_coord(hass: Any, room_query: str) -> Any | None:
@@ -185,7 +170,9 @@ async def _set_headcount(hass: Any, count: int, *, clear_pending: bool = False) 
     return tracker
 
 
-async def _trigger_room_verify(hass: Any, coord: Any) -> None:
+async def _trigger_room_verify(
+    hass: Any, coord: Any, *, upload_snapshot: bool = True, channel: str | None = None
+) -> None:
     if hasattr(coord, "async_manual_verify") and (
         getattr(coord, "camera_entity", None) or getattr(coord, "llm_enabled", False)
     ):
@@ -197,6 +184,18 @@ async def _trigger_room_verify(hass: Any, coord: Any) -> None:
     elif hasattr(coord, "async_refresh_all_states"):
         coord.async_refresh_all_states()
         _notify_coord(coord)
+    cam = getattr(coord, "camera_entity", None)
+    url = getattr(coord, "camera_snapshot_url", None)
+    if upload_snapshot and (cam or url):
+        coro = async_upload_room_snapshot(
+            hass, str(coord.room_name), camera_entity=cam, snapshot_url=url,
+            channel=channel, initial_comment=f"👁️ Verification snapshot for *{coord.room_name}*",
+        )
+        act = getattr(hass, "async_create_task", None)
+        if callable(act) and type(act).__name__ != "MagicMock":
+            act(coro)
+        else:
+            await coro
 
 
 async def _refresh_digest_and_homes(
@@ -359,6 +358,12 @@ async def async_handle_slash_command(hass: Any, form: dict[str, str]) -> dict[st
         await _set_headcount(hass, count)
         await _refresh_digest_and_homes(hass)
         return build_ephemeral_status_response(hass, note=f"👥 Set house headcount to *{count}*.")
+    if verb == "snapshot" and arg:
+        coord = _resolve_room_coord(hass, arg)
+        if not coord:
+            return {"response_type": "ephemeral", "text": f"❌ Room not found: `{arg}`"}
+        ch = str(form.get("channel_id") or "").strip() or None
+        return await async_handle_snapshot_slash(hass, coord, actor=actor, channel_id=ch)
     if verb in ("clear", "verify"):
         act = (
             SLACK_ACTION_ROOM_VERIFY if verb == "verify" else (SLACK_ACTION_ROOM_CLEAR if arg else SLACK_ACTION_CLEAR_ALL_VACANT)
