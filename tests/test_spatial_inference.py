@@ -425,3 +425,75 @@ def test_timeline_conservation_prunes_stale_inferred_keeps_confirmed_and_ble_hin
     )
     assert sorted(res_dual["frames"][0]["active_rooms"]) == ["Dining Room", "Office"]
     assert len(res_dual["frames"][0]["occupant_estimates"]) == 2
+
+
+def test_reconstruct_house_timeline_from_component_logs() -> None:
+    """Component-log playback preserves coordinator states, probabilities, BLE labels, and movement legs."""
+    fp = get_default_floorplan()
+    room_configs = {
+        "e_kit": {"room_name": "Kitchen"},
+        "e_off": {"room_name": "Office"},
+    }
+    coord_logs = {
+        "e_kit": [
+            {
+                "ts": 1000.0,
+                "is_present": True,
+                "occupancy_state": "occupied_confirmed",
+                "probability_pct": 96.0,
+                "camera_confirmed": True,
+                "entity_states": {
+                    "binary_sensor.kitchen_island_person_occupancy": "on",
+                    "sensor.steve_s_s25_ble_area": "Kitchen",
+                },
+            },
+            {
+                "ts": 1030.0,
+                "is_present": False,
+                "occupancy_state": "vacant",
+                "probability_pct": 0.0,
+                "entity_states": {},
+            },
+        ],
+        "e_off": [
+            {
+                "ts": 1030.0,
+                "is_present": True,
+                "occupancy_state": "occupied_cooling",
+                "probability_pct": 64.0,
+                "entity_states": {"sensor.steve_s_s25_ble_area": "Office"},
+            },
+        ],
+    }
+
+    res_on = reconstruct_house_timeline(
+        floorplan=fp,
+        room_configs=room_configs,
+        entity_timelines={},
+        start_ts=1000.0,
+        end_ts=1040.0,
+        negative_space_enabled=True,
+        coordinator_timelines=coord_logs,
+    )
+    assert res_on["source"] == "component_logs"
+    assert len(res_on["frames"]) >= 2
+    final_occ = res_on["frames"][-1]["occupant_estimates"][0]
+    assert final_occ["room"] == "Office"
+    assert final_occ["method"] == "negative_space"
+    assert final_occ["occupancy_state"] == "occupied_cooling"
+    assert final_occ["probability_pct"] == 64.0
+    assert final_occ["occupant_label"] == "Steve"
+    assert final_occ["from_room"] == "Kitchen"
+
+    # When negative_space_enabled=False, cooling/holding inferred states are filtered while confirmed remain
+    res_off = reconstruct_house_timeline(
+        floorplan=fp,
+        room_configs=room_configs,
+        entity_timelines={},
+        start_ts=1000.0,
+        end_ts=1040.0,
+        negative_space_enabled=False,
+        coordinator_timelines=coord_logs,
+    )
+    assert res_off["frames"][0]["active_rooms"] == ["Kitchen"]
+    assert res_off["frames"][-1]["active_rooms"] == []

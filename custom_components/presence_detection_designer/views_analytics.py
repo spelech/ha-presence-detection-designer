@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .bayesian_engine import parse_yaml_or_dict_to_config
@@ -187,29 +188,37 @@ class PDDTimelineReconstructionView(HomeAssistantView):
                 room_configs[eid] = dict(scfg)
                 extra_cfgs.append(scfg)
 
-        synthetic_cfg = {"trigger_entities": house_entities}
-        raw_timelines, start_ts, end_ts = await async_fetch_room_history(
-            hass=hass,
-            entry_id="house_timeline",
-            config=synthetic_cfg,
-            hours=hours,
-            extra_configs=extra_cfgs,
-        )
+        coordinator_timelines: dict[str, list[dict[str, Any]]] = {}
+        has_component_logs = False
+        for r_eid in room_configs:
+            evs = store.get_timeline_events(r_eid)
+            if evs:
+                coordinator_timelines[r_eid] = evs
+                has_component_logs = True
 
         tuple_timelines: dict[str, list[tuple[float, str]]] = {}
-        for eid, pts in raw_timelines.items():
-            tuple_timelines[eid] = [
-                (float(pt["ts"]), str(pt.get("state", "off"))) for pt in (pts or [])
+        if has_component_logs:
+            all_log_ts = [
+                float(ev["ts"])
+                for evs in coordinator_timelines.values()
+                for ev in evs
+                if ev.get("ts") is not None
             ]
-
-        for r_eid in room_configs:
-            for ev in store.get_timeline_events(r_eid):
-                ev_ts = float(ev.get("ts", 0.0))
-                if start_ts <= ev_ts <= end_ts:
-                    ent_map = ev.get("entity_states") or {}
-                    if isinstance(ent_map, dict):
-                        for s_eid, s_val in ent_map.items():
-                            tuple_timelines.setdefault(str(s_eid), []).append((ev_ts, str(s_val)))
+            end_ts = max([time.time(), *all_log_ts]) if all_log_ts else time.time()
+            start_ts = end_ts - max(0.25, hours) * 3600.0
+        else:
+            synthetic_cfg = {"trigger_entities": house_entities}
+            raw_timelines, start_ts, end_ts = await async_fetch_room_history(
+                hass=hass,
+                entry_id="house_timeline",
+                config=synthetic_cfg,
+                hours=hours,
+                extra_configs=extra_cfgs,
+            )
+            for eid, pts in raw_timelines.items():
+                tuple_timelines[eid] = [
+                    (float(pt["ts"]), str(pt.get("state", "off"))) for pt in (pts or [])
+                ]
 
         gs = getattr(store, "global_settings", None) or {}
         guest_mode_enabled = bool(gs.get("guest_mode_enabled", False))
@@ -241,5 +250,6 @@ class PDDTimelineReconstructionView(HomeAssistantView):
             conservation_enabled=conservation_enabled,
             guest_mode_enabled=guest_mode_enabled,
             ble_decider_enabled=ble_decider_enabled,
+            coordinator_timelines=coordinator_timelines if has_component_logs else None,
         )
         return self.json(result)

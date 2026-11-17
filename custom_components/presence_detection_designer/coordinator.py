@@ -433,7 +433,10 @@ class RoomPresenceCoordinator:
                 return
             self.async_update_listeners()
             await self.async_run_llm_verification()
-        elif action in ("VACATED", "HOLD_EXPIRED") or self.state_machine.is_cooling_down:
+        elif action in ("VACATED", "HOLD_EXPIRED"):
+            self._record_timeline_snapshot()
+            self.async_update_listeners()
+        elif self.state_machine.is_cooling_down:
             self.async_update_listeners()
 
     async def async_run_llm_verification(
@@ -457,6 +460,7 @@ class RoomPresenceCoordinator:
 
         detected, reasoning = await self.verifier.async_verify(image_bytes)
         self.state_machine.handle_llm_result(detected, reasoning)
+        self._record_timeline_snapshot()
         self.async_update_listeners()
 
     async def async_manual_verify(self, camera_entity: str | None = None) -> None:

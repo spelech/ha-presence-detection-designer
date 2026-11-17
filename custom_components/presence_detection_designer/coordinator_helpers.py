@@ -397,12 +397,43 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
         if st_obj is not None:
             entity_states[eid] = str(st_obj.state)
 
+    sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
+    snap = getattr(coord.state_machine, "snapshot", None)
+    house_count: int | None = None
+    try:
+        tracker = (
+            coord.hass.data.get(DOMAIN, {}).get("_house_perimeter_tracker")
+            if coord.hass and isinstance(getattr(coord.hass, "data", None), dict)
+            else None
+        )
+        if tracker is not None and getattr(tracker, "state", None) is not None:
+            house_count = max(0, int(tracker.state.count))
+        elif store is not None and isinstance(getattr(store, "global_settings", None), dict):
+            raw_cnt = store.global_settings.get("house_occupant_count")
+            if raw_cnt is not None:
+                house_count = max(0, int(raw_cnt))
+    except Exception:  # noqa: BLE001
+        house_count = None
+
+    pos_drivers = list(sp.get("positive_drivers") or [])
+    if not pos_drivers and snap is not None:
+        pos_drivers = sorted(getattr(snap, "active_triggers", ()) or ())
+
     store.record_timeline_event(
         coord.entry_id,
         {
             "is_present": coord.state_machine.is_present,
             "occupancy_state": str(coord.state_machine.state),
             "probability_pct": coord.state_machine.bayesian_probability_pct,
+            "verified_by": coord.state_machine.verified_by,
+            "reason": coord.state_machine.last_transition_reason,
+            "camera_confirmed": bool(getattr(snap, "camera_confirmed", False)),
+            "pet_present": bool(getattr(snap, "pet_present", False)),
+            "last_handoff_room": getattr(coord.state_machine, "last_handoff_room", None),
+            "inferred_subregion": sp.get("inferred_subregion"),
+            "positive_drivers": pos_drivers,
+            "negative_exclusions": list(sp.get("negative_exclusions") or []),
+            "house_occupant_count": house_count,
             "entity_states": entity_states,
         },
     )
