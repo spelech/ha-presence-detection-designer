@@ -205,6 +205,7 @@ async def async_send_coordinator_test_notification(
     service: str | None = None,
     channel: str | None = None,
     verbosity: str | None = None,
+    daily_thread: bool | None = None,
 ) -> bool:
     """Send a test diagnostic notification to verify Slack connectivity."""
     from .notifications import TransitionAttribution
@@ -221,10 +222,12 @@ async def async_send_coordinator_test_notification(
         global_settings["slack_channel"] = channel
     if verbosity:
         global_settings["slack_verbosity"] = verbosity
+    if daily_thread is not None:
+        global_settings["slack_daily_thread"] = bool(daily_thread)
 
     attribution = TransitionAttribution(
-        room_id=coord.entry_id,
-        room_name=coord.room_name,
+        room_id="studio_test",
+        room_name=f"Design Studio Test ({coord.room_name})",
         from_state="clear",
         to_state="occupied",
         primary_driver="Test Trigger (Manual Studio Verification)",
@@ -240,7 +243,8 @@ async def async_send_coordinator_test_notification(
         coord.hass,
         attribution,
         global_settings,
-        {"notify_slack": True, "notify_on_occupied": True},
+        {"notify_slack": True, "notify_on_occupied": True, "slack_notify_transitions": True},
+        force_test=True,
     )
 
 

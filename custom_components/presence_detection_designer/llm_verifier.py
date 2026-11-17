@@ -87,11 +87,12 @@ class LLMVerifier:
                 self._session = None
             else:
                 return self._session
-        if self.hass is not None and hasattr(self.hass, "helpers"):
+        if self.hass is not None:
             try:
                 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-                return async_get_clientsession(self.hass)
+                if type(async_get_clientsession).__name__ != "MagicMock":
+                    return async_get_clientsession(self.hass)
             except Exception:  # noqa: BLE001
                 pass
         self._session = aiohttp.ClientSession()

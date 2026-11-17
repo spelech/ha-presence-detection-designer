@@ -1007,3 +1007,113 @@ async def test_slack_files_write_native_snapshot_upload_and_slash_snapshot(
     body = json.loads(resp.text)
     assert "Uploaded live snapshot" in body["text"]
     assert any("files.completeUploadExternal" in u for u, _ in urlopen_calls)
+
+
+@pytest.mark.asyncio
+async def test_notification_test_bypasses_muted_transitions_and_debounce(monkeypatch) -> None:
+    """Manual test alerts must post to Slack even when slack_notify_transitions is False."""
+    import json
+
+    from custom_components.presence_detection_designer.coordinator_helpers import (
+        async_send_coordinator_test_notification,
+    )
+    from custom_components.presence_detection_designer.notifications import NotificationDispatcher
+    from custom_components.presence_detection_designer.views import PDDNotificationTestView
+
+    hass, store = _make_hass_with_store()
+    await store.async_update_global_settings(
+        {
+            "notifications_enabled": False,
+            "slack_notify_transitions": False,
+            "slack_daily_thread": True,
+            "slack_channel": "#presence-alerts",
+        }
+    )
+    today = now_local().strftime("%Y-%m-%d")
+    await store.async_save_daily_thread(
+        "C0CBX319XHV",
+        {
+            "date_str": today,
+            "thread_ts": "1794809018.835629",
+            "transition_count": 3,
+            "channel_name": "presence-alerts",
+        },
+    )
+    mgr = SlackDailyThreadManager()
+    mgr._channel_ids["presence-alerts"] = "C0CBX319XHV"
+    hass.data[DOMAIN]["slack_daily_mgr"] = mgr
+    monkeypatch.setattr(mgr, "get_slack_token", lambda _h: "xoxb-tok")
+
+    posted: list[dict[str, Any]] = []
+
+    def _api(url: str, token: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        if "chat.postMessage" in url and payload:
+            posted.append(payload)
+            return {"ok": True, "ts": "1794809999.000100"}
+        return {"ok": True}
+
+    monkeypatch.setattr(mgr, "call_slack_web_api", _api)
+    hass.services = MagicMock()
+    hass.services.has_service = MagicMock(return_value=False)
+
+    dispatcher = NotificationDispatcher()
+    monkeypatch.setattr(dispatcher, "_call_slack_web_api", _api)
+
+    coord = MagicMock()
+    coord.hass = hass
+    coord.entry_id = "room_family"
+    coord.room_name = "Family Room"
+    coord._notification_dispatcher = dispatcher
+
+    # Rapid repeated test clicks must both succeed despite DEBOUNCE_SECONDS and muted transitions
+    assert await async_send_coordinator_test_notification(coord) is True
+    assert await async_send_coordinator_test_notification(coord) is True
+    assert len(posted) == 2
+    assert posted[0]["thread_ts"] == "1794809018.835629"
+    assert "Design Studio Test (Family Room)" in posted[0]["text"]
+
+    # When both threaded API and fallback notify service fail, PDDNotificationTestView returns 502
+    hass.services = MagicMock()
+    hass.services.has_service = MagicMock(return_value=False)
+    monkeypatch.setattr(mgr, "get_slack_token", lambda _h: None)
+    req = MagicMock()
+    req.app = {"hass": hass}
+    req.json = AsyncMock(return_value={"slack_channel": "#presence-alerts"})
+    resp = await PDDNotificationTestView().post(req)
+    assert resp.status == 502
+    assert json.loads(resp.text)["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_slack_shortcut_opens_manage_modal(monkeypatch) -> None:
+    """Global/Message Shortcut payloads open the Slack Control Center Modal."""
+    import json
+    import urllib.parse
+
+    from custom_components.presence_detection_designer.slack_actions import (
+        async_ensure_slack_webhook_id,
+        async_handle_slack_webhook,
+    )
+
+    hass, _store = _make_hass_with_store()
+    wh_id = await async_ensure_slack_webhook_id(hass)
+    opened_triggers: list[str] = []
+
+    async def _fake_open(_h: Any, trigger_id: str) -> bool:
+        opened_triggers.append(trigger_id)
+        return True
+
+    monkeypatch.setattr(
+        "custom_components.presence_detection_designer.slack_actions.async_open_manage_modal",
+        _fake_open,
+    )
+
+    payload = json.dumps({"type": "shortcut", "callback_id": "open_presence", "trigger_id": "trig_999"})
+    req = MagicMock()
+    req.text = AsyncMock(return_value=urllib.parse.urlencode({"payload": payload}))
+    req.content_type = "application/x-www-form-urlencoded"
+    req.headers = {}
+
+    resp = await async_handle_slack_webhook(hass, wh_id, req)
+    assert resp.status == 200
+    assert opened_triggers == ["trig_999"]

@@ -808,3 +808,54 @@ def test_vacant_count_never_emits_egress_on_interior_door_cycle(mock_hass):
     assert rec is not None
     assert rec.vector == "ambiguous"
     assert tracker.state.count == 0
+
+
+def test_reconcile_headcount_preserves_count_when_ble_resident_active(mock_hass):
+    """Configured BLE resident trackers in an active area prevent false stale-count resets to 0."""
+    _install_global_settings(
+        mock_hass,
+        **{
+            CONF_STALE_COUNT_TIMEOUT: 10,
+            "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+        },
+    )
+    mock_hass.states.get = MagicMock(return_value=MagicMock(state="Family Room"))
+    tracker = HousePerimeterTracker(mock_hass)
+    tracker.set_headcount(1)
+    mock_hass.data[DOMAIN] = {DATA_STORE: mock_hass.data[DOMAIN][DATA_STORE]}
+
+    assert tracker.reconcile_headcount(now_ts=1000.0, force=True) is False
+    assert tracker.reconcile_headcount(now_ts=1050.0, force=True) is False
+    assert tracker.state.count == 1
+
+    # Once BLE tracker reports away/unknown and all rooms stay clear, stale timeout applies
+    mock_hass.states.get = MagicMock(return_value=MagicMock(state="unknown"))
+    assert tracker.reconcile_headcount(now_ts=1100.0, force=True) is False
+    assert tracker.reconcile_headcount(now_ts=1111.0, force=True) is True
+    assert tracker.state.count == 0
+
+
+@pytest.mark.asyncio
+async def test_async_setup_reloads_initial_headcount_when_store_loaded_late(mock_hass):
+    """If tracker is constructed before store loads, async_setup picks up saved headcount."""
+    mock_hass.data[DOMAIN] = {}
+    tracker = HousePerimeterTracker(mock_hass)
+    assert tracker.state.count == 1
+
+    _install_global_settings(mock_hass, house_occupant_count=3)
+    await tracker.async_setup()
+    assert tracker.state.count == 3
+
+
+def test_panel_js_strips_house_occupant_count_from_global_settings_save():
+    """Global settings UI save must never re-submit stale house_occupant_count."""
+    from pathlib import Path
+
+    panel_js = (
+        Path(__file__).resolve().parents[1]
+        / "custom_components"
+        / "presence_detection_designer"
+        / "static"
+        / "panel.js"
+    ).read_text()
+    assert "delete payload.house_occupant_count;" in panel_js

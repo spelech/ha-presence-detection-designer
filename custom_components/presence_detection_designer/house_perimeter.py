@@ -443,7 +443,10 @@ class HousePerimeterTracker:
                 if getattr(c, "state_machine", None) and c.state_machine.is_present
             ]
 
-        if self.state.count > 0 and not occupied_room_names:
+        from .perimeter_helpers import active_ble_resident_count
+
+        ble_active = active_ble_resident_count(self)
+        if self.state.count > 0 and not occupied_room_names and ble_active == 0:
             if self._all_clear_since is None:
                 self._all_clear_since = now
             elif now - self._all_clear_since >= self._stale_count_timeout():

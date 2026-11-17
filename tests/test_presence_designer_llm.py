@@ -113,3 +113,25 @@ async def test_llm_verifier_conversation_and_fallbacks():
     no_url_det, no_url_reason = await api_verifier.async_verify(b"test")
     assert no_url_det is False
     assert "No Vision API URL configured" in no_url_reason
+
+
+@pytest.mark.asyncio
+async def test_llm_verifier_uses_ha_clientsession_without_hass_helpers():
+    """Modern HA has no hass.helpers; LLMVerifier should still reuse async_get_clientsession."""
+    mock_hass = MagicMock(spec=["data", "loop"])
+    shared_session = MagicMock(closed=False)
+    calls: list[object] = []
+    fake_aiohttp_mod = MagicMock()
+
+    def _get_clientsession(h: object) -> object:
+        calls.append(h)
+        return shared_session
+
+    fake_aiohttp_mod.async_get_clientsession = _get_clientsession
+
+    with patch.dict("sys.modules", {"homeassistant.helpers.aiohttp_client": fake_aiohttp_mod}):
+        verifier = LLMVerifier(hass=mock_hass)
+        sess = await verifier._get_session()
+
+    assert sess is shared_session
+    assert calls == [mock_hass]

@@ -243,8 +243,31 @@ async def async_apply_global_settings_side_effects(
         await async_refresh_slack_daily_digest(hass, force=True)
 
 
+def active_ble_resident_count(tracker: Any) -> int:
+    """Return number of configured BLE resident trackers actively detected in a room or home."""
+    hass = getattr(tracker, "hass", None)
+    states_obj = getattr(hass, "states", None) if hass else None
+    if states_obj is None or not callable(getattr(states_obj, "get", None)):
+        return 0
+    trackers = tracker._global_settings().get("ble_trackers") or []
+    if not isinstance(trackers, (list, tuple, set)):
+        return 0
+    inactive = {"", "unknown", "unavailable", "off", "away", "not_home", "none"}
+    count = 0
+    for eid in trackers:
+        st = states_obj.get(str(eid))
+        raw = getattr(st, "state", None) if st is not None else None
+        if isinstance(raw, str) and raw.strip().lower() not in inactive:
+            count += 1
+    return count
+
+
 async def async_setup_perimeter_tracking(tracker: Any) -> None:
     """Subscribe to state changes on configured perimeter doors and exterior corroborators."""
+    if getattr(getattr(tracker, "state", None), "last_event_ts", 0.0) == 0.0 and hasattr(
+        tracker, "_load_initial_count"
+    ):
+        tracker._load_initial_count()
     for unsub in list(getattr(tracker, "_unsub_trackers", [])):
         if callable(unsub):
             try:
