@@ -275,15 +275,12 @@ class SlackDailyThreadManager:
         date_display = now_dt.strftime("%A, %b %d, %Y")
         occupied_rooms, clear_rooms = self.collect_room_states(hass, format_duration_fn)
         headcount, mode, notify_trans = get_extra_digest_status(hass)
+        store = hass.data.get(DOMAIN, {}).get(DATA_STORE) if hass and isinstance(getattr(hass, "data", None), dict) else None
+        guest_on = bool((getattr(store, "global_settings", None) or {}).get("guest_mode_enabled", False)) if store else False
         blocks = build_daily_digest_blocks(
-            date_display=date_display,
-            occupied_rooms=occupied_rooms,
-            clear_rooms=clear_rooms,
-            transition_count=transition_count,
-            last_updated_time=now_dt.strftime("%I:%M %p"),
-            house_headcount=headcount,
-            occupancy_mode=mode,
-            notify_transitions=notify_trans,
+            date_display=date_display, occupied_rooms=occupied_rooms, clear_rooms=clear_rooms,
+            transition_count=transition_count, last_updated_time=now_dt.strftime("%I:%M %p"),
+            house_headcount=headcount, occupancy_mode=mode, notify_transitions=notify_trans, guest_mode=guest_on,
         )
         payload = {
             "channel": channel_id,

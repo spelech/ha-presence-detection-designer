@@ -198,6 +198,7 @@ def build_transition_card_blocks(
     verbosity: str = "compact",
     include_snapshot: bool = False,
     snapshot_url: str | None = None,
+    room_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build a structured Slack Block Kit card for a presence transition."""
     is_occ = attribution.to_state == "occupied"
@@ -249,13 +250,17 @@ def build_transition_card_blocks(
             "alt_text": f"{attribution.room_name} snapshot",
         }
     blocks.append(sec)
+    if is_occ and room_id:
+        from .slack_views import build_room_transition_actions_block
+
+        blocks.append(build_room_transition_actions_block(str(room_id)))
     if str(verbosity).lower().strip() == "full":
         blocks.append({"type": "divider"})
     return blocks
 
 
 def _get_actions_block(*, highlight_set_home: bool = False) -> dict[str, Any]:
-    from .slack_actions import build_vacancy_actions_block
+    from .slack_views import build_vacancy_actions_block
 
     return build_vacancy_actions_block(highlight_set_home=highlight_set_home)
 
@@ -269,6 +274,7 @@ def build_daily_digest_blocks(
     house_headcount: int | None = None,
     occupancy_mode: str | None = None,
     notify_transitions: bool = False,
+    guest_mode: bool = False,
 ) -> list[dict[str, Any]]:
     """Build the main top-level daily dashboard message for Slack."""
     blocks: list[dict[str, Any]] = [
@@ -299,7 +305,9 @@ def build_daily_digest_blocks(
             )
     else:
         status_line = f"📊 *House Status:* {occ_count} occupied · {clr_count} clear"
-    blocks.append(_section(status_line))
+    from .slack_views import build_refresh_button
+
+    blocks.append({"type": "section", "text": _mrkdwn(status_line), "accessory": build_refresh_button()})
 
     if occupied_rooms:
         lines = []
@@ -347,6 +355,8 @@ def build_daily_digest_blocks(
         mode_str = f" ({occupancy_mode.replace('_', ' ')})" if occupancy_mode else ""
         icon = "👤" if house_headcount == 1 else ("👥" if house_headcount > 1 else "⚪")
         ctx.append(_mrkdwn(f"{icon} *Headcount:* {house_headcount}{mode_str}"))
+    if guest_mode:
+        ctx.append(_mrkdwn("🧑‍🤝‍🧑 *Guest Mode:* ON"))
     subtext = (
         "🧵 _Transitions logged below_"
         if notify_transitions
