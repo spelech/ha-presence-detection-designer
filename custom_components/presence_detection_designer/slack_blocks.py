@@ -291,21 +291,27 @@ def build_daily_digest_blocks(
             if house_headcount <= 0
             else ("guest" if (guest_mode or house_headcount >= 2) else "occupied")
         )
+    room_summary = (
+        f"All {clr_count} rooms clear"
+        if occ_count == 0
+        else f"{occ_count} active · {clr_count} clear"
+    )
     if eff_mode == "pet_only":
-        status_line = f"🐾 *House Status:* Pet Only · {occ_count} occupied · {clr_count} clear"
+        status_line = f"🐾 *House Status:* Pet Only _(0 people)_ · {room_summary}"
     elif eff_mode == "vacant" and occ_count > 0:
         status_line = (
-            f"⚠️ *House Status:* Vacant · *{occ_count} rooms active*"
-            " — _tap *Occupied* or *Reset Vacant* below_"
+            f"⚠️ *House Status:* Vacant _(0 occupants)_ · *{occ_count} rooms active*"
+            " — _tap *Home* or *Reset Vacant* below_"
         )
     elif eff_mode == "vacant":
-        status_line = f"⚪ *House Status:* Vacant · All {clr_count} rooms clear"
+        status_line = f"⚪ *House Status:* Vacant _(0 occupants)_ · All {clr_count} rooms clear"
     elif eff_mode == "guest":
-        status_line = f"👥 *House Status:* Guest Mode · {occ_count} occupied · {clr_count} clear"
+        hc_tag = str(house_headcount) if (house_headcount or 0) > 2 else "2+"
+        status_line = f"👥 *House Status:* Guest Mode _({hc_tag} occupants)_ · {room_summary}"
     elif eff_mode == "occupied":
-        status_line = f"👤 *House Status:* Occupied · {occ_count} occupied · {clr_count} clear"
+        status_line = f"👤 *House Status:* Home _(1 occupant)_ · {room_summary}"
     else:
-        status_line = f"📊 *House Status:* {occ_count} occupied · {clr_count} clear"
+        status_line = f"📊 *House Status:* {room_summary}"
     from .slack_views import build_refresh_button
 
     blocks.append(
@@ -356,11 +362,25 @@ def build_daily_digest_blocks(
         m_map = {
             "vacant": ("⚪", "Vacant"),
             "pet_only": ("🐾", "Pet Only"),
-            "occupied": ("👤", "Occupied"),
+            "occupied": ("👤", "Home"),
             "guest": ("👥", "Guest"),
         }
         m_icon, m_lbl = m_map.get(eff_mode, ("📊", eff_mode.replace("_", " ").title()))
         ctx.append(_mrkdwn(f"{m_icon} *Mode:* {m_lbl}"))
+    if house_headcount is not None or eff_mode in ("vacant", "pet_only", "occupied", "guest"):
+        if eff_mode in ("vacant", "pet_only"):
+            hc_icon, hc_lbl = ("🐾" if eff_mode == "pet_only" else "⚪"), "0"
+        elif eff_mode == "guest":
+            hc_icon = "👥"
+            hc_lbl = str(house_headcount) if (house_headcount or 0) > 2 else "2+"
+        elif eff_mode == "occupied":
+            hc_icon, hc_lbl = "👤", "1"
+        else:
+            hc_icon = (
+                "👤" if house_headcount == 1 else ("👥" if (house_headcount or 0) > 1 else "⚪")
+            )
+            hc_lbl = str(house_headcount)
+        ctx.append(_mrkdwn(f"{hc_icon} *Headcount:* {hc_lbl}"))
     if guest_mode and eff_mode != "guest":
         ctx.append(_mrkdwn("🧑‍🤝‍🧑 *Guest Mode:* ON"))
     subtext = (

@@ -78,11 +78,18 @@ def infer_door_vector(
             elif sm.last_occupied_time and 0.0 <= (opened_ts - sm.last_occupied_time) < 30.0:
                 interior_motion_before = True
 
-    # Check other occupied interior rooms
+    from .const import OccupancyState
+
+    # Check other actively occupied interior rooms (exclude passive occupied_cooling
+    # trailing cooldowns from the departing occupant walking toward the exit).
     other_occupied = [
         r
         for r, c in coords.items()
-        if r != host_room and getattr(c, "state_machine", None) and c.state_machine.is_present
+        if r != host_room
+        and getattr(c, "state_machine", None)
+        and c.state_machine.is_present
+        and getattr(c.state_machine, "state", None)
+        not in (OccupancyState.OCCUPIED_COOLING, str(OccupancyState.OCCUPIED_COOLING))
     ]
     guest_mode = bool(tracker._global_settings().get("guest_mode_enabled", False)) or (
         getattr(getattr(tracker, "state", None), "mode", "") == "guest"

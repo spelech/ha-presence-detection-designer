@@ -362,9 +362,24 @@ def test_build_daily_digest_blocks_structure():
     serialized = str(blocks)
     assert "Office" in serialized
     assert "Kitchen, Living Room" in serialized
-    assert "*House Status:* Occupied" in serialized
-    assert "*Mode:* Occupied" in serialized
+    assert "*House Status:* Home _(1 occupant)_" in serialized
+    assert "*Mode:* Home" in serialized
+    assert "*Headcount:* 1" in serialized
     assert "Transitions muted" in serialized
+
+    empty_blocks = build_daily_digest_blocks(
+        date_display="Wednesday, Nov 04, 2026",
+        occupied_rooms=[],
+        clear_rooms=["Kitchen", "Living Room"],
+        transition_count=42,
+        last_updated_time="07:30 PM",
+        house_headcount=1,
+        occupancy_mode="occupied",
+        notify_transitions=False,
+    )
+    empty_ser = str(empty_blocks)
+    assert "*House Status:* Home _(1 occupant)_ · All 2 rooms clear" in empty_ser
+    assert "0 occupied" not in empty_ser
 
 
 @pytest.mark.asyncio

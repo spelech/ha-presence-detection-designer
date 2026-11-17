@@ -486,9 +486,21 @@ class HousePerimeterTracker:
 
         ble_active = active_ble_resident_count(self)
         if self.state.count > 0 and not occupied_room_names and ble_active == 0:
+            recent_ambiguous_exit = (
+                self.state.mode == "occupied"
+                and not self._is_guest_mode_enabled()
+                and self.state.last_event_type == "ambiguous"
+                and self.state.last_event_ts > 0.0
+                and 0.0 <= (now - self.state.last_event_ts) <= 600.0
+            )
+            effective_timeout = (
+                min(self._stale_count_timeout(), 60.0)
+                if recent_ambiguous_exit
+                else self._stale_count_timeout()
+            )
             if self._all_clear_since is None:
                 self._all_clear_since = now
-            elif now - self._all_clear_since >= self._stale_count_timeout():
+            elif now - self._all_clear_since >= effective_timeout:
                 _LOGGER.info(
                     "House Perimeter: all rooms clear for %.0fs; resetting mode %s -> vacant/pet_only",
                     now - self._all_clear_since,
