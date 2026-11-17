@@ -436,10 +436,17 @@ class RoomPresenceCoordinator:
         elif action in ("VACATED", "HOLD_EXPIRED") or self.state_machine.is_cooling_down:
             self.async_update_listeners()
 
-    async def async_run_llm_verification(self) -> None:
+    async def async_run_llm_verification(
+        self, camera_entity_override: str | None = None
+    ) -> None:
         """Capture snapshot and run LLM verification."""
+        target_camera = (
+            camera_entity_override.strip()
+            if isinstance(camera_entity_override, str) and camera_entity_override.strip()
+            else self.camera_entity
+        )
         image_bytes = await self.verifier.async_acquire_snapshot(
-            camera_entity_id=self.camera_entity,
+            camera_entity_id=target_camera,
             direct_url=self.camera_snapshot_url,
         )
         if not image_bytes:
@@ -452,12 +459,12 @@ class RoomPresenceCoordinator:
         self.state_machine.handle_llm_result(detected, reasoning)
         self.async_update_listeners()
 
-    async def async_manual_verify(self) -> None:
+    async def async_manual_verify(self, camera_entity: str | None = None) -> None:
         """Trigger immediate LLM verification."""
         if self.state_machine.state == OccupancyState.OCCUPIED_COOLING:
             self.state_machine.trigger("countdown_expired", reason="Manual verification triggered")
         self.async_update_listeners()
-        await self.async_run_llm_verification()
+        await self.async_run_llm_verification(camera_entity_override=camera_entity)
 
     async def async_explain_presence(self, use_llm: bool = True) -> dict[str, Any]:
         """Return natural-language explanation and YAML equivalents for this room."""

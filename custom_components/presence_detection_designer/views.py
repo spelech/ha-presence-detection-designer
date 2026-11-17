@@ -219,7 +219,10 @@ class PDDRoomActionView(HomeAssistantView):
 
         action = str(body.get("action", "force_refresh"))
         if action == "verify_presence":
-            await coordinator.async_manual_verify()
+            cam_override = body.get("camera_entity")
+            await coordinator.async_manual_verify(
+                camera_entity=str(cam_override).strip() if cam_override else None
+            )
         elif action == "set_override":
             enabled = bool(body.get("enabled", not coordinator.state_machine.override))
             coordinator.state_machine.set_override(enabled)

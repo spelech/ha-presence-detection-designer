@@ -1045,3 +1045,228 @@ assert.strictEqual(
         timeout=20,
     )
     assert proc.returncode == 0, f"Node floorplan UX test failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
+
+
+@pytest.mark.requirement("UI-03", category="UI", req_type="PositiveFeature")
+def test_panel_js_ui_polish_behaviors():
+    """@requirement UI-03: panel.js provides room colors, camera friendly-name select, preset detection, room-pill floor focus, and scroll-safe timeline playback."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("Node.js not installed")
+
+    panel_path = (
+        Path(__file__).resolve().parent.parent
+        / "custom_components"
+        / "presence_detection_designer"
+        / "static"
+        / "panel.js"
+    )
+    panel_text = panel_path.read_text(encoding="utf-8")
+    for tok in (
+        "1. Canvas Edit Tool",
+        "2. Map Visibility",
+        "Map Editing &amp; Room Sync",
+        "Focus Room on Map",
+        "cfg-verify-feedback",
+        "Locate Camera",
+        "data-tip=",
+        "<select class=\"select\" id=\"cfg-camera-entity\"",
+    ):
+        assert tok in panel_text, f"Missing UI polish token {tok!r}"
+
+    js_test = r"""
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const src = fs.readFileSync(process.argv[1], "utf8");
+function makeElement(tag) {
+  return {
+    tagName: tag,
+    style: {},
+    innerHTML: "",
+    textContent: "",
+    value: "",
+    listeners: {},
+    classList: {
+      _set: new Set(),
+      add(c) { this._set.add(c); },
+      remove(c) { this._set.delete(c); },
+      toggle(c, force) {
+        if (force === undefined) {
+          if (this._set.has(c)) this._set.delete(c); else this._set.add(c);
+        } else if (force) this._set.add(c); else this._set.delete(c);
+      },
+      contains(c) { return this._set.has(c); },
+    },
+    addEventListener(type, fn) {
+      if (!this.listeners[type]) this.listeners[type] = [];
+      this.listeners[type].push(fn);
+    },
+    setAttribute() {},
+    getAttribute() { return null; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+}
+class FakeHTMLElement {
+  constructor() {
+    this.shadowRoot = {
+      innerHTML: "",
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    };
+  }
+  attachShadow() { return this.shadowRoot; }
+}
+const defined = {};
+const sandbox = {
+  HTMLElement: FakeHTMLElement,
+  customElements: { define(n, c) { defined[n] = c; }, get(n) { return defined[n]; } },
+  document: {
+    createElement: (t) => makeElement(t),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    activeElement: null,
+  },
+  window: { addEventListener: () => {}, removeEventListener: () => {} },
+  localStorage: { _m: {}, getItem(k) { return this._m[k] || null; }, setItem(k, v) { this._m[k] = String(v); } },
+  requestAnimationFrame: (fn) => { fn(); return 1; },
+  cancelAnimationFrame: () => {},
+  ResizeObserver: class { observe() {} disconnect() {} },
+  console,
+  setTimeout,
+  clearTimeout,
+  Math,
+  JSON,
+  Number,
+  String,
+  Array,
+  Object,
+  Map,
+  Set,
+  Date,
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(src, sandbox);
+
+const PanelClass = defined["presence-detection-designer-panel"];
+const panel = new PanelClass();
+panel._floorplan = panel._loadLocalOrDefaultFloorplan();
+panel._overview = {
+  rooms: [
+    { entry_id: "r1", room_name: "Kitchen", config: {}, connected_rooms: [] },
+    { entry_id: "r2", room_name: "Office", config: {}, connected_rooms: [] },
+    { entry_id: "r3", room_name: "Living Room", config: {}, connected_rooms: [] },
+  ],
+  entities: [
+    { entity_id: "camera.kitchen_cam", name: "Kitchen Camera", domain: "camera" },
+    { entity_id: "camera.office_cam", name: "Office Desk Cam", domain: "camera" },
+    { entity_id: "binary_sensor.kitchen_pir", name: "Kitchen PIR", domain: "binary_sensor" },
+  ],
+};
+
+// 1. Per-room deterministic colors
+const c1 = panel._getRoomColor("Kitchen");
+const c2 = panel._getRoomColor("Office");
+assert.strictEqual(c1.hex, panel._getRoomColor("Kitchen").hex);
+assert.notStrictEqual(c1.hex, c2.hex, "Different rooms should receive distinct colors");
+
+// 2. Camera select options use friendly names and exclude non-cameras
+const camOptsHtml = panel._renderCameraSelectOptions("camera.office_cam", panel._overview.entities);
+assert(camOptsHtml.includes("Kitchen Camera (camera.kitchen_cam)"));
+assert(camOptsHtml.includes("Office Desk Cam (camera.office_cam)"));
+assert(!camOptsHtml.includes("binary_sensor.kitchen_pir"));
+
+// 3. Preset detection
+const presetsMap = panel._getFpPresetsMap();
+panel._fpLayers = { ...presetsMap.cameras };
+assert.strictEqual(panel._detectActiveFpPreset(), "cameras");
+panel._fpLayers.ble = true;
+assert.strictEqual(panel._detectActiveFpPreset(), null);
+
+// 4. Selecting room pill on floorplan jumps to that room's floor
+panel._studioView = "floorplan";
+panel._selectedFloorId = "main";
+const upstairsRoom = panel._floorplan.rooms.find((r) => r.floor && r.floor !== "main");
+assert(upstairsRoom, "Default floorplan should have a non-main floor room");
+const upstairsName = upstairsRoom.name || upstairsRoom.room_name;
+let renderCalls = 0;
+panel.render = () => { renderCalls++; };
+panel._selectRoomObject({ entry_id: "rx", room_name: upstairsName, config: {}, connected_rooms: [] }, true);
+assert.strictEqual(panel._selectedFloorId, upstairsRoom.floor, "Room pill focus should jump to room floor");
+assert.strictEqual(panel._selectedRoomBoxName, upstairsName);
+assert.strictEqual(renderCalls, 1);
+
+// 5. Timeline scrubbing updates DOM in-place without calling render()
+panel._studioView = "timeline";
+panel._selectedFloorId = "main";
+panel._timelineData = {
+  frames: [
+    { iso: "2026-11-16T20:00:00Z", occupied_rooms: ["Kitchen"], occupant_estimates: [{ room: "Kitchen", floor: "main", x: 100, y: 100 }] },
+    { iso: "2026-11-16T20:05:00Z", occupied_rooms: ["Living Room"], occupant_estimates: [{ room: "Living Room", floor: "main", x: 300, y: 200 }] },
+  ],
+};
+panel._timelineFrameIdx = 1;
+const tlSvg = makeElement("svg");
+const tlReadout = makeElement("div");
+const tlSlider = makeElement("input");
+const tlActive = makeElement("span");
+const selectorMap = {
+  "#tl-svg-canvas": tlSvg,
+  "#tl-time-readout": tlReadout,
+  "#tl-scrubber-slider": tlSlider,
+  "#tl-active-rooms": tlActive,
+};
+panel.shadowRoot.querySelector = (sel) => selectorMap[sel] || null;
+panel.shadowRoot.querySelectorAll = () => [];
+renderCalls = 0;
+const ok = panel._updateTimelineFrameInPlace();
+assert.strictEqual(ok, true);
+assert.strictEqual(renderCalls, 0, "In-place timeline frame update must NOT call render()");
+assert.strictEqual(tlSlider.value, "1");
+assert.strictEqual(tlActive.textContent, "Living Room");
+assert(tlSvg.innerHTML.includes("Living Room"));
+"""
+    proc = subprocess.run(
+        [node_bin, "-e", js_test, str(panel_path)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, f"Node UI polish test failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.requirement("UI-03", category="API", req_type="PositiveFeature")
+async def test_room_action_verify_presence_camera_override(mock_hass):
+    """@requirement UI-03: PDDRoomActionView passes selected camera_entity to async_manual_verify."""
+    from unittest.mock import patch
+
+    room_cfg = {
+        CONF_ROOM_NAME: "Kitchen",
+        CONF_MODE: str(Mode.BOUNDED),
+        CONF_TRIGGER_ENTITIES: ["binary_sensor.kitchen_pir"],
+    }
+    coordinator = RoomPresenceCoordinator(mock_hass, "entry_verify_ui", room_cfg)
+    coordinator.state_machine.handle_llm_result(False, "Empty room check")
+    mock_hass.data.setdefault(DOMAIN, {})["entry_verify_ui"] = coordinator
+
+    view = PDDRoomActionView()
+    with patch.object(coordinator, "async_manual_verify", new_callable=AsyncMock) as mock_verify:
+        status, body = _unpack(
+            await view.post(
+                _make_request(
+                    mock_hass,
+                    {"action": "verify_presence", "camera_entity": "camera.test_override"},
+                ),
+                "entry_verify_ui",
+            )
+        )
+    assert status == 200
+    assert body["status"] == "ok"
+    mock_verify.assert_awaited_once_with(camera_entity="camera.test_override")
