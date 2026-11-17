@@ -1,19 +1,4 @@
-"""Topological Trajectory & Path Corroboration Engine for Room Presence Transitions.
-
-Enforces physical reality constraints on occupancy transitions:
-1. High-Confidence Source Preservation:
-   If an occupant is localized with high confidence in Room A (Frigate visual detection,
-   confirmed camera detection, bed sensor, or workstation load), a non-adjacent Room B cannot suddenly
-   become occupied without an unbroken physical trajectory.
-2. Topological Path Corroboration with Branching:
-   Discovers all simple paths between currently occupied rooms and candidate room B.
-   Verifies that intermediate connecting spaces (hallways, stairs, doorways) had recent
-   corroborating activity within a realistic transit window (default 90s).
-3. Candidate Settling & Debounce:
-   Distinguishes immediate high-confidence transitions from unverified transient triggers,
-   preventing fleeting sensor pulses from triggering premature transitions or ping-ponging
-   adjacent room clearings.
-"""
+"""Topological Trajectory, Taxicab Kinematics & Path Corroboration Engine."""
 
 from __future__ import annotations
 
@@ -33,6 +18,10 @@ from .coordinator_helpers import (
     resolve_global_llm_defaults,
 )
 from .floorplan_presets import get_default_floorplan
+from .spatial_geometry import (
+    compute_taxicab_distance,
+    evaluate_walking_speed_credibility,
+)
 
 __all__ = [
     "CorroborationResult",
@@ -41,7 +30,9 @@ __all__ = [
     "build_topology_graph",
     "check_coordinator_trajectory",
     "clear_topology_cache",
+    "compute_taxicab_distance",
     "corroborate_transition_trajectory",
+    "evaluate_walking_speed_credibility",
     "find_all_simple_paths",
     "get_all_room_coordinators",
     "get_topology_and_paths",
@@ -67,6 +58,10 @@ class CorroborationResult:
     all_candidate_paths: list[list[str]] = field(default_factory=list)
     source_room: str | None = None
     reason: str = ""
+    taxicab_distance_ft: float = 0.0
+    implied_speed_fps: float = 0.0
+    expected_transit_sec: float = 0.0
+    credibility_score: float = 1.0
 
 
 _TOPOLOGY_CACHE: dict[str, tuple[dict[str, set[str]], dict[tuple[str, str], list[list[str]]]]] = {}
@@ -169,14 +164,7 @@ def get_topology_and_paths(
 
 
 def is_room_high_confidence(coord: Any) -> bool:
-    """Determine if a room is occupied with high confidence.
-
-    High confidence criteria:
-    - Frigate camera visual detection of human (subzone or whole-frame person active)
-    - Confirmed hold state (sustained occupancy evidence active)
-    - Bed occupancy / workstation load (>190W) / Steve definitive BLE pinned
-    - Bayesian probability >= 0.80 with active observations
-    """
+    """Return True if room is occupied with high confidence (Vision, Bed/Desk, BLE pin, or Bayes >= 0.80)."""
     if not coord or not getattr(coord, "state_machine", None):
         return False
     sm = coord.state_machine
@@ -331,6 +319,16 @@ def corroborate_transition_trajectory(
     for c in occupied_coords:
         occ_name = getattr(c, "room_name", "")
         if candidate_room in graph.get(occ_name, set()):
+            taxicab = compute_taxicab_distance(occ_name, candidate_room, floorplan=floorplan)
+            dist_ft = float(taxicab["distance_ft"])
+            src_act = act_ts.get(occ_name, now)
+            elapsed = max(0.0, now - src_act)
+            kin = evaluate_walking_speed_credibility(
+                dist_ft,
+                elapsed,
+                is_adjacent=True,
+                max_transit_window_sec=transit_window_sec,
+            )
             return CorroborationResult(
                 is_valid=True,
                 is_adjacent=True,
@@ -338,17 +336,30 @@ def corroborate_transition_trajectory(
                 all_candidate_paths=[[occ_name, candidate_room]],
                 source_room=occ_name,
                 reason="direct_adjacent_transition",
+                taxicab_distance_ft=dist_ft,
+                implied_speed_fps=float(kin["implied_speed_fps"]),
+                expected_transit_sec=float(kin["expected_transit_sec"]),
+                credibility_score=float(kin["credibility_score"]),
             )
 
-    # 2. Multi-hop Candidate Path Corroboration with Branching
+    # 2. Multi-hop Candidate Path Corroboration with Branching & Taxicab Kinematics
     high_conf_occupied: list[Any] = [c for c in occupied_coords if is_room_high_confidence(c)]
     rooms_to_check = high_conf_occupied if high_conf_occupied else occupied_coords
 
     all_paths_found: list[list[str]] = []
+    kinematic_failure_reason: str | None = None
+    last_taxicab_ft: float = 0.0
+    last_implied_fps: float = 0.0
+    last_expected_sec: float = 0.0
+
     for c in rooms_to_check:
         occ_name = getattr(c, "room_name", "")
         paths = paths_cache.get((occ_name, candidate_room), [])
         all_paths_found.extend(paths)
+        taxicab = compute_taxicab_distance(occ_name, candidate_room, floorplan=floorplan)
+        dist_ft = float(taxicab["distance_ft"])
+        last_taxicab_ft = dist_ft
+        src_act = act_ts.get(occ_name, now)
 
         for path in paths:
             intermediate = path[1:-1]
@@ -356,13 +367,29 @@ def corroborate_transition_trajectory(
                 continue
 
             corroborated = False
+            earliest_inter_act = now
             for inter_room in intermediate:
                 last_act = act_ts.get(inter_room, 0.0)
-                if (now - last_act) <= transit_window_sec:
+                if last_act > 0.0 and (now - last_act) <= transit_window_sec:
                     corroborated = True
-                    break
+                    earliest_inter_act = min(earliest_inter_act, last_act)
 
             if corroborated:
+                effective_start_ts = (
+                    min(src_act, earliest_inter_act) if src_act > 0.0 else earliest_inter_act
+                )
+                elapsed = max(0.0, now - effective_start_ts)
+                kin = evaluate_walking_speed_credibility(
+                    dist_ft,
+                    elapsed,
+                    is_adjacent=False,
+                    max_transit_window_sec=transit_window_sec,
+                )
+                last_implied_fps = float(kin["implied_speed_fps"])
+                last_expected_sec = float(kin["expected_transit_sec"])
+                if not kin["is_credible"]:
+                    kinematic_failure_reason = str(kin["reason"])
+                    continue
                 return CorroborationResult(
                     is_valid=True,
                     is_adjacent=False,
@@ -370,17 +397,30 @@ def corroborate_transition_trajectory(
                     all_candidate_paths=paths,
                     source_room=occ_name,
                     reason=f"corroborated_via_{'->'.join(path)}",
+                    taxicab_distance_ft=dist_ft,
+                    implied_speed_fps=last_implied_fps,
+                    expected_transit_sec=last_expected_sec,
+                    credibility_score=float(kin["credibility_score"]),
                 )
 
     high_names = [getattr(c, "room_name", "") for c in high_conf_occupied]
     if high_conf_occupied:
+        reason_str = (
+            f"physically_impossible_jump_from_{'/'.join(high_names)}_{kinematic_failure_reason}"
+            if kinematic_failure_reason
+            else f"physically_impossible_jump_from_{'/'.join(high_names)}_no_path_corroboration"
+        )
         return CorroborationResult(
             is_valid=False,
             is_adjacent=False,
             corroborated_path=None,
             all_candidate_paths=all_paths_found,
             source_room=high_names[0],
-            reason=f"physically_impossible_jump_from_{'/'.join(high_names)}_no_path_corroboration",
+            reason=reason_str,
+            taxicab_distance_ft=last_taxicab_ft,
+            implied_speed_fps=last_implied_fps,
+            expected_transit_sec=last_expected_sec,
+            credibility_score=0.0,
         )
 
     return CorroborationResult(
@@ -389,7 +429,11 @@ def corroborate_transition_trajectory(
         corroborated_path=None,
         all_candidate_paths=all_paths_found,
         source_room=getattr(occupied_coords[0], "room_name", None),
-        reason="uncorroborated_distant_transition",
+        reason=kinematic_failure_reason or "uncorroborated_distant_transition",
+        taxicab_distance_ft=last_taxicab_ft,
+        implied_speed_fps=last_implied_fps,
+        expected_transit_sec=last_expected_sec,
+        credibility_score=0.0,
     )
 
 

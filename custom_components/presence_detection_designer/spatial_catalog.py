@@ -156,6 +156,7 @@ BLIND_POCKET_DEFINITIONS: dict[str, dict[str, Any]] = {
     "Master Bathroom": {
         "entry_entities": [
             "binary_sensor.master_bathroom_person_occupancy",
+            "binary_sensor.master_bathroom_motion_occupancy",
             "switch.master_bathroom_fan_switch",
             "light.master_bathroom_lights",
             "light.master_closet_lights",

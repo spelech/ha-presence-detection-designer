@@ -232,11 +232,21 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
             other.notify_adjacent_occupancy(coord.room_name)
         elif (
             coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
-            and getattr(other, "bayesian_enabled", False)
             and getattr(other.state_machine, "state", None) == OccupancyState.OCCUPIED_HOLDING
-            and any(
-                classify_sensor_reliability(str(obs.get("entity_id", ""))).category == "ble_tracker"
-                for obs in getattr(other, "bayesian_observations", ())
+            and (
+                getattr(
+                    getattr(other.state_machine, "snapshot", None),
+                    "spatial_blind_pocket_hold",
+                    False,
+                )
+                or (
+                    getattr(other, "bayesian_enabled", False)
+                    and any(
+                        classify_sensor_reliability(str(obs.get("entity_id", ""))).category
+                        == "ble_tracker"
+                        for obs in getattr(other, "bayesian_observations", ())
+                    )
+                )
             )
         ):
             other._eval_bayesian_and_update()

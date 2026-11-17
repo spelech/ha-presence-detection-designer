@@ -118,6 +118,7 @@ def evaluate_room_spatial_estimates(
         prob_boost = 0.0
         should_hold = False
         occupied = False
+        blind_pocket_pruned = False
         method = "none"
         explanation = "No active spatial triggers."
 
@@ -209,21 +210,38 @@ def evaluate_room_spatial_estimates(
             if bp_def:
                 hold_window = float(bp_def.get("hold_window_sec", 600.0))
                 had_entry_signal = False
+                latest_entry_ts = float(recent_positive_ts.get(r_name, 0.0))
                 for e_eid in bp_def.get("entry_entities", []):
                     if str(get_state(e_eid) or "off").lower() == "on":
                         had_entry_signal = True
-                        break
-                    last_on = recent_entity_on_ts.get(e_eid)
-                    if last_on is not None and (now_ts - last_on) <= hold_window:
-                        had_entry_signal = True
-                        break
-                if not had_entry_signal:
-                    for p_room in bp_def.get("parent_rooms", []):
-                        if p_room in steve_pinned_rooms:
-                            continue
-                        last_act = recent_activity_ts.get(p_room)
-                        if last_act is not None and (now_ts - last_act) <= hold_window:
+                        latest_entry_ts = max(latest_entry_ts, now_ts)
+                    else:
+                        last_on = recent_entity_on_ts.get(e_eid)
+                        if last_on is not None and (now_ts - last_on) <= hold_window:
                             had_entry_signal = True
+                            latest_entry_ts = max(latest_entry_ts, float(last_on))
+
+                # Check if occupant exited into a parent room or another room after entering the blind pocket
+                exited_blind_pocket = False
+                if had_entry_signal and not guest_mode_enabled:
+                    from .spatial_geometry import (
+                        compute_taxicab_distance,
+                        evaluate_walking_speed_credibility,
+                    )
+
+                    fp_dict = {"rooms": list(rooms_by_name.values())}
+                    for other_room, other_pos_ts in recent_positive_ts.items():
+                        if other_room == r_name or other_pos_ts <= latest_entry_ts:
+                            continue
+                        is_parent = other_room in (bp_def.get("parent_rooms") or [])
+                        taxicab = compute_taxicab_distance(r_name, other_room, floorplan=fp_dict)
+                        kin = evaluate_walking_speed_credibility(
+                            float(taxicab["distance_ft"]),
+                            other_pos_ts - latest_entry_ts,
+                            is_adjacent=is_parent,
+                        )
+                        if kin["is_credible"]:
+                            exited_blind_pocket = True
                             break
 
                 excl_cams = list(bp_def.get("excluding_cameras", []))
@@ -233,7 +251,12 @@ def evaluate_room_spatial_estimates(
                     for seid in bp_def.get("excluding_sensors", [])
                 )
 
-                if had_entry_signal and all_excl_cams_clear and all_excl_sensors_clear:
+                if (
+                    had_entry_signal
+                    and not exited_blind_pocket
+                    and all_excl_cams_clear
+                    and all_excl_sensors_clear
+                ):
                     occupied = True
                     should_hold = True
                     method = "negative_space"
@@ -245,18 +268,16 @@ def evaluate_room_spatial_estimates(
                             active_negative_exclusions.append(cid)
                     for seid in bp_def.get("excluding_sensors", []):
                         neg_exclusions.append(seid)
-                    recent_activity_ts[r_name] = now_ts
                     explanation = (
                         f"Negative-Space Blind Pocket Conservation: recent entry from "
                         f"{'/'.join(bp_def.get('parent_rooms', []))} while "
                         f"{', '.join(excl_cams)} are clear proves occupant is inside {r_name}."
                     )
+                elif had_entry_signal and exited_blind_pocket:
+                    blind_pocket_pruned = True
 
             primary_bles = [b for b in bles if b in PRIMARY_BLE_TRACKER_ENTITIES]
-            has_recent_entry = (
-                r_name in recent_activity_ts and (now_ts - recent_activity_ts[r_name]) <= 300.0
-            )
-            if not occupied and (primary_bles or has_recent_entry):
+            if not occupied and primary_bles:
                 room_clear_cams = [
                     c
                     for c in clear_cameras_by_floor.get(r_fl, [])
@@ -267,9 +288,9 @@ def evaluate_room_spatial_estimates(
                 ]
                 if room_clear_cams:
                     occupied = True
-                    should_hold = True
+                    should_hold = False
                     method = "negative_space"
-                    prob_boost = 0.25 if bles else 0.18
+                    prob_boost = 0.25
                     for c in room_clear_cams:
                         cid = str(c.get("id", ""))
                         neg_exclusions.append(cid)
@@ -286,7 +307,7 @@ def evaluate_room_spatial_estimates(
                         f"{r_name} (Uncovered subregion \u2014 outside {', '.join(neg_exclusions)} cone)",
                     )
                     explanation = (
-                        f"Positive presence ({', '.join(bles) if bles else 'recent room entry'}) combined with "
+                        f"Positive presence ({', '.join(bles)}) combined with "
                         f"clear {', '.join(neg_exclusions)} cone localizes occupant to {inferred_subregion}."
                     )
 
@@ -357,6 +378,7 @@ def evaluate_room_spatial_estimates(
             "detected_animals": detected_animals,
             "presence_summary": presence_summary,
             "should_hold_occupied": should_hold,
+            "blind_pocket_pruned": blind_pocket_pruned,
             "probability_boost": round(prob_boost, 3),
             "inferred_x": inferred_x,
             "inferred_y": inferred_y,
