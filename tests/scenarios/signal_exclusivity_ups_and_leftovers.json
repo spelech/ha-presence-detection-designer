@@ -6,6 +6,7 @@
     "Shower warmup + early exit in Master Bathroom transitions cleanly to vacant even while fan & dhumidity linger"
   ],
   "global_settings": {
+    "ble_decider_enabled": true,
     "ble_trackers": [
       "sensor.steve_s_s25_ble_area"
     ]

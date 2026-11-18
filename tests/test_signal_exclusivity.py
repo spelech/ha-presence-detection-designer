@@ -183,7 +183,9 @@ async def test_leftover_lights_media_dhumidity_and_ups_never_trigger_vacant_room
         },
     ]
 
-    with VirtualHAHarness(storage_dir=tmp_path) as harness:
+    with VirtualHAHarness(
+        storage_dir=tmp_path, global_settings={"ble_decider_enabled": True}
+    ) as harness:
         await harness.async_add_rooms(rooms)
         for _k, _v in {
             "binary_sensor.master_bathroom_motion_occupancy": "off",
@@ -251,7 +253,9 @@ async def test_office_ups_remote_workload_suppressed_by_contradictory_ble(tmp_pa
         }
     ]
 
-    with VirtualHAHarness(storage_dir=tmp_path) as harness:
+    with VirtualHAHarness(
+        storage_dir=tmp_path, global_settings={"ble_decider_enabled": True}
+    ) as harness:
         await harness.async_add_rooms(rooms)
         office = harness.coordinators["Office"]
 
@@ -391,3 +395,84 @@ async def test_migration_topology_and_state_graph_demote_and_label_non_exclusive
     weights = {w["entity_id"]: w for w in body["rooms"][0]["sensor_weights"]}
     assert weights["sensor.office_ups_used_watts_filtered"]["human_exclusive"] is False
     assert weights["light.office_lights"]["human_exclusive"] is False
+
+
+@pytest.mark.requirement("SIGNAL-03", category="SIGNAL", req_type="FailClosedGuardrail")
+@pytest.mark.asyncio
+async def test_ble_decider_disabled_suppresses_all_ble_fusion_pir_and_power_contradiction(
+    tmp_path,
+) -> None:
+    """When ble_decider_enabled is False (default), BLE area changes cannot swing Bayesian, corroborate PIR, or drop power holds."""
+    rooms = [
+        {
+            CONF_ROOM_NAME: "Family Room",
+            CONF_MODE: "open",
+            CONF_INACTIVITY_TIMEOUT: 20,
+            "max_hold_timeout": 300,
+            CONF_TRIGGER_ENTITIES: ["binary_sensor.family_room_motion_occupancy"],
+            CONF_SUSTAINING_CONDITIONS: [
+                {
+                    "entity_id": "sensor.family_room_tv_watts",
+                    "operator": "greater_than",
+                    "state": "80",
+                    "label": "Family Room TV Power",
+                }
+            ],
+            CONF_BAYESIAN_PRIOR: 0.15,
+            CONF_BAYESIAN_THRESHOLD: 0.75,
+            CONF_BAYESIAN_OBSERVATIONS: [
+                {"entity_id": "binary_sensor.family_room_motion_occupancy", "preset": "strong"},
+                {
+                    "entity_id": "sensor.steve_s_s25_ble_area",
+                    "operator": "equals",
+                    "state": "Family Room",
+                    "preset": "moderate",
+                },
+                {
+                    "entity_id": "sensor.family_room_tv_watts",
+                    "operator": "greater_than",
+                    "state": "80",
+                    "preset": "supporting",
+                },
+            ],
+        },
+        {
+            CONF_ROOM_NAME: "Kitchen",
+            CONF_MODE: "open",
+            CONF_INACTIVITY_TIMEOUT: 20,
+            CONF_TRIGGER_ENTITIES: ["binary_sensor.kitchen_island_person_occupancy"],
+        },
+    ]
+
+    # Default global_settings has ble_decider_enabled=False
+    with VirtualHAHarness(storage_dir=tmp_path) as harness:
+        await harness.async_add_rooms(rooms)
+        fr = harness.coordinators["Family Room"]
+
+        harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
+        harness.set_state("sensor.family_room_tv_watts", "20")
+        harness.set_state("sensor.steve_s_s25_ble_area", "unknown")
+        prob_unknown = fr.state_machine.bayesian_probability_pct
+
+        # 1. BLE cycling between Family Room and unknown has zero Bayesian impact when disabled
+        harness.set_state("sensor.steve_s_s25_ble_area", "Family Room")
+        assert fr.state_machine.bayesian_probability_pct == prob_unknown
+        assert not any(
+            "ble_area" in str(obs)
+            for obs in (fr.last_bayesian_eval.active_observations if fr.last_bayesian_eval else [])
+        )
+
+        # 2. Single PIR spike with BLE=Family Room is NOT corroborated by BLE when disabled
+        harness.set_state("binary_sensor.family_room_motion_occupancy", "on")
+        assert fr.state_machine.state == OccupancyState.VACANT
+
+        # 3. Confirmed occupancy held by TV power is NOT dropped when BLE jumps to Kitchen
+        harness.set_state("sensor.family_room_tv_watts", "120")
+        harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
+        harness.set_state("binary_sensor.family_room_motion_occupancy", "on")
+        harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
+        assert fr.state_machine.state == OccupancyState.OCCUPIED_HOLDING
+
+        harness.set_state("binary_sensor.kitchen_island_person_occupancy", "on")
+        harness.set_state("sensor.steve_s_s25_ble_area", "Kitchen")
+        assert fr.state_machine.state == OccupancyState.OCCUPIED_HOLDING

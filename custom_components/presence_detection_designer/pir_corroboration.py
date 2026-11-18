@@ -104,19 +104,23 @@ def build_pir_corroboration_context(
     ble_corroborated = False
     ble_detail: str | None = None
     ble_trackers: list[str] = []
+    ble_decider_active = True
     store = (
         hass.data.get(DOMAIN, {}).get(DATA_STORE)
         if hass and isinstance(getattr(hass, "data", None), dict)
         else None
     )
     if store is not None and isinstance(getattr(store, "global_settings", None), dict):
-        ble_trackers = list(store.global_settings.get("ble_trackers") or [])
-    if not ble_trackers and sp.get("ble_telemetry"):
+        gs = store.global_settings
+        if "ble_decider_enabled" in gs:
+            ble_decider_active = bool(gs.get("ble_decider_enabled", False))
+        ble_trackers = list(gs.get("ble_trackers") or [])
+    if not ble_trackers and sp.get("ble_telemetry") and isinstance(sp["ble_telemetry"], dict):
         ble_trackers = list(sp["ble_telemetry"].keys())
 
     conn_rooms_norm = {r.strip() for r in getattr(coord, "connected_rooms", []) if r}
     target_rooms = {coord.room_name} | conn_rooms_norm
-    if hass and hasattr(hass, "states"):
+    if ble_decider_active and hass and hasattr(hass, "states"):
         for tracker_eid in ble_trackers:
             st = _safe_get_state(hass, tracker_eid)
             if st is None:
@@ -126,7 +130,7 @@ def build_pir_corroboration_context(
                 ble_corroborated = True
                 ble_detail = f"{tracker_eid} in {norm_area}"
                 break
-    if not ble_corroborated and isinstance(sp.get("ble_telemetry"), dict):
+    if ble_decider_active and not ble_corroborated and isinstance(sp.get("ble_telemetry"), dict):
         for tracker_eid, raw_area in sp["ble_telemetry"].items():
             norm_area = _normalize_ble_area_to_room(str(raw_area)) or str(raw_area).strip()
             if norm_area in target_rooms:
@@ -250,9 +254,12 @@ def is_condition_contradicted_by_ble(coord: Any, entity_id: str) -> bool:
     )
     trackers: list[str] = []
     if store is not None and isinstance(getattr(store, "global_settings", None), dict):
+        gs = store.global_settings
+        if "ble_decider_enabled" in gs and not bool(gs.get("ble_decider_enabled", False)):
+            return False
         trackers = [
             str(t)
-            for t in (store.global_settings.get("ble_trackers") or [])
+            for t in (gs.get("ble_trackers") or [])
             if t and str(t) not in SECONDARY_BLE_TRACKER_ENTITIES
         ]
     if not trackers:
