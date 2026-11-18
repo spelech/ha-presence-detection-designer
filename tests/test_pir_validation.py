@@ -200,7 +200,10 @@ async def test_coordinator_pir_validation_async_corroboration_and_bayesian_gate(
 
     with VirtualHAHarness(
         storage_dir=tmp_path,
-        global_settings={"ble_trackers": ["sensor.steve_s_s25_ble_area"]},
+        global_settings={
+            "ble_decider_enabled": True,
+            "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+        },
     ) as harness:
         await harness.async_add_rooms(rooms)
         harness.set_state("binary_sensor.living_room_motion_occupancy", "off")

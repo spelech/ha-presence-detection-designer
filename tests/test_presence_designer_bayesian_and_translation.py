@@ -291,6 +291,7 @@ async def test_probability_sensor_and_services(mock_hass):
     mock_hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=None)
 
     await async_setup(mock_hass, {})
+    mock_hass.data[DOMAIN]["_store"]._data["global_settings"]["ble_decider_enabled"] = True
     assert "presence_detection_designer.explain_presence" in registered_services
     assert "presence_detection_designer.translate_config" in registered_services
 

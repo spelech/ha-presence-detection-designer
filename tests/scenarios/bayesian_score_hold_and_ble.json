@@ -6,7 +6,7 @@
     "BLE floor-bleed to an uncorroborated room stays neutral; confirmed Kitchen entry penalizes Office BLE (BAYES-04)."
   ],
   "global_settings": {
-    "ble_decider_enabled": false,
+    "ble_decider_enabled": true,
     "guest_mode_enabled": false,
     "negative_space_enabled": false
   },

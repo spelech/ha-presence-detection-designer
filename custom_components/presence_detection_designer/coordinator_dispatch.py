@@ -268,6 +268,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     fp: dict[str, Any] | None = None
     guest_mode_enabled = False
     ble_decider_enabled = False
+    ble_active_in_fusion = True
     store: Any = None
     if isinstance(getattr(coord.hass, "data", None), dict):
         store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
@@ -279,6 +280,8 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                     bool(gs.get("negative_space_enabled", True)) and not guest_mode_enabled
                 )
                 ble_decider_enabled = bool(gs.get("ble_decider_enabled", False))
+                if "ble_decider_enabled" in gs:
+                    ble_active_in_fusion = ble_decider_enabled
             if hasattr(store, "get_floorplan"):
                 cand_fp = store.get_floorplan()
                 if isinstance(cand_fp, dict) and cand_fp.get("rooms"):
@@ -354,11 +357,18 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     tracker = getattr(coord, "actuation_tracker", None)
 
     suppressed_eids = set(shade_excluded_eids)
-    if tracker is not None:
-        for obs in obs_to_eval:
-            eid = obs.get("entity_id")
-            if eid and tracker.is_entity_auto_latched(str(eid)):
-                suppressed_eids.add(str(eid))
+    for obs in obs_to_eval:
+        eid = obs.get("entity_id")
+        if not eid:
+            continue
+        eid_str = str(eid)
+        if tracker is not None and tracker.is_entity_auto_latched(eid_str):
+            suppressed_eids.add(eid_str)
+        elif (
+            not ble_active_in_fusion
+            and classify_sensor_reliability(eid_str).category == "ble_tracker"
+        ):
+            suppressed_eids.add(eid_str)
 
     class _VirtualState:
         state = "on"
@@ -382,7 +392,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         room_name=coord.room_name,
         spatial_frame=getattr(coord, "_last_spatial_frame", None),
         hass=coord.hass,
-        guest_mode_enabled=guest_mode_enabled,
+        guest_mode_enabled=guest_mode_enabled or not ble_active_in_fusion,
     )
     evaluation = evaluate_bayesian(
         obs_to_eval,

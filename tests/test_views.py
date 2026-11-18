@@ -572,6 +572,7 @@ async def test_preview_bayesian_view_applies_contextual_ble_penalties_and_neutra
     req = _make_request(
         mock_hass,
         {
+            "ble_decider_enabled": True,
             "config": {
                 "room_name": "Office",
                 "bayesian_prior": 0.2,
@@ -599,7 +600,7 @@ async def test_preview_bayesian_view_applies_contextual_ble_penalties_and_neutra
                         "state": "on",
                     },
                 ],
-            }
+            },
         },
     )
 

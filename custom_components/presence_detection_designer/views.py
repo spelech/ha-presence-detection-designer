@@ -9,6 +9,7 @@ from typing import Any
 from .bayesian_engine import (
     apply_contextual_bayesian_penalties,
     build_effective_observations,
+    classify_sensor_reliability,
     config_to_yaml_representations,
     evaluate_bayesian,
     explain_config_in_natural_language,
@@ -267,18 +268,36 @@ class PDDPreviewBayesianView(HomeAssistantView):
         room_name = str(normalized.get("room_name") or body.get("room_name") or "").strip()
         store = await async_get_store(hass)
         spatial_frame = getattr(store, "_last_spatial_frame", None)
-        guest_mode = bool(getattr(store, "global_settings", {}).get("guest_mode_enabled", False))
+        gs = getattr(store, "global_settings", None)
+        guest_mode = bool(gs.get("guest_mode_enabled", False)) if isinstance(gs, dict) else False
+        ble_active = (
+            bool(body["ble_decider_enabled"])
+            if "ble_decider_enabled" in body
+            else (
+                bool(gs.get("ble_decider_enabled", False))
+                if isinstance(gs, dict) and "ble_decider_enabled" in gs
+                else True
+            )
+        )
         contextual_obs = apply_contextual_bayesian_penalties(
             observations,
             room_name=room_name,
             spatial_frame=spatial_frame,
             hass=hass,
-            guest_mode_enabled=guest_mode,
+            guest_mode_enabled=guest_mode or not ble_active,
         )
+        suppressed_eids: set[str] = set()
+        if not ble_active:
+            for obs in observations:
+                eid_str = str(obs.get("entity_id", "")).strip()
+                if eid_str and classify_sensor_reliability(eid_str).category == "ble_tracker":
+                    suppressed_eids.add(eid_str)
 
         evaluation = evaluate_bayesian(
             observations=contextual_obs,
-            state_getter=lambda eid: _safe_state_getter(hass, eid),
+            state_getter=lambda eid: (
+                None if eid in suppressed_eids else _safe_state_getter(hass, eid)
+            ),
             prior=prior,
             threshold=threshold,
         )
