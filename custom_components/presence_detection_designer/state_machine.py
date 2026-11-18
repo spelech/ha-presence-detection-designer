@@ -50,21 +50,13 @@ _MACHINE_TRANSITIONS: list[dict[str, Any]] = [
     _tx("evidence_cleared", _CONF, _HOLD, conditions="_guard_has_hold_only"),
     _tx("evidence_cleared", _CONF, _COOL, conditions="_guard_no_human_or_hold"),
     _tx("evidence_detected", [_HOLD, _COOL, _VER], _CONF, conditions="_guard_has_human_evidence"),
-    _tx("evidence_hold", [_COOL, _VER], _HOLD, conditions="_guard_can_resume_hold"),
+    _tx("evidence_hold", _COOL, _HOLD, conditions="_guard_can_resume_hold"),
     _tx("hold_cleared", _HOLD, _COOL),
     _tx("hold_timeout", _HOLD, _COOL, after="_on_hold_timeout"),
-    _tx("countdown_expired", _COOL, _HOLD, conditions="_guard_can_resume_hold"),
-    _tx(
-        "countdown_expired",
-        _COOL,
-        _VER,
-        conditions="_guard_llm_enabled",
-        unless="_guard_can_resume_hold",
-    ),
-    _tx("countdown_expired", _COOL, _V, unless=["_guard_llm_enabled", "_guard_can_resume_hold"]),
+    _tx("countdown_expired", _COOL, _VER, conditions="_guard_llm_enabled"),
+    _tx("countdown_expired", _COOL, _V, unless="_guard_llm_enabled"),
     _tx("llm_person_detected", _VER, _COOL, after="_on_llm_person_detected"),
-    _tx("llm_room_empty", _VER, _HOLD, conditions="_guard_can_resume_hold"),
-    _tx("llm_room_empty", _VER, _V, unless="_guard_can_resume_hold"),
+    _tx("llm_room_empty", _VER, _V),
     _tx("verify_timeout", _VER, _V),
     _tx("adjacent_handoff", [_CONF, _HOLD, _COOL], _V, conditions="_guard_can_handoff_clear"),
     _tx("enable_override", [_V, "occupied"], _OVR),
@@ -412,7 +404,7 @@ class RoomPresenceStateMachine:
                 )
             return
 
-        if self.state in (OccupancyState.OCCUPIED_COOLING, OccupancyState.OCCUPIED_VERIFYING):
+        if self.state == OccupancyState.OCCUPIED_COOLING:
             if snapshot.human_evidence_active:
                 self.evidence_detected(
                     now_ts=now, reason="Human evidence retriggered during vacate window"
@@ -420,7 +412,14 @@ class RoomPresenceStateMachine:
             elif self._guard_can_resume_hold():
                 self.evidence_hold(
                     now_ts=now,
-                    reason="Hold evidence active during vacate window; holding occupancy",
+                    reason="Hold evidence active during cooling window; holding occupancy",
+                )
+            return
+
+        if self.state == OccupancyState.OCCUPIED_VERIFYING:
+            if snapshot.human_evidence_active:
+                self.evidence_detected(
+                    now_ts=now, reason="Human evidence retriggered during verification"
                 )
 
     def handle_adjacent_room_occupied(

@@ -149,9 +149,9 @@ async def test_cooling_room_resumes_holding_when_tv_and_ble_activate(tmp_path):
         assert coord.state_machine.is_present is True
 
 
-@pytest.mark.requirement("STATE-09", category="STATE", req_type="PositiveFeature")
-def test_llm_room_empty_holds_when_active_hold_evidence_present_unless_hold_timed_out():
-    """@requirement STATE-09: Vision AI empty check holds when active hold evidence is present, unless max_hold_timeout expired."""
+@pytest.mark.requirement("STATE-09", category="STATE", req_type="FailClosedGuardrail")
+def test_llm_room_empty_always_vacates_even_when_tv_hold_active():
+    """@requirement STATE-09: Vision AI empty verdict always routes OCCUPIED_VERIFYING -> VACANT, and hold_timeout locks out cooling hold resumption."""
     sm = RoomPresenceStateMachine(
         name="Family Room",
         inactivity_timeout=60,
@@ -177,27 +177,38 @@ def test_llm_room_empty_holds_when_active_hold_evidence_present_unless_hold_time
     assert sm.advance_time(60.0, now_ts=170.0) == "REQUEST_LLM_VERIFY"
     assert sm.state == OccupancyState.OCCUPIED_VERIFYING
 
-    # Snapshot now gains hold evidence (TV + BLE > threshold) while verifying:
-    # if llm_room_empty arrives first, it must transition to OCCUPIED_HOLDING rather than VACANT
-    sm.snapshot = RoomEvidenceSnapshot(
+    # Even if TV condition / BLE hold is present (e.g. occupant walked to kitchen leaving TV playing),
+    # apply_evidence in VERIFYING must NOT override verification and llm_room_empty MUST vacate.
+    hold_snap = RoomEvidenceSnapshot(
         active_conditions=("media_player.family_room_tv equals playing",),
         bayesian_occupied=True,
         bayesian_probability=0.814,
         bayesian_probability_pct=81.4,
     )
-    sm.handle_llm_result(False, "Couch has pillows and blanket, no human visible", now_ts=172.0)
-    assert sm.state == OccupancyState.OCCUPIED_HOLDING
-    assert sm.is_present is True
-
-    # Bounded liveness (GUARD-07): once max_hold_timeout fires, hold MUST NOT resume in cooling or verifying
-    assert sm.advance_time(600.0, now_ts=772.0) == "HOLD_EXPIRED"
-    assert sm.state == OccupancyState.OCCUPIED_COOLING
-    sm.apply_evidence(sm.snapshot, now_ts=780.0)
-    assert sm.state == OccupancyState.OCCUPIED_COOLING
-
-    assert sm.advance_time(60.0, now_ts=832.0) == "REQUEST_LLM_VERIFY"
+    sm.apply_evidence(hold_snap, now_ts=171.0)
     assert sm.state == OccupancyState.OCCUPIED_VERIFYING
-    sm.handle_llm_result(False, "Still empty after hold timeout", now_ts=834.0)
+
+    sm.handle_llm_result(False, "Empty room; occupant left TV playing", now_ts=172.0)
+    assert sm.state == OccupancyState.VACANT
+    assert sm.is_present is False
+
+    # Bounded liveness (GUARD-07): if hold_timeout fires, hold MUST NOT resume during cooling
+    sm.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.fr_floor_person"}),
+            human_present=True,
+            camera_confirmed=True,
+        ),
+        now_ts=200.0,
+    )
+    sm.apply_evidence(hold_snap, now_ts=210.0)
+    assert sm.state == OccupancyState.OCCUPIED_HOLDING
+    assert sm.advance_time(600.0, now_ts=810.0) == "HOLD_EXPIRED"
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+    sm.apply_evidence(hold_snap, now_ts=820.0)
+    assert sm.state == OccupancyState.OCCUPIED_COOLING
+    assert sm.advance_time(60.0, now_ts=870.0) == "REQUEST_LLM_VERIFY"
+    sm.handle_llm_result(False, "Still empty after hold timeout", now_ts=872.0)
     assert sm.state == OccupancyState.VACANT
 
 
