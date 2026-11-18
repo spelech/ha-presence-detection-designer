@@ -50,12 +50,21 @@ _MACHINE_TRANSITIONS: list[dict[str, Any]] = [
     _tx("evidence_cleared", _CONF, _HOLD, conditions="_guard_has_hold_only"),
     _tx("evidence_cleared", _CONF, _COOL, conditions="_guard_no_human_or_hold"),
     _tx("evidence_detected", [_HOLD, _COOL, _VER], _CONF, conditions="_guard_has_human_evidence"),
+    _tx("evidence_hold", [_COOL, _VER], _HOLD, conditions="_guard_can_resume_hold"),
     _tx("hold_cleared", _HOLD, _COOL),
-    _tx("hold_timeout", _HOLD, _COOL),
-    _tx("countdown_expired", _COOL, _VER, conditions="_guard_llm_enabled"),
-    _tx("countdown_expired", _COOL, _V, unless="_guard_llm_enabled"),
-    _tx("llm_person_detected", _VER, _COOL),
-    _tx("llm_room_empty", _VER, _V),
+    _tx("hold_timeout", _HOLD, _COOL, after="_on_hold_timeout"),
+    _tx("countdown_expired", _COOL, _HOLD, conditions="_guard_can_resume_hold"),
+    _tx(
+        "countdown_expired",
+        _COOL,
+        _VER,
+        conditions="_guard_llm_enabled",
+        unless="_guard_can_resume_hold",
+    ),
+    _tx("countdown_expired", _COOL, _V, unless=["_guard_llm_enabled", "_guard_can_resume_hold"]),
+    _tx("llm_person_detected", _VER, _COOL, after="_on_llm_person_detected"),
+    _tx("llm_room_empty", _VER, _HOLD, conditions="_guard_can_resume_hold"),
+    _tx("llm_room_empty", _VER, _V, unless="_guard_can_resume_hold"),
     _tx("verify_timeout", _VER, _V),
     _tx("adjacent_handoff", [_CONF, _HOLD, _COOL], _V, conditions="_guard_can_handoff_clear"),
     _tx("enable_override", [_V, "occupied"], _OVR),
@@ -118,6 +127,7 @@ class RoomPresenceStateMachine:
         self._virtual_wall_base: float | None = None
         self._deadline_ts: float | None = None
         self._next_cooling_duration: int | None = None
+        self._hold_timed_out: bool = False
         self._timer_cancel: Callable[[], None] | None = None
         self._history: deque[dict[str, Any]] = deque(maxlen=50)
 
@@ -218,6 +228,15 @@ class RoomPresenceStateMachine:
     def _guard_llm_enabled(self, _event: Any) -> bool:
         return self.llm_enabled
 
+    def _guard_can_resume_hold(self, _event: Any = None) -> bool:
+        return bool(self.snapshot.has_hold_evidence and not self._hold_timed_out)
+
+    def _on_hold_timeout(self, _event: Any = None) -> None:
+        self._hold_timed_out = True
+
+    def _on_llm_person_detected(self, _event: Any = None) -> None:
+        self._hold_timed_out = False
+
     def _guard_can_handoff_clear(self, _event: Any) -> bool:
         from .sensor_reliability import classify_sensor_reliability
 
@@ -302,6 +321,7 @@ class RoomPresenceStateMachine:
         """Reset transient tracking upon entering vacant."""
         now_ts = float(event.kwargs.get("now_ts") or self._now())
         self._cancel_timer()
+        self._hold_timed_out = False
         self.last_cleared_time = now_ts
         self.bayesian_probability = 0.0
         self.bayesian_probability_pct = 0.0
@@ -310,6 +330,7 @@ class RoomPresenceStateMachine:
         """Mark occupied timestamp and clear pending handoff markers."""
         now_ts = float(event.kwargs.get("now_ts") or self._now())
         self._cancel_timer()
+        self._hold_timed_out = False
         self.last_occupied_time = now_ts
         self.last_handoff_room = None
 
@@ -395,6 +416,11 @@ class RoomPresenceStateMachine:
             if snapshot.human_evidence_active:
                 self.evidence_detected(
                     now_ts=now, reason="Human evidence retriggered during vacate window"
+                )
+            elif self._guard_can_resume_hold():
+                self.evidence_hold(
+                    now_ts=now,
+                    reason="Hold evidence active during vacate window; holding occupancy",
                 )
 
     def handle_adjacent_room_occupied(

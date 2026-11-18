@@ -10,6 +10,10 @@ from .bayesian_engine import (
     apply_contextual_bayesian_penalties,
     evaluate_bayesian,
 )
+from .camera_guard import (
+    maybe_gate_uncorroborated_camera_trigger,
+    sanitize_pir_camera_corroboration,
+)
 from .condition_evaluator import is_state_stale
 from .const import (
     DATA_STORE,
@@ -405,6 +409,8 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         and pv.state in (PIRValidationState.CANDIDATE, PIRValidationState.SUPPRESSED)
     ):
         ctx = build_pir_corroboration_context(coord, now_ts=now_ts)
+        if not guest_mode_enabled:
+            ctx = sanitize_pir_camera_corroboration(coord, ctx, now_ts=now_ts)
         pv_promoted = pv.on_corroboration_update(ctx, now_ts=now_ts)
 
     coord._bayesian_drives_occupancy = bool(should_trigger_sm)
@@ -455,20 +461,27 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
         ):
             return
 
-        if not coord._is_guest_mode_active() and not cam_trigger:
-            spatial_frame = getattr(coord, "_last_spatial_frame", None) or {}
-            pinned_rooms = spatial_frame.get("steve_pinned_rooms") or []
-            if pinned_rooms and coord.room_name not in pinned_rooms:
-                if not b_occupied and not coord._active_condition_descs:
+        if not coord._is_guest_mode_active():
+            if not cam_trigger:
+                spatial_frame = getattr(coord, "_last_spatial_frame", None) or {}
+                pinned_rooms = spatial_frame.get("steve_pinned_rooms") or []
+                if pinned_rooms and coord.room_name not in pinned_rooms:
+                    if not b_occupied and not coord._active_condition_descs:
+                        return
+
+                traj = check_coordinator_trajectory(coord, now_ts=now)
+                if not traj.is_valid:
+                    coord._last_suppressed_reason = traj.reason
                     return
 
-            traj = check_coordinator_trajectory(coord, now_ts=now)
-            if not traj.is_valid:
-                coord._last_suppressed_reason = traj.reason
-                return
-
-            if should_defer_for_settling(coord, entity_id, is_active, traj, now):
-                return
+                if should_defer_for_settling(coord, entity_id, is_active, traj, now):
+                    return
+            else:
+                traj = check_coordinator_trajectory(coord, now_ts=now)
+                if maybe_gate_uncorroborated_camera_trigger(
+                    coord, str(entity_id), traj=traj, now_ts=now
+                ):
+                    return
 
     if not is_active and getattr(coord, "_settling_entity", None) == entity_id:
         coord._settling_entity = None
