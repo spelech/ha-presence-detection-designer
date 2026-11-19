@@ -159,6 +159,16 @@ def _notify_coord(coord: Any) -> None:
         coord.async_update_listeners()
 
 
+def _clear_room_coord(coord: Any, *, reason: str) -> None:
+    from .camera_guard import DEFAULT_CAM_REJECT_COOLDOWN_SEC
+
+    if hasattr(coord, "_active_triggers") and isinstance(coord._active_triggers, set):
+        coord._active_triggers.clear()
+    coord._cam_verify_rejected_until = time.time() + DEFAULT_CAM_REJECT_COOLDOWN_SEC
+    coord.state_machine.force_clear(reason=reason)
+    _notify_coord(coord)
+
+
 def _refresh_all_coordinators(hass: Any) -> None:
     from .coordinator import RoomPresenceCoordinator
 
@@ -281,9 +291,8 @@ async def async_process_slack_action(
                 if getattr(coord, "is_present", False) or getattr(
                     coord.state_machine, "is_present", False
                 ):
-                    coord.state_machine.force_clear(reason=f"Reset vacant via {actor_label}")
+                    _clear_room_coord(coord, reason=f"Reset vacant via {actor_label}")
                     cleared_rooms.append(str(getattr(coord, "room_name", "Room")))
-                    _notify_coord(coord)
         note = f"🧹 Cleared {len(cleared_rooms)} occupied room(s) and set house mode to *Vacant*."
         _LOGGER.info(
             "Slack action (%s): cleared %d rooms and reset house to vacant",
@@ -305,8 +314,7 @@ async def async_process_slack_action(
         if not coord:
             return {"ok": False, "error": f"room_not_found:{value}"}
         if action_id == SLACK_ACTION_ROOM_CLEAR:
-            coord.state_machine.force_clear(reason=f"Cleared via {actor_label}")
-            _notify_coord(coord)
+            _clear_room_coord(coord, reason=f"Cleared via {actor_label}")
             cleared_rooms.append(str(coord.room_name))
             note = f"🧹 Cleared *{coord.room_name}*."
         elif action_id == SLACK_ACTION_ROOM_VERIFY:
@@ -362,8 +370,7 @@ async def async_process_manage_modal_submission(
     for eid in parsed["clear_room_ids"]:
         coord = _resolve_room_coord(hass, eid)
         if coord:
-            coord.state_machine.force_clear(reason=f"Cleared via {actor_label}")
-            _notify_coord(coord)
+            _clear_room_coord(coord, reason=f"Cleared via {actor_label}")
             cleared_rooms.append(str(coord.room_name))
     for eid in parsed["verify_room_ids"]:
         coord = _resolve_room_coord(hass, eid)

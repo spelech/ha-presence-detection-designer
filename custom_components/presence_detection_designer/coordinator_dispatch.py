@@ -11,6 +11,7 @@ from .bayesian_engine import (
     evaluate_bayesian,
 )
 from .camera_guard import (
+    is_camera_verification_rejected,
     maybe_gate_uncorroborated_camera_trigger,
     sanitize_pir_camera_corroboration,
 )
@@ -355,6 +356,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         )
 
     tracker = getattr(coord, "actuation_tracker", None)
+    cam_rejected = is_camera_verification_rejected(coord, now_ts=now_ts)
 
     suppressed_eids = set(shade_excluded_eids)
     for obs in obs_to_eval:
@@ -363,6 +365,8 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
             continue
         eid_str = str(eid)
         if tracker is not None and tracker.is_entity_auto_latched(eid_str):
+            suppressed_eids.add(eid_str)
+        elif cam_rejected and is_camera_entity(eid_str):
             suppressed_eids.add(eid_str)
         elif (
             not ble_active_in_fusion
@@ -444,27 +448,38 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     if not to_state or not entity_id or is_state_stale(to_state, max_age_seconds=60.0):
         return
 
+    now = time.time()
+    cam_trigger = is_camera_entity(str(entity_id))
+    is_on_raw = to_state.state in ("on", "playing", "home")
+    if is_on_raw and not cam_trigger and classify_sensor_reliability(str(entity_id)).is_pir:
+        coord._cam_verify_rejected_until = 0.0
+
     coord._eval_bayesian_and_update()
     sp_est = coord.last_spatial_estimate or {}
     suppressed = set(sp_est.get("shade_sunlight_excluded_entities") or []) | set(
         sp_est.get("pet_excluded_entities") or []
     )
+    if cam_trigger and is_camera_verification_rejected(coord, now_ts=now):
+        suppressed.add(str(entity_id))
     if not classify_sensor_reliability(str(entity_id)).is_human_exclusive:
         coord._active_triggers.discard(str(entity_id))
         return
 
-    is_active = to_state.state in ("on", "playing", "home") and entity_id not in suppressed
+    is_active = is_on_raw and entity_id not in suppressed
 
     traj: Any | None = None
-    now = time.time()
-    if is_active and not coord.state_machine.is_present:
+    in_cooling = getattr(coord.state_machine, "state", None) in (
+        OccupancyState.OCCUPIED_COOLING,
+        str(OccupancyState.OCCUPIED_COOLING),
+    )
+    if is_active and (not coord.state_machine.is_present or (cam_trigger and in_cooling)):
         last_cleared = getattr(coord.state_machine, "last_cleared_time", 0.0)
         cooldown = float(getattr(coord.state_machine, "retrigger_cooldown", 20.0))
         b_occupied = bool(coord.last_bayesian_eval and coord.last_bayesian_eval.is_occupied)
-        cam_trigger = is_camera_entity(str(entity_id))
 
         if (
-            last_cleared > 0.0
+            not coord.state_machine.is_present
+            and last_cleared > 0.0
             and (now - last_cleared) < cooldown
             and not b_occupied
             and not cam_trigger
@@ -491,6 +506,7 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
                 if maybe_gate_uncorroborated_camera_trigger(
                     coord, str(entity_id), traj=traj, now_ts=now
                 ):
+                    coord._active_triggers.discard(str(entity_id))
                     return
 
     if not is_active and getattr(coord, "_settling_entity", None) == entity_id:

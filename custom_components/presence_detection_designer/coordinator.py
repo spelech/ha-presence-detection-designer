@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -44,7 +45,7 @@ from .pir_corroboration import (
     sync_coordinator_pir_corroboration,
 )
 from .pir_validation import PIRValidationStateMachine
-from .sensor_reliability import classify_sensor_reliability
+from .sensor_reliability import classify_sensor_reliability, is_camera_entity
 from .spatial_catalog import PRIMARY_BLE_TRACKER_ENTITIES
 from .state_machine import RoomPresenceStateMachine
 
@@ -280,9 +281,14 @@ class RoomPresenceCoordinator:
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
+        from .camera_guard import is_camera_verification_rejected
+
+        cam_rejected = is_camera_verification_rejected(self)
         self._active_triggers.clear()
         for t_eid in self.trigger_entities:
             if not classify_sensor_reliability(t_eid).is_human_exclusive:
+                continue
+            if cam_rejected and is_camera_entity(t_eid):
                 continue
             st_obj = _safe_state_getter(self.hass, t_eid)
             if st_obj is not None and not is_state_stale(st_obj, max_age_seconds=60.0):
@@ -394,6 +400,8 @@ class RoomPresenceCoordinator:
             return
 
         is_open = to_state.state in ("on", "open", "opening")
+        if is_open:
+            self._cam_verify_rejected_until = 0.0
         if self.hass:
             from .house_perimeter import get_house_perimeter_tracker
 
@@ -447,6 +455,8 @@ class RoomPresenceCoordinator:
 
     async def async_run_llm_verification(self, camera_entity_override: str | None = None) -> None:
         """Capture snapshot and run LLM verification."""
+        from .camera_guard import DEFAULT_CAM_REJECT_COOLDOWN_SEC
+
         target_camera = (
             camera_entity_override.strip()
             if isinstance(camera_entity_override, str) and camera_entity_override.strip()
@@ -463,6 +473,13 @@ class RoomPresenceCoordinator:
             return
 
         detected, reasoning = await self.verifier.async_verify(image_bytes)
+        if not detected:
+            self._cam_verify_rejected_until = time.time() + DEFAULT_CAM_REJECT_COOLDOWN_SEC
+            self._active_triggers = {
+                t for t in self._active_triggers if not is_camera_entity(str(t))
+            }
+        else:
+            self._cam_verify_rejected_until = 0.0
         self.state_machine.handle_llm_result(detected, reasoning)
         self._record_timeline_snapshot()
         self.async_update_listeners()
