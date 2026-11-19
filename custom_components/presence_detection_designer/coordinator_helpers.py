@@ -274,11 +274,22 @@ def build_coordinator_evidence_snapshot(
         if trigger_bayesian is None
         else bool(trigger_bayesian)
     )
+    from .camera_guard import is_camera_verification_rejected
+
+    cam_rejected = is_camera_verification_rejected(coord)
     sp = coord.last_spatial_estimate if isinstance(coord.last_spatial_estimate, dict) else {}
     raw_human = bool(sp.get("human_present", False))
     pet_present = bool(sp.get("pet_present", False))
-    raw_drivers = [str(d) for d in (sp.get("positive_drivers") or []) if d]
-    raw_triggers = set(getattr(coord, "_active_triggers", set()))
+    raw_drivers = [
+        str(d)
+        for d in (sp.get("positive_drivers") or [])
+        if d and not (cam_rejected and is_camera_entity(str(d)))
+    ]
+    raw_triggers = {
+        t
+        for t in getattr(coord, "_active_triggers", set())
+        if not (cam_rejected and is_camera_entity(str(t)))
+    }
     configured_triggers = getattr(coord, "trigger_entities", None)
     if isinstance(configured_triggers, (list, tuple, set)):
         allowed_set = {str(t) for t in configured_triggers if t and str(t) in raw_triggers}
@@ -291,6 +302,8 @@ def build_coordinator_evidence_snapshot(
         drivers = [d for d in raw_drivers if d in allowed_set]
     else:
         drivers = raw_drivers
+    if cam_rejected and not drivers:
+        raw_human = False
 
     is_hold_only_spatial = bool(
         sp.get("method") in ("negative_space", "blind_pocket")

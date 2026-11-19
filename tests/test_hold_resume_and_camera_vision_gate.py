@@ -478,3 +478,113 @@ async def test_unverified_distant_camera_observation_cannot_corroborate_pending_
     mbr._eval_bayesian_and_update()
     assert mbr.pir_validator.state == PIRValidationState.CANDIDATE
     assert mbr.state_machine.is_present is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.requirement("GUARD-09", category="GUARD", req_type="FailClosedGuardrail")
+async def test_uncorroborated_camera_flicker_in_bounded_room_without_pir_or_door_vacates_cooling():
+    """@requirement GUARD-09: Camera-only flickers on static objects (e.g. Garage trash bins) during occupied_cooling or from vacant without local PIR/door corroboration must be gated by Vision AI and vacate when rejected."""
+    fp = get_default_floorplan()
+    hass, tasks = _make_async_hass(floorplan=fp)
+
+    fr = RoomPresenceCoordinator(
+        hass,
+        "entry_fr",
+        {
+            CONF_ROOM_NAME: "Family Room",
+            CONF_MODE: str(Mode.OPEN),
+            CONF_PIR_VALIDATION_ENABLED: False,
+            CONF_TRIGGER_ENTITIES: ["binary_sensor.family_room_floor_person_occupancy"],
+        },
+    )
+    garage = RoomPresenceCoordinator(
+        hass,
+        "entry_garage",
+        {
+            CONF_ROOM_NAME: "Garage",
+            CONF_MODE: str(Mode.BOUNDED),
+            CONF_LLM_ENABLED: True,
+            CONF_CAMERA_ENTITY: "camera.garage",
+            CONF_PIR_VALIDATION_ENABLED: True,
+            CONF_CONNECTED_ROOMS: ["Laundry Room"],
+            "boundary_entities": [
+                "binary_sensor.garage_side_door",
+                "binary_sensor.laundry_room_door",
+                "cover.garage_door",
+            ],
+            CONF_TRIGGER_ENTITIES: [
+                "binary_sensor.garage_keypad_motion",
+                "binary_sensor.garage_parking_person_occupancy",
+                "binary_sensor.garage_person_occupancy",
+                "binary_sensor.garage_ring_motion",
+            ],
+        },
+    )
+    hass.data[DOMAIN][fr.entry_id] = fr
+    hass.data[DOMAIN][garage.entry_id] = garage
+
+    # Family Room is occupied; all Garage PIRs and doors are off/closed
+    fr.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.family_room_floor_person_occupancy"}),
+            human_present=True,
+            camera_confirmed=True,
+        ),
+        now_ts=time.time(),
+    )
+    _set_state(hass, "binary_sensor.garage_keypad_motion", "off")
+    _set_state(hass, "binary_sensor.garage_ring_motion", "off")
+    _set_state(hass, "binary_sensor.garage_side_door", "off")
+    _set_state(hass, "binary_sensor.laundry_room_door", "off")
+    _set_state(hass, "cover.garage_door", "closed")
+
+    # Garage was previously occupied and is now in OCCUPIED_COOLING after person left
+    garage.state_machine.apply_evidence(
+        RoomEvidenceSnapshot(
+            active_triggers=frozenset({"binary_sensor.garage_keypad_motion"}),
+            human_present=True,
+        ),
+        now_ts=time.time() - 30.0,
+    )
+    garage.state_machine.apply_evidence(RoomEvidenceSnapshot(), now_ts=time.time() - 20.0)
+    assert garage.state_machine.state == OccupancyState.OCCUPIED_COOLING
+
+    # Frigate false-positives on trash bins in garage_parking while all PIRs/doors are off
+    garage.verifier.async_acquire_snapshot = AsyncMock(return_value=b"fake_garage_jpeg")
+    garage.verifier.async_verify = AsyncMock(
+        return_value=(False, "The bounding box encloses trash bins; no person in garage")
+    )
+
+    event = SimpleNamespace(
+        data={
+            "entity_id": "binary_sensor.garage_parking_person_occupancy",
+            "new_state": _set_state(
+                hass, "binary_sensor.garage_parking_person_occupancy", "on"
+            ),
+        }
+    )
+    garage._handle_trigger_change(event)
+
+    # Must NOT reset occupied_cooling back to occupied_confirmed; instead triggers Vision AI check
+    assert garage.state_machine.state == OccupancyState.OCCUPIED_COOLING
+    assert len(tasks) == 1
+    await tasks[0]
+
+    # Vision AI rejected the false positive -> Garage vacates immediately and suppresses subsequent camera flickers
+    assert garage.state_machine.state == OccupancyState.VACANT
+    assert garage.state_machine.is_present is False
+
+    # Flicker again from VACANT -> suppressed without promoting Garage or making another LLM call
+    garage._handle_trigger_change(event)
+    assert garage.state_machine.state == OccupancyState.VACANT
+    assert len(tasks) == 1
+
+    # Real PIR trigger clears the camera rejection cooldown
+    pir_event = SimpleNamespace(
+        data={
+            "entity_id": "binary_sensor.garage_keypad_motion",
+            "new_state": _set_state(hass, "binary_sensor.garage_keypad_motion", "on"),
+        }
+    )
+    garage._handle_trigger_change(pir_event)
+    assert garage._cam_verify_rejected_until == 0.0
