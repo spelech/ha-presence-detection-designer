@@ -317,6 +317,15 @@ DEVICE_MODEL_PRESETS: dict[str, dict[str, Any]] = {
         "radius_px": 210,
         "description": "Indoor smart speaker Bluetooth Low Energy RSSI anchor.",
     },
+    "esphome_ble_proxy": {
+        "id": "esphome_ble_proxy",
+        "name": "ESPHome Bluetooth Proxy (ESP32 / NFC Reader)",
+        "label": "ESPHome BLE Proxy",
+        "category": "ble_proxy",
+        "device_type": "ble_proxy",
+        "radius_px": 210,
+        "description": "Dedicated ESP32 / ESPHome Bluetooth Low Energy RSSI proxy.",
+    },
 }
 
 _FLOORPLAN_JSON_PATH = Path(__file__).parent / "default_floorplan.json"

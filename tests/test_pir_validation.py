@@ -320,9 +320,13 @@ def test_cooldown_weight_curve_and_bayesian_tempering() -> None:
 
 @pytest.mark.requirement("PIR-03", category="PIR", req_type="PositiveFeature")
 def test_hardware_inventory_classification_floorplan_and_migrations(mock_hass) -> None:
-    """@requirement PIR-03: Verify Garage Keypad move, 3 Wyze sensors, 7 Ecobees, and idempotent migration."""
-    assert len(ECOBEE_MOTION_ENTITIES) == 7
-    assert len(ECOBEE_OCCUPANCY_ENTITIES) == 7
+    """@requirement PIR-03: Verify Garage Keypad move, 3 Wyze sensors, 9 Ecobees, and idempotent migration."""
+    assert len(ECOBEE_MOTION_ENTITIES) == 9
+    assert len(ECOBEE_OCCUPANCY_ENTITIES) == 9
+    assert "binary_sensor.storage_room_ecobee_motion" in ECOBEE_MOTION_ENTITIES
+    assert "binary_sensor.hallway_bathroom_motion" in ECOBEE_MOTION_ENTITIES
+    assert "binary_sensor.storage_room_ecobee_occupancy" in ECOBEE_OCCUPANCY_ENTITIES
+    assert "binary_sensor.hallway_bathroom_occupancy" in ECOBEE_OCCUPANCY_ENTITIES
     assert len(WYZE_PLACED_PIR_ENTITIES) == 3
     assert len(RING_KEYPAD_PIR_ENTITIES) == 3
     assert "binary_sensor.family_room_ring_motion" in BATTERY_CAMERA_PIR_ENTITIES

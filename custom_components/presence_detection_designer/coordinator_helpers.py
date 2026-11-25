@@ -293,12 +293,6 @@ def build_coordinator_evidence_snapshot(
     configured_triggers = getattr(coord, "trigger_entities", None)
     if isinstance(configured_triggers, (list, tuple, set)):
         allowed_set = {str(t) for t in configured_triggers if t and str(t) in raw_triggers}
-        hass_obj = getattr(coord, "hass", None)
-        if hass_obj and isinstance(getattr(hass_obj, "data", None), dict):
-            st_obj = hass_obj.data.get(DOMAIN, {}).get(DATA_STORE)
-            gs = getattr(st_obj, "global_settings", None) if st_obj is not None else None
-            if isinstance(gs, dict) and gs.get("ble_decider_enabled"):
-                allowed_set.update(str(b) for b in (gs.get("ble_trackers") or []) if b)
         drivers = [d for d in raw_drivers if d in allowed_set]
     else:
         drivers = raw_drivers
