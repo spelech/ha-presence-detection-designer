@@ -67,6 +67,8 @@ _BACKFILL_SENSOR_IDS: tuple[str, ...] = (
     "binary_sensor.garage_ring_motion",
     "binary_sensor.garage_keypad_motion",
     "binary_sensor.basement_ecobee_motion",
+    "binary_sensor.storage_room_ecobee_motion",
+    "binary_sensor.hallway_bathroom_motion",
     "binary_sensor.laundry_room_door",
 )
 
@@ -108,6 +110,50 @@ def migrate_and_backfill_store_payload(
             if not fp_dict.get(layer_key) and default_fp.get(layer_key):
                 fp_dict[layer_key] = copy.deepcopy(default_fp[layer_key])
                 dirty = True
+
+        # Upgrade legacy raster .webp underlays to crisp 1000x580 vector SVG underlays
+        default_floors_by_id = {
+            fl["id"]: fl
+            for fl in default_fp.get("floors", []) or []
+            if isinstance(fl, dict) and fl.get("id")
+        }
+        for fl in fp_dict.get("floors", []) or []:
+            if not isinstance(fl, dict):
+                continue
+            fl_id = fl.get("id")
+            cur_u = fl.get("underlay_svg")
+            def_fl = default_floors_by_id.get(fl_id)
+            if (
+                isinstance(cur_u, dict)
+                and str(cur_u.get("url", "")).endswith(".webp?v=4")
+                and isinstance(def_fl, dict)
+                and def_fl.get("underlay_svg")
+            ):
+                fl["underlay_svg"] = copy.deepcopy(def_fl["underlay_svg"])
+                dirty = True
+
+        # Backfill newly deployed BLE proxies and refresh stale speaker entity IDs (preserving x/y)
+        default_proxies = {
+            p["id"]: p
+            for p in default_fp.get("ble_proxies", []) or []
+            if isinstance(p, dict) and p.get("id")
+        }
+        existing_proxies = fp_dict.setdefault("ble_proxies", [])
+        existing_proxy_by_id = {
+            p["id"]: p for p in existing_proxies if isinstance(p, dict) and p.get("id")
+        }
+        for pid, dp in default_proxies.items():
+            if pid not in existing_proxy_by_id:
+                existing_proxies.append(copy.deepcopy(dp))
+                dirty = True
+            else:
+                cur_p = existing_proxy_by_id[pid]
+                if cur_p.get("entity_id") in (
+                    "sensor.living_room_speaker_bluetooth_proxy_status",
+                    "sensor.basement_speaker_bluetooth_proxy_status",
+                ) and dp.get("entity_id"):
+                    cur_p["entity_id"] = dp["entity_id"]
+                    dirty = True
 
         default_cams = {c["id"]: c for c in default_fp.get("cameras", []) if c.get("id")}
         for cam in fp_dict.get("cameras", []):
