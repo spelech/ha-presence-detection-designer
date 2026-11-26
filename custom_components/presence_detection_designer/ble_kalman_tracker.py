@@ -813,6 +813,7 @@ def update_house_ekf_from_hass(
     tracker_entities: list[str] | tuple[str, ...],
     *,
     ble_ranges_provider: Any = None,
+    pir_spillover: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Update all configured BLE EKF tracks from live Bermuda ranges + gated cameras/PIRs."""
     fp = floorplan if isinstance(floorplan, dict) else {}
@@ -842,18 +843,56 @@ def update_house_ekf_from_hass(
                 cy = float(sz.get("y", 0.0)) + float(sz.get("height", 0.0)) / 2.0
                 cam_hits.append((cfl, cx, cy))
 
+    from .spatial_catalog import ROOM_DOG_OCCUPANCY_ENTITIES
+    from .spatial_topology import compute_pir_spillover_matrix
+
+    pet_active_rooms = {
+        r_name
+        for r_name, dog_eids in ROOM_DOG_OCCUPANCY_ENTITIES.items()
+        if any(_is_on(deid) for deid in dog_eids)
+    }
+    cam_active_rooms: set[str] = set()
+    for cam in fp.get("cameras") or []:
+        if not isinstance(cam, dict):
+            continue
+        chost = str(cam.get("host_room") or "")
+        for sz in cam.get("sub_zones") or []:
+            if isinstance(sz, dict) and sz.get("entity_id") and _is_on(str(sz["entity_id"])):
+                cam_active_rooms.add(str(sz.get("room") or chost))
+    if pir_spillover is not None:
+        pir_spill = pir_spillover
+    else:
+        cache_key = (len(fp.get("rooms") or []), len(fp.get("sensors") or []))
+        if getattr(ekf_manager, "_pir_spill_key", None) != cache_key:
+            ekf_manager._pir_spill_cache = compute_pir_spillover_matrix(fp, min_overlap_pct=5.0)  # type: ignore[attr-defined]
+            ekf_manager._pir_spill_key = cache_key  # type: ignore[attr-defined]
+        pir_spill = getattr(ekf_manager, "_pir_spill_cache", {})
+
     pir_hits: list[tuple[str, float, float]] = []
     for sen in fp.get("sensors") or []:
         if not isinstance(sen, dict) or sen.get("sensor_type") != "pir_motion":
             continue
         if "ecobee" in str(sen.get("model_preset") or "").lower():
             continue
+        host_r = str(sen.get("host_room") or "")
+        if host_r in pet_active_rooms or host_r in cam_active_rooms:
+            continue
         eid = str(sen.get("entity_id") or sen.get("id") or "")
-        if eid and _is_on(eid):
-            rad = math.radians(float(sen.get("heading_deg", 0.0)))
-            px = float(sen.get("x", 0.0)) + 50.0 * math.cos(rad)
-            py = float(sen.get("y", 0.0)) + 50.0 * math.sin(rad)
-            pir_hits.append((str(sen.get("floor") or ""), px, py))
+        if not eid or not _is_on(eid):
+            continue
+        if host_r == "Kitchen" and pir_spill.get(eid):
+            continue
+        # Only fuse fresh PIR rising edges (<= 3s) so 15-30s hardware latches never pin EKF
+        st_obj = states_obj.get(eid) if states_obj is not None else None
+        lc = getattr(st_obj, "last_changed", None)
+        if lc is not None and hasattr(lc, "timestamp"):
+            if (now_ts - float(lc.timestamp())) > 3.5:
+                continue
+        rad = math.radians(float(sen.get("heading_deg", 0.0)))
+        range_px = float(sen.get("range_px", 150.0) or 150.0)
+        px = float(sen.get("x", 0.0)) + 0.35 * range_px * math.cos(rad)
+        py = float(sen.get("y", 0.0)) + 0.35 * range_px * math.sin(rad)
+        pir_hits.append((str(sen.get("floor") or ""), px, py))
 
     # Map room names to floor ids for Bermuda area floor hints
     room_to_floor: dict[str, str] = {
@@ -878,6 +917,12 @@ def update_house_ekf_from_hass(
         if raw_area is None and states_obj is not None:
             st = states_obj.get(eid_str)
             raw_area = getattr(st, "state", None) if st is not None else None
+        raw_area_norm = str(raw_area or "").strip().lower()
+        if not ranges and raw_area_norm in ("away", "not_home", "unknown", "unavailable"):
+            tr_obj = ekf_manager.get_tracker(eid_str)
+            if tr_obj.initialized:
+                tr_obj.reset()
+            continue
         mapped_room = _normalize_ble_area_to_room(raw_area) if raw_area is not None else None
         area_floor = room_to_floor.get(mapped_room) if mapped_room else None
 
