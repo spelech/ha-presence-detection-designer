@@ -130,8 +130,18 @@ class GeneratedTimeline:
     ble_ranges_by_t: list[list[BLERangeMeasurement]] = field(default_factory=list)
 
 
-def _interpolate_actor(track: ActorTrack, t: int) -> ActorWaypoint:
-    """Linearly interpolate an actor's position and activity at integer second t."""
+def _interpolate_actor(
+    track: ActorTrack,
+    t: int,
+    rooms_by_name: dict[str, dict[str, Any]] | None = None,
+) -> ActorWaypoint:
+    """Linearly interpolate an actor's position and activity at integer second t.
+
+    When `rooms_by_name` is supplied and the actor moves between two rooms on the
+    same floor, resolves `room` against the physical floorplan bounding boxes so
+    ground-truth occupancy matches the actor's physical coordinates rather than
+    flipping rooms prematurely behind a wall at `frac == 0.5`.
+    """
     wps = track.waypoints
     if not wps:
         return ActorWaypoint(t=t, floor="main", x=0.0, y=0.0, room=None, activity="away")
@@ -163,7 +173,19 @@ def _interpolate_actor(track: ActorTrack, t: int) -> ActorWaypoint:
             frac = (t - a.t) / float(b.t - a.t)
             x = a.x + (b.x - a.x) * frac
             y = a.y + (b.y - a.y) * frac
-            room = a.room if frac < 0.5 else b.room
+            if a.room == b.room or not rooms_by_name:
+                room = a.room if frac < 0.5 else b.room
+            else:
+                box_a = rooms_by_name.get(a.room) if a.room else None
+                box_b = rooms_by_name.get(b.room) if b.room else None
+                in_a = box_a is not None and _point_in_rect(x, y, box_a)
+                in_b = box_b is not None and _point_in_rect(x, y, box_b)
+                if in_a and not in_b:
+                    room = a.room
+                elif in_b and not in_a:
+                    room = b.room
+                else:
+                    room = a.room if frac < 0.5 else b.room
             return ActorWaypoint(t=t, floor=a.floor, x=x, y=y, room=room, activity=a.activity)
     return wps[-1]
 
@@ -210,9 +232,13 @@ class LayeredSignalGenerator:
                 fl_rooms = [r for r in floorplan.get("rooms", []) if r.get("floor") == fl_id]
                 self.wall_segments_by_floor[fl_id] = extract_floor_wall_segments(fl_rooms)
 
+        self.rooms_by_name: dict[str, dict[str, Any]] = {
+            str(r["name"]): r for r in floorplan.get("rooms", []) if r.get("name")
+        }
         self.adjacent_rooms: dict[str, list[str]] = {}
         for conn in floorplan.get("connections", []):
-            a, b = str(conn.get("from", "")), str(conn.get("to", ""))
+            a = str(conn.get("from_room") or conn.get("from") or "")
+            b = str(conn.get("to_room") or conn.get("to") or "")
             if a and b:
                 self.adjacent_rooms.setdefault(a, []).append(b)
                 self.adjacent_rooms.setdefault(b, []).append(a)
@@ -240,7 +266,7 @@ class LayeredSignalGenerator:
         last_ble_area = "Away"
 
         for t in range(duration_sec):
-            poses = {tr.actor_id: _interpolate_actor(tr, t) for tr in tracks}
+            poses = {tr.actor_id: _interpolate_actor(tr, t, self.rooms_by_name) for tr in tracks}
 
             # Layer 0: Ground truth = rooms containing >= 1 human
             exp_rooms: set[str] = set()
