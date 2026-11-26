@@ -538,7 +538,6 @@ class HouseHMMEngine:
                 return dict(self._snapshots)
             dt = min(5.0, max(1.0, round(raw_dt)))
             self._last_decay_ts = now_ts
-        do_decay = True
 
         theta_enter = float(p["theta_enter"])
         theta_clear = max(0.25, min(theta_enter - 0.06, theta_enter - float(p["hysteresis_gap"])))
@@ -731,128 +730,95 @@ class HouseHMMEngine:
                             active_drivers[dr].append(f"door:{deid}")
 
         # 4) Continuous-time hazard decay, clear-camera negative space & graph coupling
-        if do_decay:
-            next_log_odds: dict[str, float] = {}
-            for r in rooms:
-                cur_l = self.log_odds[r]
-                p_ekf_r, ekf_conf = ekf_probs[r]
-                sust = sustained_room[r]
+        next_log_odds: dict[str, float] = {}
+        for r in rooms:
+            cur_l = self.log_odds[r]
+            p_ekf_r, ekf_conf = ekf_probs[r]
+            sust = sustained_room[r]
 
-                h = base_hazard
-                if r in TRANSIT_ROOMS:
-                    h *= transit_mult
-                elif r in SLEEP_BATH_ROOMS:
-                    h *= 0.65
-                elif r in EXTERIOR_BIRTH_ROOMS and not self.occupied[r]:
-                    h *= 0.9
+            h = base_hazard
+            if r in TRANSIT_ROOMS:
+                h *= transit_mult
+            elif r in SLEEP_BATH_ROOMS:
+                h *= 0.65
+            elif r in EXTERIOR_BIRTH_ROOMS and not self.occupied[r]:
+                h *= 0.9
 
-                ecobee_on = any(
-                    states.get(eid) == "on" for eid in topo.room_ecobee_motion[r]
-                ) or any(states.get(eid) == "on" for eid in topo.room_ecobee_occupancy[r])
-                ekf_confirming = p_ekf_r >= 0.40 and ekf_conf >= 0.25
-                if sust or (self.occupied[r] and ekf_confirming and ecobee_on):
-                    h *= sustain_mult
+            ecobee_on = any(states.get(eid) == "on" for eid in topo.room_ecobee_motion[r]) or any(
+                states.get(eid) == "on" for eid in topo.room_ecobee_occupancy[r]
+            )
+            ekf_confirming = p_ekf_r >= 0.40 and ekf_conf >= 0.25
+            if sust or (self.occupied[r] and ekf_confirming and ecobee_on):
+                h *= sustain_mult
 
-                cur_l += h * (_L_PRIOR - cur_l) * 3.5 * dt
+            cur_l += h * (_L_PRIOR - cur_l) * 3.5 * dt
 
-                if ecobee_on and _sigmoid(cur_l) >= 0.25 and not bounded_sealed[r]:
-                    eco_m_on = any(states.get(eid) == "on" for eid in topo.room_ecobee_motion[r])
-                    cur_l += (0.08 if eco_m_on else 0.025) * dt
-                    active_drivers[r].append("ecobee_sustain")
+            if ecobee_on and _sigmoid(cur_l) >= 0.25 and not bounded_sealed[r]:
+                eco_m_on = any(states.get(eid) == "on" for eid in topo.room_ecobee_motion[r])
+                cur_l += (0.08 if eco_m_on else 0.025) * dt
+                active_drivers[r].append("ecobee_sustain")
 
-                cov_pct = float(topo.room_coverage.get(r, {}).get("max_coverage_pct", 0.0))
-                if cov_pct > 0.0 and self._is_camera_clear(r, states) and cur_l > _L_PRIOR:
-                    neg_mult = 1.0
-                    if sust or (ekf_confirming and ecobee_on):
-                        neg_mult = 0.08
-                    elif ekf_confirming and r not in TRANSIT_ROOMS:
-                        neg_mult = 0.35
-                    cur_l -= clear_decay * (cov_pct / 100.0) * neg_mult * dt
+            cov_pct = float(topo.room_coverage.get(r, {}).get("max_coverage_pct", 0.0))
+            if cov_pct > 0.0 and self._is_camera_clear(r, states) and cur_l > _L_PRIOR:
+                neg_mult = 1.0
+                if sust or (ekf_confirming and ecobee_on):
+                    neg_mult = 0.08
+                elif ekf_confirming and r not in TRANSIT_ROOMS:
+                    neg_mult = 0.35
+                cur_l -= clear_decay * (cov_pct / 100.0) * neg_mult * dt
 
-                if (
-                    not cam_active_room[r]
-                    and not sust
-                    and (now_ts - self.last_fresh_trigger_ts[r]) >= 5.0
-                ):
-                    nb_fresh = any(
-                        fresh_human_room[nb]
-                        or (
-                            (now_ts - self.last_fresh_trigger_ts[nb]) <= 3.0
-                            and (p_ekf_r < 0.25 or ekf_probs[nb][0] > p_ekf_r)
-                        )
-                        for nb in topo.connected_rooms[r]
+            if (
+                not cam_active_room[r]
+                and not sust
+                and (now_ts - self.last_fresh_trigger_ts[r]) >= 5.0
+            ):
+                nb_fresh = any(
+                    fresh_human_room[nb]
+                    or (
+                        (now_ts - self.last_fresh_trigger_ts[nb]) <= 3.0
+                        and (p_ekf_r < 0.25 or ekf_probs[nb][0] > p_ekf_r)
                     )
-                    if nb_fresh:
-                        hkey = (f"__handoff__{r}", r)
-                        if self._applied_sec_bucket.get(hkey) != sec_bucket:
-                            self._applied_sec_bucket[hkey] = sec_bucket
-                            cur_l -= handoff_drain * dt
+                    for nb in topo.connected_rooms[r]
+                )
+                if nb_fresh:
+                    hkey = (f"__handoff__{r}", r)
+                    if self._applied_sec_bucket.get(hkey) != sec_bucket:
+                        self._applied_sec_bucket[hkey] = sec_bucket
+                        cur_l -= handoff_drain * dt
 
-                if ekf_init:
-                    signed = (2.0 * p_ekf_r - 1.0) * ekf_conf
-                    if signed < 0.0 and (cam_active_room[r] or sust):
-                        signed *= 0.12
-                    cur_l += ekf_gain * signed * dt
-                    if p_ekf_r >= 0.35:
-                        active_drivers[r].append(f"ekf:{round(p_ekf_r * 100)}%")
+            if ekf_init:
+                signed = (2.0 * p_ekf_r - 1.0) * ekf_conf
+                if signed < 0.0 and (cam_active_room[r] or sust):
+                    signed *= 0.12
+                cur_l += ekf_gain * signed * dt
+                if p_ekf_r >= 0.35:
+                    active_drivers[r].append(f"ekf:{round(p_ekf_r * 100)}%")
 
-                cur_l = max(_L_MIN, min(_L_MAX, cur_l))
-                if (now_ts - self.last_human_phys_ts[r]) > 300.0 and not self.occupied[r]:
-                    cur_l = min(cur_l, l_support_cap)
+            cur_l = max(_L_MIN, min(_L_MAX, cur_l))
+            if (now_ts - self.last_human_phys_ts[r]) > 300.0 and not self.occupied[r]:
+                cur_l = min(cur_l, l_support_cap)
 
-                next_log_odds[r] = cur_l
+            next_log_odds[r] = cur_l
 
-            self.log_odds = next_log_odds
-        else:
-            # Apply immediate neighbor handoff drain & clamp on mid-second event arrivals
-            for r in rooms:
-                cur_l = self.log_odds[r]
-                p_ekf_r, _ = ekf_probs[r]
-                sust = sustained_room[r]
-                if (
-                    not cam_active_room[r]
-                    and not sust
-                    and (now_ts - self.last_fresh_trigger_ts[r]) >= 5.0
-                ):
-                    nb_fresh = any(
-                        fresh_human_room[nb]
-                        or (
-                            (now_ts - self.last_fresh_trigger_ts[nb]) <= 3.0
-                            and (p_ekf_r < 0.25 or ekf_probs[nb][0] > p_ekf_r)
-                        )
-                        for nb in topo.connected_rooms[r]
-                    )
-                    if nb_fresh:
-                        hkey = (f"__handoff__{r}", r)
-                        if self._applied_sec_bucket.get(hkey) != sec_bucket:
-                            self._applied_sec_bucket[hkey] = sec_bucket
-                            cur_l -= handoff_drain
-                cur_l = max(_L_MIN, min(_L_MAX, cur_l))
-                if (now_ts - self.last_human_phys_ts[r]) > 300.0 and not self.occupied[r]:
-                    cur_l = min(cur_l, l_support_cap)
-                self.log_odds[r] = cur_l
+        self.log_odds = next_log_odds
 
         # 5) Schmitt Hysteresis & Snapshot Emission
-        # On mid-second pre-decay arrivals (do_decay=False), require a +0.14 confidence margin
-        # so borderline pulses cannot phantom-latch before continuous decay & EKF drift run.
-        enter_thresh_now = theta_enter if do_decay else min(0.92, theta_enter + 0.14)
         snapshots: dict[str, RoomBeliefSnapshot] = {}
         for r in rooms:
             prob = _sigmoid(self.log_odds[r])
             phys_age = max(0.0, now_ts - self.last_human_phys_ts[r])
             if not self.occupied[r]:
-                if prob >= enter_thresh_now and phys_age <= 15.0:
+                if prob >= theta_enter and phys_age <= 15.0:
                     self.occupied[r] = True
                     self.entered_at[r] = now_ts
-            elif do_decay:
+            else:
                 if prob <= theta_clear and (now_ts - self.entered_at[r]) >= 3.0:
                     self.occupied[r] = False
 
-            if do_decay:
-                if 0.35 <= prob <= 0.70:
-                    self.ambiguity_dwell_sec[r] += dt
-                else:
-                    self.ambiguity_dwell_sec[r] = 0.0
+            if 0.35 <= prob <= 0.70:
+                self.ambiguity_dwell_sec[r] += dt
+            else:
+                self.ambiguity_dwell_sec[r] = 0.0
 
             spill_exp = topo.room_spillover_exposure.get(r, 0.0)
             cfg_thresh = topo.room_configs.get(r, {}).get("lighting_confidence_threshold")
