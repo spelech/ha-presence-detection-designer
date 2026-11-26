@@ -18,6 +18,7 @@ from .const import (
     DEFAULT_NOTIFY_SLACK,
     DOMAIN,
 )
+from .floorplan_presets import DEVICE_MODEL_PRESETS
 from .sensor_reliability import temper_observation_dict_reliability
 from .spatial_topology import get_default_floorplan
 
@@ -67,8 +68,58 @@ _BACKFILL_SENSOR_IDS: tuple[str, ...] = (
     "binary_sensor.garage_ring_motion",
     "binary_sensor.garage_keypad_motion",
     "binary_sensor.basement_ecobee_motion",
+    "binary_sensor.storage_room_ecobee_motion",
+    "binary_sensor.hallway_bathroom_motion",
     "binary_sensor.laundry_room_door",
 )
+
+
+def enforce_floorplan_preset_specs(fp_dict: dict[str, Any]) -> bool:
+    """Snap preset-backed cameras, sensors, and BLE proxies to their hardware spec values."""
+    dirty = False
+    for cam in fp_dict.get("cameras", []) or []:
+        if not isinstance(cam, dict):
+            continue
+        preset = DEVICE_MODEL_PRESETS.get(str(cam.get("model_preset") or ""))
+        if not preset:
+            continue
+        if "fov_deg" in preset and cam.get("fov_deg") != preset["fov_deg"]:
+            cam["fov_deg"] = preset["fov_deg"]
+            dirty = True
+        if "default_range_px" in preset and cam.get("range_px") != preset["default_range_px"]:
+            cam["range_px"] = preset["default_range_px"]
+            dirty = True
+
+    for sen in fp_dict.get("sensors", []) or []:
+        if not isinstance(sen, dict):
+            continue
+        preset = DEVICE_MODEL_PRESETS.get(str(sen.get("model_preset") or ""))
+        if not preset:
+            continue
+        if "fov_deg" in preset and sen.get("fov_deg") != preset["fov_deg"]:
+            sen["fov_deg"] = preset["fov_deg"]
+            dirty = True
+        if "default_range_px" in preset and sen.get("range_px") != preset["default_range_px"]:
+            sen["range_px"] = preset["default_range_px"]
+            dirty = True
+        if "inner_fov_deg" in preset and sen.get("inner_fov_deg") != preset["inner_fov_deg"]:
+            sen["inner_fov_deg"] = preset["inner_fov_deg"]
+            dirty = True
+        if "inner_range_px" in preset and sen.get("inner_range_px") != preset["inner_range_px"]:
+            sen["inner_range_px"] = preset["inner_range_px"]
+            dirty = True
+
+    for bp in fp_dict.get("ble_proxies", []) or []:
+        if not isinstance(bp, dict):
+            continue
+        preset = DEVICE_MODEL_PRESETS.get(str(bp.get("model_preset") or ""))
+        if not preset:
+            continue
+        if "radius_px" in preset and bp.get("radius_px") != preset["radius_px"]:
+            bp["radius_px"] = preset["radius_px"]
+            dirty = True
+
+    return dirty
 
 
 def migrate_and_backfill_store_payload(
@@ -108,6 +159,79 @@ def migrate_and_backfill_store_payload(
             if not fp_dict.get(layer_key) and default_fp.get(layer_key):
                 fp_dict[layer_key] = copy.deepcopy(default_fp[layer_key])
                 dirty = True
+
+        # Upgrade legacy raster .webp or older SVG underlays to latest 1000x580 vector SVG underlays
+        default_floors_by_id = {
+            fl["id"]: fl
+            for fl in default_fp.get("floors", []) or []
+            if isinstance(fl, dict) and fl.get("id")
+        }
+        for fl in fp_dict.get("floors", []) or []:
+            if not isinstance(fl, dict):
+                continue
+            fl_id = fl.get("id")
+            cur_u = fl.get("underlay_svg")
+            def_fl = default_floors_by_id.get(fl_id)
+            if (
+                isinstance(cur_u, dict)
+                and isinstance(def_fl, dict)
+                and isinstance(def_fl.get("underlay_svg"), dict)
+                and cur_u.get("url") != def_fl["underlay_svg"].get("url")
+                and (
+                    str(cur_u.get("url", "")).endswith(".webp?v=4")
+                    or str(cur_u.get("url", "")).startswith(
+                        f"/presence_detection_designer_static/floor_{fl_id}.svg"
+                    )
+                )
+            ):
+                fl["underlay_svg"] = copy.deepcopy(def_fl["underlay_svg"])
+                dirty = True
+
+        # Fix basement stair wall segment so base of stairs opens into Basement Play Area
+        basement_walls = (fp_dict.get("floor_wall_segments") or {}).get("basement")
+        if isinstance(basement_walls, list):
+            for idx, seg in enumerate(basement_walls):
+                if seg == [[572, 230], [572, 532]] or seg == [[572.0, 230.0], [572.0, 532.0]]:
+                    basement_walls[idx] = [[572, 230], [572, 410]]
+                    dirty = True
+
+        # Backfill newly deployed BLE proxies, drop stale duplicates, and refresh speaker entity IDs (preserving x/y)
+        _removed_proxy_ids = {"mainfloor_bt_proxy"}
+        orig_proxies = list(fp_dict.get("ble_proxies", []) or [])
+        filtered_proxies = [
+            p
+            for p in orig_proxies
+            if not (isinstance(p, dict) and p.get("id") in _removed_proxy_ids)
+        ]
+        if len(filtered_proxies) != len(orig_proxies):
+            fp_dict["ble_proxies"] = filtered_proxies
+            dirty = True
+
+        default_proxies = {
+            p["id"]: p
+            for p in default_fp.get("ble_proxies", []) or []
+            if isinstance(p, dict) and p.get("id")
+        }
+        existing_proxies = fp_dict.setdefault("ble_proxies", [])
+        existing_proxy_by_id = {
+            p["id"]: p for p in existing_proxies if isinstance(p, dict) and p.get("id")
+        }
+        for pid, dp in default_proxies.items():
+            if pid not in existing_proxy_by_id:
+                existing_proxies.append(copy.deepcopy(dp))
+                dirty = True
+            else:
+                cur_p = existing_proxy_by_id[pid]
+                if cur_p.get("entity_id") in (
+                    "sensor.living_room_speaker_bluetooth_proxy_status",
+                    "sensor.basement_speaker_bluetooth_proxy_status",
+                ) and dp.get("entity_id"):
+                    cur_p["entity_id"] = dp["entity_id"]
+                    dirty = True
+
+        # Enforce hardware preset specs (ray distance / FOV / radius) on preset-backed devices
+        if enforce_floorplan_preset_specs(fp_dict):
+            dirty = True
 
         default_cams = {c["id"]: c for c in default_fp.get("cameras", []) if c.get("id")}
         for cam in fp_dict.get("cameras", []):

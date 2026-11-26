@@ -435,7 +435,11 @@ class PDDStore:
         """Persist an updated 2D spatial floorplan to .storage."""
         if not isinstance(floorplan, dict) or not floorplan.get("floors"):
             floorplan = get_default_floorplan()
-        self._data["floorplan"] = copy.deepcopy(floorplan)
+        fp_copy = copy.deepcopy(floorplan)
+        from .store_migrations import enforce_floorplan_preset_specs
+
+        enforce_floorplan_preset_specs(fp_copy)
+        self._data["floorplan"] = fp_copy
         from .trajectory_validator import clear_topology_cache
 
         clear_topology_cache()

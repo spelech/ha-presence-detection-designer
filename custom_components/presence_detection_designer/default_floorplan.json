@@ -707,7 +707,7 @@
         ],
         [
           572,
-          532
+          410
         ]
       ],
       [
@@ -818,11 +818,11 @@
       "name": "Upstairs Level",
       "order": 0,
       "underlay_svg": {
-        "url": "/presence_detection_designer_static/floor_upstairs.webp?v=4",
-        "x": 114,
-        "y": 20,
-        "width": 772,
-        "height": 540
+        "url": "/presence_detection_designer_static/floor_upstairs.svg?v=5",
+        "x": 0,
+        "y": 0,
+        "width": 1000,
+        "height": 580
       }
     },
     {
@@ -830,11 +830,11 @@
       "name": "Main Floor",
       "order": 1,
       "underlay_svg": {
-        "url": "/presence_detection_designer_static/floor_main.webp?v=4",
-        "x": 60,
-        "y": 30,
-        "width": 784,
-        "height": 520
+        "url": "/presence_detection_designer_static/floor_main.svg?v=5",
+        "x": 0,
+        "y": 0,
+        "width": 1000,
+        "height": 580
       }
     },
     {
@@ -842,11 +842,11 @@
       "name": "Basement Level",
       "order": 2,
       "underlay_svg": {
-        "url": "/presence_detection_designer_static/floor_basement.webp?v=4",
-        "x": 80,
-        "y": 30,
-        "width": 620,
-        "height": 520
+        "url": "/presence_detection_designer_static/floor_basement.svg?v=6",
+        "x": 0,
+        "y": 0,
+        "width": 1000,
+        "height": 580
       }
     }
   ],
@@ -861,7 +861,7 @@
       "y": 335,
       "heading_deg": 30,
       "fov_deg": 110,
-      "range_px": 520,
+      "range_px": 560,
       "spills_into": [
         "Front Entry"
       ],
@@ -925,7 +925,7 @@
       "y": 96,
       "heading_deg": 128,
       "fov_deg": 110,
-      "range_px": 320,
+      "range_px": 560,
       "spills_into": [
         "Living Room"
       ],
@@ -967,7 +967,7 @@
       "y": 96,
       "heading_deg": 142,
       "fov_deg": 110,
-      "range_px": 620,
+      "range_px": 560,
       "spills_into": [
         "Kitchen",
         "Front Entry"
@@ -1061,7 +1061,7 @@
       "y": 536,
       "heading_deg": 313,
       "fov_deg": 110,
-      "range_px": 620,
+      "range_px": 560,
       "spills_into": [
         "Upstairs Hallway & Stairs",
         "Master Bathroom"
@@ -1137,7 +1137,7 @@
       "y": 246,
       "heading_deg": 311,
       "fov_deg": 110,
-      "range_px": 340,
+      "range_px": 560,
       "spills_into": [],
       "notes": "Lower-left corner of Nursery looking NE; sees West wall posters, bed, dresser, open East reach-in closet, and hallway door.",
       "zones": [
@@ -1166,7 +1166,7 @@
       "y": 538,
       "heading_deg": 313,
       "fov_deg": 110,
-      "range_px": 380,
+      "range_px": 560,
       "spills_into": [
         "Upstairs Hallway & Stairs"
       ],
@@ -1230,7 +1230,7 @@
       "y": 64,
       "heading_deg": 42,
       "fov_deg": 110,
-      "range_px": 700,
+      "range_px": 560,
       "spills_into": [
         "Basement Play Area"
       ],
@@ -1316,7 +1316,7 @@
       "y": 68,
       "heading_deg": 121,
       "fov_deg": 110,
-      "range_px": 680,
+      "range_px": 560,
       "spills_into": [
         "Basement Theater"
       ],
@@ -1369,7 +1369,7 @@
       "y": 54,
       "heading_deg": 135,
       "fov_deg": 110,
-      "range_px": 420,
+      "range_px": 560,
       "spills_into": [],
       "notes": "Upper-right corner of Storage Room looking SW across green gym floor toward South storage shelves and West door to hallway.",
       "zones": [
@@ -1712,7 +1712,7 @@
       "y": 540,
       "heading_deg": 270,
       "fov_deg": 120,
-      "range_px": 95
+      "range_px": 405
     },
     {
       "id": "binary_sensor.basement_stairs_top_motion",
@@ -1726,7 +1726,7 @@
       "y": 330,
       "heading_deg": 90,
       "fov_deg": 120,
-      "range_px": 95
+      "range_px": 405
     },
     {
       "id": "binary_sensor.basement_stairs_bottom_motion",
@@ -1740,7 +1740,7 @@
       "y": 395,
       "heading_deg": 90,
       "fov_deg": 120,
-      "range_px": 95
+      "range_px": 405
     },
     {
       "id": "binary_sensor.front_door",
@@ -1797,18 +1797,57 @@
       "host_room": "Garage",
       "x": 680,
       "y": 555
+    },
+    {
+      "id": "binary_sensor.hallway_bathroom_motion",
+      "entity_id": "binary_sensor.hallway_bathroom_motion",
+      "name": "Upstairs Bathroom PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "upstairs",
+      "host_room": "Upstairs Bathroom",
+      "x": 535,
+      "y": 380,
+      "heading_deg": 180,
+      "fov_deg": 110,
+      "range_px": 190
+    },
+    {
+      "id": "binary_sensor.storage_room_ecobee_motion",
+      "entity_id": "binary_sensor.storage_room_ecobee_motion",
+      "name": "Storage Room PIR (Ecobee)",
+      "sensor_type": "pir_motion",
+      "model_preset": "ecobee_smart_sensor",
+      "floor": "basement",
+      "host_room": "Storage Room",
+      "x": 800,
+      "y": 200,
+      "heading_deg": 180,
+      "fov_deg": 110,
+      "range_px": 190
     }
   ],
   "ble_proxies": [
     {
       "id": "living_room_speaker",
-      "entity_id": "sensor.living_room_speaker_bluetooth_proxy_status",
+      "entity_id": "sensor.11c6f990bbb44c879a9a01cd739e4921_living_room_speaker_bluetooth_proxy_status",
       "name": "Living Room Speaker BLE Proxy",
       "model_preset": "google_home_speaker_ble",
       "floor": "main",
       "host_room": "Living Room",
       "x": 210,
       "y": 410,
+      "radius_px": 210
+    },
+    {
+      "id": "dining_room_speaker",
+      "entity_id": "sensor.dining_room_dining_room_speaker_bluetooth_proxy_status",
+      "name": "Dining Room Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "main",
+      "host_room": "Dining Room",
+      "x": 160,
+      "y": 190,
       "radius_px": 210
     },
     {
@@ -1842,7 +1881,18 @@
       "host_room": "Margot's Room",
       "x": 465,
       "y": 140,
-      "radius_px": 190
+      "radius_px": 210
+    },
+    {
+      "id": "guest_room_speaker",
+      "entity_id": "sensor.guest_room_guest_room_speaker_bluetooth_proxy_status",
+      "name": "Guest Room Speaker BLE Proxy",
+      "model_preset": "google_home_speaker_ble",
+      "floor": "upstairs",
+      "host_room": "Guest Room",
+      "x": 720,
+      "y": 140,
+      "radius_px": 210
     },
     {
       "id": "office_speaker",
@@ -1853,18 +1903,106 @@
       "host_room": "Office",
       "x": 765,
       "y": 400,
-      "radius_px": 200
+      "radius_px": 210
     },
     {
       "id": "basement_speaker",
-      "entity_id": "sensor.basement_speaker_bluetooth_proxy_status",
+      "entity_id": "sensor.6577b980c5a94ca28f9977811869b81f_basement_speaker_bluetooth_proxy_status",
       "name": "Basement Speaker BLE Proxy",
       "model_preset": "google_home_speaker_ble",
       "floor": "basement",
       "host_room": "Basement Play Area",
       "x": 450,
       "y": 295,
-      "radius_px": 260
+      "radius_px": 210
+    },
+    {
+      "id": "upstairs_bt_proxy",
+      "entity_id": "esphome.upstairs_bt_proxy",
+      "name": "Upstairs Bluetooth Proxy (Office)",
+      "model_preset": "esphome_ble_proxy",
+      "floor": "upstairs",
+      "host_room": "Office",
+      "x": 730,
+      "y": 320,
+      "radius_px": 210
+    },
+    {
+      "id": "hci0",
+      "entity_id": "bluetooth.hci0",
+      "name": "HA Host Bluetooth (hci0)",
+      "model_preset": "host_bluetooth_hci",
+      "floor": "basement",
+      "host_room": "Storage Room",
+      "x": 800,
+      "y": 220,
+      "radius_px": 210
+    },
+    {
+      "id": "nfc_livingroom",
+      "entity_id": "esphome.nfc_livingroom",
+      "name": "Living Room NFC Reader (BLE Proxy)",
+      "model_preset": "esphome_ble_proxy",
+      "floor": "main",
+      "host_room": "Living Room",
+      "x": 150,
+      "y": 350,
+      "radius_px": 210
+    },
+    {
+      "id": "nfc_familyroom",
+      "entity_id": "esphome.nfc_familyroom",
+      "name": "Family Room NFC Reader (BLE Proxy)",
+      "model_preset": "esphome_ble_proxy",
+      "floor": "main",
+      "host_room": "Family Room",
+      "x": 620,
+      "y": 140,
+      "radius_px": 210
+    },
+    {
+      "id": "nfc_master_bedroom",
+      "entity_id": "esphome.nfc_master_bedroom",
+      "name": "Master Bedroom NFC Reader (BLE Proxy)",
+      "model_preset": "esphome_ble_proxy",
+      "floor": "upstairs",
+      "host_room": "Master Bedroom",
+      "x": 200,
+      "y": 320,
+      "radius_px": 210
+    },
+    {
+      "id": "nfc_bedroom",
+      "entity_id": "esphome.nfc_bedroom",
+      "name": "Bedroom NFC Reader (Margot's Room BLE Proxy)",
+      "model_preset": "esphome_ble_proxy",
+      "floor": "upstairs",
+      "host_room": "Margot's Room",
+      "x": 420,
+      "y": 180,
+      "radius_px": 210
+    },
+    {
+      "id": "nfc_basement",
+      "entity_id": "esphome.nfc_basement",
+      "name": "Basement NFC Reader (BLE Proxy)",
+      "model_preset": "esphome_ble_proxy",
+      "floor": "basement",
+      "host_room": "Basement Play Area",
+      "x": 510,
+      "y": 360,
+      "radius_px": 210
+    },
+    {
+      "id": "basement_fridge",
+      "entity_id": "esphome.basement_fridge",
+      "name": "Basement Fridge (Bar BLE Proxy)",
+      "model_preset": "esphome_ble_proxy",
+      "floor": "basement",
+      "host_room": "Basement Play Area",
+      "x": 580,
+      "y": 190,
+      "radius_px": 210
     }
   ],
   "connections": [

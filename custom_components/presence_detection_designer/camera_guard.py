@@ -122,9 +122,7 @@ def maybe_gate_uncorroborated_camera_trigger(
     Returns True when promotion should be suppressed/deferred pending Vision AI confirmation.
     """
     if is_camera_verification_rejected(coord, now_ts=now_ts):
-        coord._last_suppressed_reason = (
-            f"Suppressed flickering camera trigger after Vision AI rejection ({getattr(traj, 'reason', 'cooldown')})"
-        )
+        coord._last_suppressed_reason = f"Suppressed flickering camera trigger after Vision AI rejection ({getattr(traj, 'reason', 'cooldown')})"
         return True
 
     ctx = build_pir_corroboration_context(coord, traj=traj, now_ts=now_ts)

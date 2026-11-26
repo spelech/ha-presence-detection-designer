@@ -558,9 +558,7 @@ async def test_uncorroborated_camera_flicker_in_bounded_room_without_pir_or_door
     event = SimpleNamespace(
         data={
             "entity_id": "binary_sensor.garage_parking_person_occupancy",
-            "new_state": _set_state(
-                hass, "binary_sensor.garage_parking_person_occupancy", "on"
-            ),
+            "new_state": _set_state(hass, "binary_sensor.garage_parking_person_occupancy", "on"),
         }
     )
     garage._handle_trigger_change(event)
