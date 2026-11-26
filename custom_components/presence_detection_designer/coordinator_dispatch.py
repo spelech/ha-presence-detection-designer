@@ -9,6 +9,7 @@ from .bayesian_engine import (
     BayesianEvaluation,
     apply_contextual_bayesian_penalties,
     evaluate_bayesian,
+    get_active_pir_spillover_fraction,
 )
 from .camera_guard import (
     is_camera_verification_rejected,
@@ -33,7 +34,11 @@ from .pir_corroboration import (
     build_pir_corroboration_context,
     handle_pir_validation_for_trigger,
 )
-from .sensor_reliability import classify_sensor_reliability, is_camera_entity
+from .sensor_reliability import (
+    apply_signal_weight,
+    classify_sensor_reliability,
+    is_camera_entity,
+)
 from .trajectory_validator import (
     async_send_coordinator_test_notification,
     check_coordinator_trajectory,
@@ -201,9 +206,8 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
         return
     if coord._is_guest_mode_active():
         return
-    if not coord.state_machine.is_present or coord.state_machine.state not in (
-        OccupancyState.OCCUPIED_CONFIRMED,
-        OccupancyState.OCCUPIED_HOLDING,
+    if not coord.state_machine.is_present or coord.state_machine.state != (
+        OccupancyState.OCCUPIED_CONFIRMED
     ):
         return
 
@@ -345,11 +349,29 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     has_neg_boost = False
     if neg_space_enabled and sp and float(sp.get("probability_boost", 0.0)) > 0.0:
         has_neg_boost = True
+        boost_weight = float(sp.get("probability_boost_weight", 1.0))
+        if not guest_mode_enabled:
+            drivers = sp.get("positive_drivers") or []
+            pir_drivers = [str(d) for d in drivers if classify_sensor_reliability(str(d)).is_pir]
+            if pir_drivers:
+                best_ct = max(
+                    max(
+                        0.15,
+                        1.0
+                        - 2.5
+                        * get_active_pir_spillover_fraction(
+                            coord.hass, d, getattr(coord, "_last_spatial_frame", None)
+                        ),
+                    )
+                    for d in pir_drivers
+                )
+                boost_weight = min(boost_weight, best_ct)
+        ns_pt, ns_pf = apply_signal_weight(0.85, 0.12, boost_weight)
         obs_to_eval.append(
             {
                 "entity_id": virtual_neg_eid,
-                "prob_given_true": 0.85,
-                "prob_given_false": 0.12,
+                "prob_given_true": ns_pt,
+                "prob_given_false": ns_pf,
                 "target_state": "on",
                 "label": sp.get("inferred_subregion") or "Negative-Space Spatial Exclusion",
             }
@@ -488,11 +510,19 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
 
         if not coord._is_guest_mode_active():
             if not cam_trigger:
-                spatial_frame = getattr(coord, "_last_spatial_frame", None) or {}
-                pinned_rooms = spatial_frame.get("steve_pinned_rooms") or []
-                if pinned_rooms and coord.room_name not in pinned_rooms:
-                    if not b_occupied and not coord._active_condition_descs:
-                        return
+                sp_frac = get_active_pir_spillover_fraction(
+                    coord.hass, str(entity_id), getattr(coord, "_last_spatial_frame", None)
+                )
+                if (
+                    sp_frac >= 0.08
+                    and not coord.state_machine.is_present
+                    and coord.last_bayesian_eval is not None
+                    and not coord.last_bayesian_eval.is_occupied
+                ):
+                    coord._last_suppressed_reason = (
+                        f"spatial_crosstalk_attenuated_{int(sp_frac * 100)}pct"
+                    )
+                    return
 
                 traj = check_coordinator_trajectory(coord, now_ts=now)
                 if not traj.is_valid:

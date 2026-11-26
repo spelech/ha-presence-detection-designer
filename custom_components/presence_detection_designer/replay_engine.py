@@ -40,6 +40,7 @@ from .history_collector import (
     async_fetch_room_history,
     collect_room_tracked_entities,
 )
+from .sensor_reliability import apply_signal_weight
 from .state_machine import RoomPresenceStateMachine
 
 __all__ = [
@@ -184,11 +185,13 @@ def simulate_config_on_timelines(
                 and float(r_est.get("probability_boost", 0.0)) > 0.0
             ):
                 has_neg_boost = True
+                boost_weight = float(r_est.get("probability_boost_weight", 1.0))
+                ns_pt, ns_pf = apply_signal_weight(0.85, 0.12, boost_weight)
                 obs_to_eval.append(
                     {
                         "entity_id": virtual_neg_eid,
-                        "prob_given_true": 0.85,
-                        "prob_given_false": 0.12,
+                        "prob_given_true": ns_pt,
+                        "prob_given_false": ns_pf,
                         "target_state": "on",
                         "label": r_est.get("inferred_subregion")
                         or "Negative-Space Spatial Exclusion",

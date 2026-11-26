@@ -276,6 +276,37 @@ def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]
     return normalized
 
 
+def get_active_pir_spillover_fraction(
+    hass: Any,
+    entity_id: str,
+    spatial_frame: dict[str, Any] | None,
+) -> float:
+    """Return max geometric spillover fraction [0..1] of `entity_id` into any OCCUPIED_CONFIRMED room."""
+    if (
+        not isinstance(spatial_frame, dict)
+        or not hass
+        or not isinstance(getattr(hass, "data", None), dict)
+    ):
+        return 0.0
+    spill_matrix = spatial_frame.get("pir_spillover_matrix")
+    if not isinstance(spill_matrix, dict):
+        return 0.0
+    spills = spill_matrix.get(str(entity_id))
+    if not isinstance(spills, dict) or not spills:
+        return 0.0
+    domain_data = hass.data.get(DOMAIN, {})
+    if not isinstance(domain_data, dict):
+        return 0.0
+    max_spill = 0.0
+    for peer in domain_data.values():
+        pname = getattr(peer, "room_name", None)
+        if pname in spills:
+            peer_sm = getattr(peer, "state_machine", None)
+            if peer_sm and peer_sm.state == OccupancyState.OCCUPIED_CONFIRMED:
+                max_spill = max(max_spill, float(spills[pname]))
+    return max_spill
+
+
 def apply_contextual_bayesian_penalties(
     observations: list[dict[str, Any]],
     *,
@@ -356,6 +387,17 @@ def apply_contextual_bayesian_penalties(
         else:
             # Camera off, PIR off, and non-exclusive sensors remain strictly neutral
             entry["penalize_when_off"] = False
+            # Spatial cross-talk attenuation when a spilling PIR's target room is actively occupied
+            if not guest_mode_enabled and hass and prof.is_pir:
+                sp_frac = get_active_pir_spillover_fraction(hass, eid, frame)
+                if sp_frac > 0.0:
+                    from .sensor_reliability import apply_signal_weight
+
+                    w_ct = max(0.15, 1.0 - 2.5 * sp_frac)
+                    _preset, pt_cur, pf_cur = resolve_observation_weights(entry)
+                    pt_w, pf_w = apply_signal_weight(pt_cur, pf_cur, w_ct)
+                    entry["prob_given_true"] = pt_w
+                    entry["prob_given_false"] = pf_w
         contextual.append(entry)
     return contextual
 

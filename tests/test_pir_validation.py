@@ -334,8 +334,9 @@ def test_hardware_inventory_classification_floorplan_and_migrations(mock_hass) -
 
     fp = get_default_floorplan()
     fp_sensors = {s["entity_id"]: s for s in fp.get("sensors") or []}
-    assert "binary_sensor.garage_keypad_motion" in fp_sensors
-    assert fp_sensors["binary_sensor.garage_keypad_motion"]["host_room"] == "Garage"
+    assert "binary_sensor.garage_keypad_motion" not in fp_sensors
+    assert "binary_sensor.keypad_motion" not in fp_sensors
+    assert "binary_sensor.upper_level_keypad_motion" not in fp_sensors
     assert "binary_sensor.keypad_v2_motion_detection" not in fp_sensors
     assert set(WYZE_PLACED_PIR_ENTITIES).issubset(fp_sensors.keys())
     assert "binary_sensor.kitchen_motion" not in fp_sensors
@@ -416,7 +417,9 @@ def test_hardware_inventory_classification_floorplan_and_migrations(mock_hass) -
         "binary_sensor.keypad_v2_motion_detection"
         not in migrated["rooms"]["lr_laundry"]["trigger_entities"]
     )
-    assert "binary_sensor.garage_keypad_motion" in migrated["rooms"]["garage"]["trigger_entities"]
+    assert (
+        "binary_sensor.garage_keypad_motion" not in migrated["rooms"]["garage"]["trigger_entities"]
+    )
     eco_obs = next(
         o
         for o in migrated["rooms"]["office"]["bayesian_observations"]
@@ -456,3 +459,80 @@ def test_hardware_inventory_classification_floorplan_and_migrations(mock_hass) -
         w for w in room_payload["sensor_weights"] if w["entity_id"] == "binary_sensor.office_motion"
     )
     assert eco_w["cooldown_sec"] == 300.0
+
+
+def test_negative_space_boost_weighted_by_pir_cooldown():
+    """Slow-cooldown Ecobee PIRs must receive tempered negative-space boost weights."""
+    from custom_components.presence_detection_designer.spatial_inference import (
+        evaluate_spatial_frame,
+    )
+    from custom_components.presence_detection_designer.spatial_topology import get_default_floorplan
+
+    fp = get_default_floorplan()
+
+    # Slow Ecobee only active in Office while Office camera is clear
+    states_eco = {
+        "binary_sensor.office_motion": "on",
+        "binary_sensor.office_motion_occupancy": "off",
+        "binary_sensor.office_person_occupancy": "off",
+    }
+    frame_eco = evaluate_spatial_frame(
+        floorplan=fp,
+        state_getter=lambda eid: states_eco.get(eid, "off"),
+        now_ts=1000.0,
+    )
+    est_eco = frame_eco["room_estimates"]["Office"]
+    assert est_eco["probability_boost_weight"] < 0.5
+    assert est_eco["probability_boost"] < 0.12
+
+    # Fast SenseGuard PIR active in Office gets full weight 1.0
+    states_fast = {
+        "binary_sensor.office_motion_occupancy": "on",
+        "binary_sensor.office_person_occupancy": "off",
+    }
+    frame_fast = evaluate_spatial_frame(
+        floorplan=fp,
+        state_getter=lambda eid: states_fast.get(eid, "off"),
+        now_ts=1001.0,
+    )
+    est_fast = frame_fast["room_estimates"]["Office"]
+    assert est_fast["probability_boost_weight"] == 1.0
+    assert est_fast["probability_boost"] == 0.22
+
+
+def test_spatial_crosstalk_attenuation_tempers_spilling_pir(mock_hass):
+    """A PIR spilling into an actively OCCUPIED_CONFIRMED room is attenuated in Bayesian fusion."""
+    from custom_components.presence_detection_designer.bayesian_engine import (
+        apply_contextual_bayesian_penalties,
+    )
+    from custom_components.presence_detection_designer.const import OccupancyState
+    from custom_components.presence_detection_designer.spatial_topology import (
+        compute_pir_spillover_matrix,
+        get_default_floorplan,
+    )
+
+    fp = get_default_floorplan()
+    matrix = compute_pir_spillover_matrix(fp)
+    assert "binary_sensor.kitchen_motion_occupancy" in matrix
+    assert matrix["binary_sensor.kitchen_motion_occupancy"].get("Front Entry", 0.0) >= 0.25
+
+    peer = MagicMock()
+    peer.room_name = "Front Entry"
+    peer.state_machine.state = OccupancyState.OCCUPIED_CONFIRMED
+    mock_hass.data[DOMAIN] = {"fe_entry": peer}
+
+    obs = [
+        {
+            "entity_id": "binary_sensor.kitchen_motion_occupancy",
+            "prob_given_true": 0.90,
+            "prob_given_false": 0.05,
+        }
+    ]
+    adjusted = apply_contextual_bayesian_penalties(
+        obs,
+        room_name="Kitchen",
+        spatial_frame={"pir_spillover_matrix": matrix},
+        hass=mock_hass,
+    )
+    assert adjusted[0]["prob_given_true"] < 0.75
+    assert adjusted[0]["prob_given_false"] > 0.15
