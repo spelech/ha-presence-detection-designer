@@ -363,27 +363,56 @@ def apply_contextual_bayesian_penalties(
         eid = str(entry.get("entity_id", ""))
         prof = classify_sensor_reliability(eid)
         if prof.category == "ble_tracker":
-            raw_area = raw_ble_positions.get(eid)
-            if raw_area is None and hass and hasattr(hass, "states"):
-                st_obj = hass.states.get(eid)
-                raw_area = getattr(st_obj, "state", None) if st_obj is not None else None
-            target_room = (
-                (_normalize_ble_area_to_room(str(raw_area)) or str(raw_area).strip())
-                if raw_area is not None
-                else ""
-            )
-            t_low = target_room.lower()
-            is_known_other = (
-                bool(t_low)
-                and t_low not in ("unknown", "unavailable", "none", "away", "not_home")
-                and t_low != room_low
-            )
-            entry["penalize_when_off"] = bool(
+            # Prefer continuous 2D+Floor EKF Gaussian room probability when multi-proxy ranges are active
+            ekf_tracks = frame.get("ekf_tracks") if isinstance(frame, dict) else None
+            ekf_track = ekf_tracks.get(eid) if isinstance(ekf_tracks, dict) else None
+            if (
                 not guest_mode_enabled
-                and not has_ble_here
-                and is_known_other
-                and t_low in confirmed_rooms
-            )
+                and isinstance(ekf_track, dict)
+                and int(ekf_track.get("active_proxy_count", 0)) >= 1
+            ):
+                from .ble_kalman_tracker import ekf_room_probability_to_likelihood
+
+                room_probs = ekf_track.get("room_probabilities") or {}
+                p_room = float(room_probs.get(room_name, 0.0))
+                sigma_ft = max(
+                    float(ekf_track.get("sigma_x_ft", 4.0)),
+                    float(ekf_track.get("sigma_y_ft", 4.0)),
+                )
+                pt_ekf, pf_ekf = ekf_room_probability_to_likelihood(p_room, sigma_ft=sigma_ft)
+                entry["prob_given_true"] = pt_ekf
+                entry["prob_given_false"] = pf_ekf
+                entry["penalize_when_off"] = False
+                entry["_ekf_continuous"] = True
+                entry["_ekf_room_prob"] = round(p_room, 4)
+                entry["operator"] = "equals"
+                entry["state"] = "__ekf_active__"
+                entry["label"] = (
+                    f"{entry.get('label') or 'BLE EKF'} "
+                    f"(EKF {round(p_room * 100.0)}% ±{sigma_ft:.1f}ft)"
+                )
+            else:
+                raw_area = raw_ble_positions.get(eid)
+                if raw_area is None and hass and hasattr(hass, "states"):
+                    st_obj = hass.states.get(eid)
+                    raw_area = getattr(st_obj, "state", None) if st_obj is not None else None
+                target_room = (
+                    (_normalize_ble_area_to_room(str(raw_area)) or str(raw_area).strip())
+                    if raw_area is not None
+                    else ""
+                )
+                t_low = target_room.lower()
+                is_known_other = (
+                    bool(t_low)
+                    and t_low not in ("unknown", "unavailable", "none", "away", "not_home")
+                    and t_low != room_low
+                )
+                entry["penalize_when_off"] = bool(
+                    not guest_mode_enabled
+                    and not has_ble_here
+                    and is_known_other
+                    and t_low in confirmed_rooms
+                )
         else:
             # Camera off, PIR off, and non-exclusive sensors remain strictly neutral
             entry["penalize_when_off"] = False

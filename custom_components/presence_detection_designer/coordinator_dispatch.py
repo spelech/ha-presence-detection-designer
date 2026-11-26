@@ -238,6 +238,15 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
         other_connected = {r.strip().lower() for r in other.connected_rooms if r}
 
         if (my_connected & other_tokens) or (other_connected & my_tokens):
+            # Minimum-dwell safety belt (2.5s): prevent same-second PIR-to-PIR spillover wipeout
+            # while allowing decisive Frigate camera sub-zones to preempt immediately.
+            coord_cam = bool(coord.state_machine.snapshot.camera_confirmed)
+            if not coord_cam and other.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED:
+                other_entered = float(
+                    getattr(other.state_machine, "last_occupied_time", 0.0) or 0.0
+                )
+                if other_entered > 0.0 and (time.time() - other_entered) < 2.5:
+                    continue
             other.notify_adjacent_occupancy(coord.room_name)
         elif (
             coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
@@ -333,6 +342,24 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                 ble_decider_enabled=ble_decider_enabled,
             )
             frame["_queried_states"] = dict(queried_states)
+            # Always update live EKF telemetry tracks (even while ble_decider_enabled=False)
+            if store is not None and hasattr(store, "ekf_manager"):
+                from .ble_kalman_tracker import update_house_ekf_from_hass
+
+                trackers = (
+                    list(store.global_settings.get("ble_trackers") or [])
+                    if isinstance(getattr(store, "global_settings", None), dict)
+                    else []
+                )
+                frame["ekf_tracks"] = update_house_ekf_from_hass(
+                    store.ekf_manager,
+                    coord.hass,
+                    fp,
+                    frame,
+                    now_ts,
+                    trackers,
+                    ble_ranges_provider=getattr(store, "_ble_ranges_provider", None),
+                )
             if store is not None:
                 store._last_spatial_frame = frame
         coord._last_spatial_frame = frame
@@ -345,9 +372,28 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         sp.get("pet_excluded_entities") or []
     )
     obs_to_eval = list(coord.bayesian_observations)
+    explicit_obs_eids = {str(o.get("entity_id", "")) for o in obs_to_eval if o.get("entity_id")}
     virtual_neg_eid = "__spatial_negative_space__"
     has_neg_boost = False
-    if neg_space_enabled and sp and float(sp.get("probability_boost", 0.0)) > 0.0:
+    # Prevent double-counting a PIR that is already an explicit Bayesian observation;
+    # keep negative-space boost for genuine blind-pocket holds and unmodeled PIR localization.
+    sp_method = str(sp.get("method") or "")
+    sp_pir_drivers = [
+        str(d)
+        for d in (sp.get("positive_drivers") or [])
+        if classify_sensor_reliability(str(d)).is_pir
+    ]
+    pir_already_in_bayesian = (
+        sp_method == "hybrid"
+        and bool(sp_pir_drivers)
+        and all(d in explicit_obs_eids for d in sp_pir_drivers)
+    )
+    if (
+        neg_space_enabled
+        and sp
+        and float(sp.get("probability_boost", 0.0)) > 0.0
+        and not pir_already_in_bayesian
+    ):
         has_neg_boost = True
         boost_weight = float(sp.get("probability_boost_weight", 1.0))
         if not guest_mode_enabled:
@@ -403,15 +449,9 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         state = "off"
         attributes: dict[str, Any] = {}
 
-    def _bayesian_state_getter(eid: str) -> Any:
-        if eid == virtual_neg_eid and has_neg_boost:
-            return _VirtualState()
-        if eid in suppressed_eids:
-            return _SuppressedState()
-        st = _safe_state_getter(coord.hass, eid)
-        if st is not None and is_state_stale(st, max_age_seconds=60.0):
-            return _SuppressedState()
-        return st
+    class _EkfActiveState:
+        state = "__ekf_active__"
+        attributes: dict[str, Any] = {}
 
     obs_to_eval = apply_contextual_bayesian_penalties(
         obs_to_eval,
@@ -420,6 +460,22 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
         hass=coord.hass,
         guest_mode_enabled=guest_mode_enabled or not ble_active_in_fusion,
     )
+    ekf_continuous_eids = {
+        str(o.get("entity_id", "")) for o in obs_to_eval if o.get("_ekf_continuous")
+    }
+
+    def _bayesian_state_getter(eid: str) -> Any:
+        if eid == virtual_neg_eid and has_neg_boost:
+            return _VirtualState()
+        if eid in suppressed_eids:
+            return _SuppressedState()
+        if eid in ekf_continuous_eids:
+            return _EkfActiveState()
+        st = _safe_state_getter(coord.hass, eid)
+        if st is not None and is_state_stale(st, max_age_seconds=60.0):
+            return _SuppressedState()
+        return st
+
     evaluation = evaluate_bayesian(
         obs_to_eval,
         _bayesian_state_getter,

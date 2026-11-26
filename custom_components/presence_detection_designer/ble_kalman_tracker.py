@@ -40,9 +40,11 @@ class KalmanConfig:
     # Multi-occupant 2-DOF Mahalanobis gate (99.5% = 10.60) & max association distance (ft)
     assoc_chi2_2dof: float = 10.60
     assoc_max_dist_ft: float = 16.0
-    # Bounded supporting-only EKF likelihood ratio range for Bayesian fusion
+    # Bounded supporting-only EKF likelihood ratio range for Bayesian fusion:
+    # max_lr=4.5 -> solo posterior <= 44% (never solo-triggers);
+    # min_lr=0.45 -> decays stale holds without overpowering another occupant's decisive camera
     ekf_max_lr: float = 4.5
-    ekf_min_lr: float = 0.25
+    ekf_min_lr: float = 0.45
 
 
 def ekf_room_probability_to_likelihood(
@@ -50,7 +52,7 @@ def ekf_room_probability_to_likelihood(
     *,
     sigma_ft: float = 4.0,
     max_lr: float = 4.5,
-    min_lr: float = 0.25,
+    min_lr: float = 0.45,
 ) -> tuple[float, float]:
     """Map continuous EKF room probability [0..1] to bounded supporting Bayesian (p_true, p_false).
 
@@ -738,3 +740,96 @@ class HouseEKFManager:
                 "rejected_outliers": est.rejected_outliers,
             }
         return out
+
+
+def update_house_ekf_from_hass(
+    ekf_manager: HouseEKFManager,
+    hass: Any,
+    floorplan: dict[str, Any] | None,
+    spatial_frame: dict[str, Any] | None,
+    now_ts: float,
+    tracker_entities: list[str] | tuple[str, ...],
+    *,
+    ble_ranges_provider: Any = None,
+) -> dict[str, dict[str, Any]]:
+    """Update all configured BLE EKF tracks from live Bermuda ranges + gated cameras/PIRs."""
+    fp = floorplan if isinstance(floorplan, dict) else {}
+    if not tracker_entities or not fp.get("rooms"):
+        return {}
+
+    states_obj = getattr(hass, "states", None)
+
+    def _is_on(eid: str) -> bool:
+        if states_obj is None:
+            return False
+        st = states_obj.get(eid)
+        return st is not None and str(getattr(st, "state", "")).strip().lower() in ("on", "playing")
+
+    # Collect active Frigate sub-zone centroids and fast PIR centroids for gated fusion
+    cam_hits: list[tuple[str, float, float]] = []
+    for cam in fp.get("cameras") or []:
+        if not isinstance(cam, dict):
+            continue
+        cfl = str(cam.get("floor") or "")
+        for sz in cam.get("sub_zones") or []:
+            if not isinstance(sz, dict):
+                continue
+            eid = str(sz.get("entity_id") or "")
+            if eid and _is_on(eid):
+                cx = float(sz.get("x", 0.0)) + float(sz.get("width", 0.0)) / 2.0
+                cy = float(sz.get("y", 0.0)) + float(sz.get("height", 0.0)) / 2.0
+                cam_hits.append((cfl, cx, cy))
+
+    pir_hits: list[tuple[str, float, float]] = []
+    for sen in fp.get("sensors") or []:
+        if not isinstance(sen, dict) or sen.get("sensor_type") != "pir_motion":
+            continue
+        if "ecobee" in str(sen.get("model_preset") or "").lower():
+            continue
+        eid = str(sen.get("entity_id") or sen.get("id") or "")
+        if eid and _is_on(eid):
+            rad = math.radians(float(sen.get("heading_deg", 0.0)))
+            px = float(sen.get("x", 0.0)) + 50.0 * math.cos(rad)
+            py = float(sen.get("y", 0.0)) + 50.0 * math.sin(rad)
+            pir_hits.append((str(sen.get("floor") or ""), px, py))
+
+    # Map room names to floor ids for Bermuda area floor hints
+    room_to_floor: dict[str, str] = {
+        str(r.get("name")): str(r.get("floor"))
+        for r in (fp.get("rooms") or [])
+        if isinstance(r, dict) and r.get("name") and r.get("floor")
+    }
+    raw_ble = (spatial_frame or {}).get("raw_ble_positions") or {}
+
+    from .spatial_catalog import _normalize_ble_area_to_room
+
+    for ble_eid in tracker_entities:
+        eid_str = str(ble_eid).strip()
+        if not eid_str:
+            continue
+        if callable(ble_ranges_provider):
+            ranges = list(ble_ranges_provider(eid_str, fp, now_ts) or [])
+        else:
+            ranges = read_bermuda_proxy_ranges(hass, eid_str, fp, now_ts)
+
+        raw_area = raw_ble.get(eid_str)
+        if raw_area is None and states_obj is not None:
+            st = states_obj.get(eid_str)
+            raw_area = getattr(st, "state", None) if st is not None else None
+        mapped_room = _normalize_ble_area_to_room(raw_area) if raw_area is not None else None
+        area_floor = room_to_floor.get(mapped_room) if mapped_room else None
+
+        if not ranges and not ekf_manager.get_tracker(eid_str).initialized:
+            continue
+
+        ekf_manager.update_from_observations(
+            tracker_entity_id=eid_str,
+            ble_ranges=ranges,
+            floorplan=fp,
+            now_ts=now_ts,
+            active_camera_hits=cam_hits,
+            active_pir_hits=pir_hits,
+            bermuda_area_floor=area_floor,
+        )
+
+    return ekf_manager.serialize_tracks(fp)

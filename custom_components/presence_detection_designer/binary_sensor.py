@@ -49,6 +49,31 @@ def _extract_spatial_and_causal_attrs(coordinator: Any, is_present: bool) -> dic
     tracker_attrs: dict[str, Any] = tracker_attrs_raw if isinstance(tracker_attrs_raw, dict) else {}
     manual_intent = str(tracker_attrs.get("manual_intent", "auto"))
 
+    raw_frame = getattr(coordinator, "_last_spatial_frame", None)
+    ekf_tracks = raw_frame.get("ekf_tracks") if isinstance(raw_frame, dict) else None
+    ekf_room_prob: float | None = None
+    ekf_summary: dict[str, Any] | None = None
+    if isinstance(ekf_tracks, dict) and ekf_tracks:
+        r_name = getattr(coordinator, "room_name", "")
+        best_p = -1.0
+        for _tid, tr in ekf_tracks.items():
+            if not isinstance(tr, dict):
+                continue
+            p = float((tr.get("room_probabilities") or {}).get(r_name, 0.0))
+            if p > best_p:
+                best_p = p
+                ekf_room_prob = round(p * 100.0, 1)
+                ekf_summary = {
+                    "floor": tr.get("floor"),
+                    "top_room": tr.get("top_room"),
+                    "top_room_prob_pct": round(float(tr.get("top_room_prob", 0.0)) * 100.0, 1),
+                    "sigma_x_ft": tr.get("sigma_x_ft"),
+                    "sigma_y_ft": tr.get("sigma_y_ft"),
+                    "speed_ft_s": tr.get("speed_ft_s"),
+                    "heading_deg": tr.get("heading_deg"),
+                    "active_proxy_count": tr.get("active_proxy_count"),
+                }
+
     return {
         "occupant_type": est.get("occupant_type", "human" if is_present else "none"),
         "occupant_label": est.get("occupant_label", "Occupant" if is_present else ""),
@@ -60,6 +85,8 @@ def _extract_spatial_and_causal_attrs(coordinator: Any, is_present: bool) -> dic
         "definitive_tracker_pinned": bool(est.get("definitive_tracker_pinned", False)),
         "inferred_subregion": est.get("inferred_subregion"),
         "spatial_method": est.get("method", "none"),
+        "ekf_room_probability_pct": ekf_room_prob,
+        "ekf_track": ekf_summary,
         "guest_mode_enabled": guest_mode_enabled,
         "manual_intent": manual_intent,
         "manual_off_suppressed": bool(

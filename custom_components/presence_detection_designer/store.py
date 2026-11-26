@@ -31,6 +31,7 @@ except Exception:  # noqa: BLE001
             self._mem = copy.deepcopy(data)
 
 
+from .ble_kalman_tracker import HouseEKFManager
 from .const import (
     DATA_STORE,
     DEFAULT_BLE_DECIDER_ENABLED,
@@ -118,6 +119,8 @@ class PDDStore:
         self._store: Any = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._data: dict[str, Any] = _default_store_data()
         self._loaded: bool = False
+        self.ekf_manager: HouseEKFManager = HouseEKFManager()
+        self._ble_ranges_provider: Any = None
         self._save_locks: dict[int, asyncio.Lock] = {}
 
     async def async_load(self) -> dict[str, Any]:
