@@ -32,6 +32,8 @@ Passive infrared (PIR) motion sensors, slow thermostat occupancy sensors, and ra
 3. **Dynamic Sustaining Conditions**: Preserves occupancy while secondary devices indicate presence (e.g., TV playing, workstation UPS power draw > 140W, shower exhaust fan running).
 4. **AI Vision Pre-Vacate Guard & Bidirectional LLM Config Translator**: Before marking a room vacant, captures a camera snapshot to visually confirm if a stationary human is still present—and provides services to translate back and forth between natural-language descriptions and Home Assistant YAML.
 
+> 📐 **Deep-Dive Documentation:** See [docs/ARCHITECTURE_AND_MATH.md](docs/ARCHITECTURE_AND_MATH.md) for the complete 3-layer signal-processing & control architecture, 2D+Floor Extended Kalman Filter (EKF) equations, PIR cross-talk matrix, cooldown tempering math, state machine transitions, and Golden Benchmark results.
+
 ---
 
 ## 🧮 Explainable Bayesian Weight Presets
