@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ha-presence-detection-designer"
-version = "0.3.3"
+version = "0.4.0"
 description = "Home Assistant custom integration combining spatial floorplan geometry, hierarchical transitions state machines, and camera/sensor occupancy verification."
 authors = [{name = "Steven T. Pelech"}]
 readme = "README.md"
@@ -38,6 +38,8 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-m 'not golden'"
 markers = [
     "requirement(id, category, req_type): SRS requirement traceability marker",
+    "golden: Layered + fuzzed golden ground-truth presence simulation suite",
 ]

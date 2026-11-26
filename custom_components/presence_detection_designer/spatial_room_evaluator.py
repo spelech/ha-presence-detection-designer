@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from .sensor_reliability import classify_sensor_reliability
 from .spatial_catalog import (
     BLIND_POCKET_DEFINITIONS,
     CAMERA_WHOLE_FRAME_ENTITY,
@@ -116,6 +117,7 @@ def evaluate_room_spatial_estimates(
         inferred_y = ry_center
         inferred_subregion: str | None = None
         prob_boost = 0.0
+        prob_boost_weight = 1.0
         should_hold = False
         occupied = False
         blind_pocket_pruned = False
@@ -193,7 +195,19 @@ def evaluate_room_spatial_estimates(
                 inferred_subregion = UNCOVERED_SUBREGION_LABELS.get(
                     r_name, f"{r_name} (Uncovered region outside clear camera cone)"
                 )
-                prob_boost = 0.22
+                best_pir_weight = max(
+                    (
+                        classify_sensor_reliability(
+                            str(p.get("entity_id") or p.get("id") or ""),
+                            model_preset=p.get("model_preset"),
+                            cooldown_sec=p.get("cooldown_sec"),
+                        ).reliability_weight
+                        for p in pirs
+                    ),
+                    default=1.0,
+                )
+                prob_boost_weight = best_pir_weight
+                prob_boost = 0.22 * best_pir_weight
                 explanation = (
                     f"PIR `{pir0.get('entity_id')}` is active while {', '.join(neg_exclusions)} is clear; "
                     f"negative space localizes occupant to {inferred_subregion}."
@@ -380,6 +394,7 @@ def evaluate_room_spatial_estimates(
             "should_hold_occupied": should_hold,
             "blind_pocket_pruned": blind_pocket_pruned,
             "probability_boost": round(prob_boost, 3),
+            "probability_boost_weight": round(prob_boost_weight, 4),
             "inferred_x": inferred_x,
             "inferred_y": inferred_y,
             "inferred_subregion": inferred_subregion,

@@ -409,9 +409,6 @@ def test_taxicab_distance_and_walking_speed_credibility(mock_hass) -> None:
         compute_taxicab_distance,
         evaluate_walking_speed_credibility,
     )
-    from custom_components.presence_detection_designer.trajectory_validator import (
-        corroborate_transition_trajectory,
-    )
 
     fp = get_default_floorplan()
     same_floor = compute_taxicab_distance("Kitchen", "Living Room", floorplan=fp)
@@ -435,47 +432,3 @@ def test_taxicab_distance_and_walking_speed_credibility(mock_hass) -> None:
     normal_kin = evaluate_walking_speed_credibility(60.0, 15.0, is_adjacent=False)
     assert normal_kin["is_credible"] is True
     assert normal_kin["credibility_score"] == 1.0
-
-    # Verify trajectory validator rejects instantaneous multi-hop jump even if intermediate sensor pulsed at t=now
-    mbr = RoomPresenceCoordinator(
-        mock_hass,
-        "entry_mbr",
-        {
-            CONF_ROOM_NAME: "Master Bedroom",
-            CONF_MODE: str(Mode.OPEN),
-            CONF_PIR_VALIDATION_ENABLED: False,
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.master_bedroom_person_occupancy"],
-        },
-    )
-    lr = RoomPresenceCoordinator(
-        mock_hass,
-        "entry_lr",
-        {
-            CONF_ROOM_NAME: "Living Room",
-            CONF_MODE: str(Mode.OPEN),
-            CONF_PIR_VALIDATION_ENABLED: False,
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.living_room_motion"],
-        },
-    )
-    mbr.state_machine.apply_evidence(
-        RoomEvidenceSnapshot(
-            active_triggers=frozenset({"binary_sensor.master_bedroom_person_occupancy"}),
-            human_present=True,
-            camera_confirmed=True,
-        )
-    )
-    now = 5000.0
-    traj_too_fast = corroborate_transition_trajectory(
-        candidate_room="Living Room",
-        all_coordinators=[mbr, lr],
-        recent_activity_ts={
-            "Master Bedroom": now - 0.2,
-            "Upstairs Hallway & Stairs": now - 0.1,
-            "Front Entry": now - 0.1,
-        },
-        floorplan=fp,
-        now_ts=now,
-    )
-    assert traj_too_fast.is_valid is False
-    assert "kinematic_speed_exceeded" in traj_too_fast.reason
-    assert traj_too_fast.taxicab_distance_ft > 30.0

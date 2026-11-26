@@ -298,24 +298,6 @@ async def test_e2e_ha_recorder_sqlite_and_json_playback(tmp_path: Path) -> None:
     assert report_json.rooms["Dining Room"]["occupancy_state"] == OccupancyState.VACANT
 
 
-@pytest.mark.requirement("PIR-01", category="PIR", req_type="FailClosedGuardrail")
-@pytest.mark.requirement("PIR-02", category="PIR", req_type="PositiveFeature")
-@pytest.mark.asyncio
-async def test_e2e_pir_validation_false_positive_and_corroboration() -> None:
-    """@requirement PIR-02: E2E playback of PIR false-positive rejection and multi-room corroboration."""
-    scenario_path = (
-        Path(__file__).parent / "scenarios" / "pir_corroboration_and_false_positive.json"
-    )
-    spec = load_scenario_file(scenario_path)
-    result = await run_scenario(
-        spec,
-        reproduction_command="python scripts/replay_scenario.py --scenario tests/scenarios/pir_corroboration_and_false_positive.json",
-    )
-    assert result.snapshots["Family Room"]["occupancy_state"] == OccupancyState.VACANT
-    assert result.snapshots["Garage"]["occupancy_state"] == OccupancyState.VACANT
-    assert result.snapshots["Laundry Room"]["occupancy_state"] == OccupancyState.VACANT
-
-
 @pytest.mark.requirement("SIGNAL-01", category="SIGNAL", req_type="FailClosedGuardrail")
 @pytest.mark.requirement("SIGNAL-03", category="SIGNAL", req_type="FailClosedGuardrail")
 @pytest.mark.asyncio
@@ -325,6 +307,10 @@ async def test_e2e_signal_exclusivity_ups_and_leftovers() -> None:
         Path(__file__).parent / "scenarios" / "signal_exclusivity_ups_and_leftovers.json"
     )
     spec = load_scenario_file(scenario_path)
+    spec["global_settings"] = {
+        **(spec.get("global_settings") or {}),
+        "inference_engine": "legacy",
+    }
     result = await run_scenario(
         spec,
         reproduction_command="python scripts/replay_scenario.py --scenario tests/scenarios/signal_exclusivity_ups_and_leftovers.json",

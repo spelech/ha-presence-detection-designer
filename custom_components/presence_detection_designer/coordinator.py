@@ -31,20 +31,19 @@ from .coordinator_dispatch import (
     async_send_coordinator_test_notification,
     dispatch_presence_transition,
     evaluate_coordinator_bayesian,
+    evaluate_coordinator_hmm,
+    is_coupled_hmm_active,
     notify_connected_rooms_if_active,
     process_coordinator_trigger_event,
     record_coordinator_timeline_snapshot,
     resolve_global_llm_defaults,
     sync_coordinator_evidence,
 )
-from .coordinator_helpers import apply_coordinator_config_fields
-from .notifications import NotificationDispatcher
-from .pir_corroboration import (
-    handle_pir_validation_for_trigger,
+from .coordinator_helpers import (
+    apply_coordinator_config_fields,
     is_condition_contradicted_by_ble,
-    sync_coordinator_pir_corroboration,
 )
-from .pir_validation import PIRValidationStateMachine
+from .notifications import NotificationDispatcher
 from .sensor_reliability import classify_sensor_reliability, is_camera_entity
 from .spatial_catalog import PRIMARY_BLE_TRACKER_ENTITIES
 from .state_machine import RoomPresenceStateMachine
@@ -76,6 +75,7 @@ class RoomPresenceCoordinator:
         self.actuation_tracker = RoomActuationTracker()
         self.monitored_actuator_entities: list[str] = []
         self.last_bayesian_eval: BayesianEvaluation | None = None
+        self.last_hmm_snapshot: Any = None
         self.last_spatial_estimate: dict[str, Any] | None = None
         self._last_spatial_frame: dict[str, Any] | None = None
         self._settling_entity: str | None = None
@@ -87,8 +87,8 @@ class RoomPresenceCoordinator:
         self._active_condition_descs: list[str] = []
         self._last_trigger_entity: str | None = None
         self._bayesian_drives_occupancy: bool = False
-        self.pir_validation_enabled: bool = True
-        self.pir_validator: PIRValidationStateMachine = None  # type: ignore[assignment]
+        self.pir_validation_enabled: bool = False
+        self.pir_validator: Any = None
         self.state_machine: RoomPresenceStateMachine = None  # type: ignore[assignment]
 
         self._apply_config_fields(self.config, preserve_state=False)
@@ -234,6 +234,14 @@ class RoomPresenceCoordinator:
             for b_eid in PRIMARY_BLE_TRACKER_ENTITIES:
                 if b_eid not in already_tracked:
                     bayesian_only_entities.append(b_eid)
+        from .spatial_catalog import ROOM_DOG_OCCUPANCY_ENTITIES, ROOM_SHADE_ENTITIES
+
+        for aux_eid in (
+            *ROOM_DOG_OCCUPANCY_ENTITIES.get(self.room_name, ()),
+            *ROOM_SHADE_ENTITIES.get(self.room_name, ()),
+        ):
+            if aux_eid and aux_eid not in already_tracked:
+                bayesian_only_entities.append(aux_eid)
         if bayesian_only_entities:
             unsub = async_track_state_change_event(
                 self.hass,
@@ -295,11 +303,6 @@ class RoomPresenceCoordinator:
                 if st_obj.state in ("on", "playing", "home"):
                     self._active_triggers.add(t_eid)
                     self._last_trigger_entity = t_eid
-                    handle_pir_validation_for_trigger(self, t_eid, True)
-                else:
-                    handle_pir_validation_for_trigger(self, t_eid, False)
-            else:
-                handle_pir_validation_for_trigger(self, t_eid, False)
 
         self._eval_conditions_and_update()
 
@@ -331,8 +334,6 @@ class RoomPresenceCoordinator:
         """Clear cooling or PIR-latched room immediately if an adjacent connected room just detected an occupant."""
         if self._is_guest_mode_active() or self._is_definitive_tracker_pinned():
             return False
-        if sync_coordinator_pir_corroboration(self):
-            self._last_adjacent_arrival = f"Entered from {from_room_name}"
         if self.state_machine.handle_adjacent_room_occupied(from_room_name):
             self._active_triggers = {
                 t for t in self._active_triggers if not classify_sensor_reliability(t).is_pir
@@ -377,6 +378,10 @@ class RoomPresenceCoordinator:
         if not self.hass or not hasattr(self.hass, "states"):
             return
 
+        if is_coupled_hmm_active(self):
+            evaluate_coordinator_hmm(self)
+            return
+
         self._refresh_condition_descs()
         if not self._eval_bayesian_and_update():
             self._sync_state_machine_evidence()
@@ -402,6 +407,10 @@ class RoomPresenceCoordinator:
         is_open = to_state.state in ("on", "open", "opening")
         if is_open:
             self._cam_verify_rejected_until = 0.0
+        if is_coupled_hmm_active(self):
+            evaluate_coordinator_hmm(self)
+            self.async_update_listeners()
+            return
         if self.hass:
             from .house_perimeter import get_house_perimeter_tracker
 
@@ -409,8 +418,6 @@ class RoomPresenceCoordinator:
                 entity_id=entity_id,
                 is_open=is_open,
             )
-        if is_open:
-            sync_coordinator_pir_corroboration(self)
         self.async_update_listeners()
 
     @callback
@@ -428,6 +435,10 @@ class RoomPresenceCoordinator:
 
     async def _async_handle_tick(self, _now: Any) -> None:
         """Advance deadline clock for virtual/non-timer environments and update cooling listeners."""
+        if is_coupled_hmm_active(self):
+            evaluate_coordinator_hmm(self)
+            return
+
         if self.hass:
             from .house_perimeter import get_house_perimeter_tracker
 

@@ -111,15 +111,30 @@ class PDDOverviewView(HomeAssistantView):
             st = _safe_state_getter(hass, eid)
             return str(st.state) if st is not None else "off"
 
+        now_ts = time.time()
         spatial_inference = evaluate_spatial_frame(
             floorplan=floorplan,
             compiled_topology=compiled_topology,
             state_getter=_live_state_str,
-            now_ts=time.time(),
+            prev_frame=getattr(store, "_last_spatial_frame", None),
+            now_ts=now_ts,
             negative_space_enabled=neg_space_enabled,
             guest_mode_enabled=guest_mode_enabled,
             ble_decider_enabled=ble_decider_enabled,
         )
+        if hasattr(store, "ekf_manager"):
+            from .ble_kalman_tracker import update_house_ekf_from_hass
+
+            spatial_inference["ekf_tracks"] = update_house_ekf_from_hass(
+                store.ekf_manager,
+                hass,
+                floorplan,
+                spatial_inference,
+                now_ts,
+                list(store.global_settings.get("ble_trackers") or []),
+                ble_ranges_provider=getattr(store, "_ble_ranges_provider", None),
+            )
+        store._last_spatial_frame = spatial_inference
 
         return self.json(
             {

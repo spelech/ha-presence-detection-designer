@@ -529,10 +529,8 @@ async def test_serialize_room_coordinator_includes_pir_gate_and_sensor_weights(m
 
     payload = serialize_room_coordinator(coord)
     assert payload["max_hold_timeout"] == 2400
-    assert payload["pir_validation_enabled"] is True
-    assert payload["pir_candidate_window"] == 20.0
-    assert "pir_validation_state" in payload
-    assert "stateDiagram" in payload["pir_mermaid_diagram"]
+    assert payload["pir_validation_enabled"] is False
+    assert payload["pir_validation_state"] == "disabled"
     assert isinstance(payload["pir_transition_history"], list)
 
     weights = {w["entity_id"]: w for w in payload["sensor_weights"]}

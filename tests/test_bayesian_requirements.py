@@ -272,7 +272,8 @@ async def test_asymmetric_negative_evidence_ble_confirmation_and_neutral_camera_
     ]
 
     with VirtualHAHarness(
-        storage_dir=tmp_path, global_settings={"ble_decider_enabled": True}
+        storage_dir=tmp_path,
+        global_settings={"ble_decider_enabled": True, "inference_engine": "legacy"},
     ) as harness:
         await harness.async_add_rooms(rooms)
         harness.set_state("binary_sensor.office_person_occupancy", "off")

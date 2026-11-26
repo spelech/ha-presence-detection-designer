@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" width="1000" height="580" data-floor="basement">
+  <defs>
+    <style>
+      .fp-bg { fill: none; }
+      .fp-room { fill: #1e293b; stroke: #475569; stroke-width: 1.5; transition: fill 0.35s ease, opacity 0.2s ease; cursor: pointer; }
+      .fp-room:hover { filter: brightness(1.12); }
+      .fp-room-estimated { stroke-dasharray: 5 3; }
+      .fp-wall { stroke: #e2e8f0; stroke-width: 3.5; stroke-linecap: round; fill: none; pointer-events: none; }
+      .fp-door-leaf { stroke: #e2e8f0; stroke-width: 2; stroke-linecap: round; fill: none; pointer-events: none; }
+      .fp-door-arc { stroke: #e2e8f0; stroke-width: 1.2; stroke-dasharray: 3 2; stroke-opacity: 0.65; fill: none; pointer-events: none; }
+      .fp-bifold { stroke: #e2e8f0; stroke-width: 1.8; stroke-linecap: round; stroke-opacity: 0.85; fill: none; pointer-events: none; }
+      .fp-stairs { stroke: #e2e8f0; stroke-width: 1.3; stroke-opacity: 0.55; fill: none; pointer-events: none; }
+      .fp-fixture { stroke: #e2e8f0; stroke-width: 1.4; stroke-opacity: 0.48; fill: none; pointer-events: none; }
+      .fp-label { fill: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 600; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #0f172a; stroke-width: 3px; stroke-linejoin: round; }
+      .fp-temp { fill: #ffffff; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; font-weight: 700; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #0f172a; stroke-width: 3.5px; stroke-linejoin: round; }
+      .fp-temp-estimated { font-style: italic; opacity: 0.92; }
+      .fp-title { fill: #f8fafc; font-family: system-ui, -apple-system, sans-serif; font-size: 15px; font-weight: 700; }
+      .fp-subtitle { fill: #94a3b8; font-family: system-ui, -apple-system, sans-serif; font-size: 11px; }
+    </style>
+  </defs>
+  <rect class="fp-bg" x="0" y="0" width="1000" height="580" rx="12" />
+  <g id="layer-rooms">
+    <path id="room.basement_theater" data-room-id="basement_theater" data-room-name="Basement Theater" class="fp-room" d="M 93,42 L 360,42 L 360,532 L 93,532 Z"><title>Basement Theater</title></path>
+    <path id="room.basement_play_area" data-room-id="basement_play_area" data-room-name="Basement Play Area" class="fp-room" d="M 360,42 L 524,42 L 524,135 L 695,135 L 695,230 L 572,230 L 572,410 L 635,410 L 635,532 L 360,532 Z"><title>Basement Play Area</title></path>
+    <path id="room.basement_bathroom" data-room-id="basement_bathroom" data-room-name="Basement Bathroom" class="fp-room" d="M 524,42 L 695,42 L 695,135 L 524,135 Z"><title>Basement Bathroom</title></path>
+    <path id="room.storage_room" data-room-id="storage_room" data-room-name="Storage Room" class="fp-room" d="M 695,42 L 915,42 L 915,360 L 695,360 Z"><title>Storage Room</title></path>
+  </g>
+  <g id="layer-fixtures">
+    <polygon class="fp-fixture" data-label="Basement Fireplace" points="93,215 114,215 114,295 93,295" />
+    <polyline class="fp-fixture" data-label="Wet Bar" points="368,42 374,92 398,138 442,170 496,182 496,148 454,138 422,112 408,76 524,76" />
+  </g>
+  <g id="layer-stairs">
+    <line class="fp-stairs" x1="572" y1="410" x2="635" y2="410" />
+    <line class="fp-stairs" x1="572" y1="425.25" x2="635" y2="425.25" />
+    <line class="fp-stairs" x1="572" y1="440.5" x2="635" y2="440.5" />
+    <line class="fp-stairs" x1="572" y1="455.75" x2="635" y2="455.75" />
+    <line class="fp-stairs" x1="572" y1="471" x2="635" y2="471" />
+    <line class="fp-stairs" x1="572" y1="486.25" x2="635" y2="486.25" />
+    <line class="fp-stairs" x1="572" y1="501.5" x2="635" y2="501.5" />
+    <line class="fp-stairs" x1="572" y1="516.75" x2="635" y2="516.75" />
+    <line class="fp-stairs" x1="572" y1="532" x2="635" y2="532" />
+  </g>
+  <g id="layer-walls">
+    <line class="fp-wall" x1="93" y1="42" x2="695" y2="42" />
+    <line class="fp-wall" x1="93" y1="42" x2="93" y2="532" />
+    <line class="fp-wall" x1="93" y1="478" x2="130" y2="478" />
+    <line class="fp-wall" x1="220" y1="478" x2="265" y2="478" />
+    <line class="fp-wall" x1="355" y1="478" x2="430" y2="478" />
+    <line class="fp-wall" x1="430" y1="478" x2="445" y2="495" />
+    <line class="fp-wall" x1="445" y1="495" x2="445" y2="532" />
+    <line class="fp-wall" x1="93" y1="532" x2="635" y2="532" />
+    <line class="fp-wall" x1="572" y1="230" x2="572" y2="410" />
+    <line class="fp-wall" x1="635" y1="410" x2="635" y2="532" />
+    <line class="fp-wall" x1="524" y1="42" x2="524" y2="135" />
+    <line class="fp-wall" x1="524" y1="135" x2="575" y2="135" />
+    <line class="fp-wall" x1="620" y1="135" x2="695" y2="135" />
+    <line class="fp-wall" x1="572" y1="230" x2="695" y2="230" />
+    <line class="fp-wall" x1="695" y1="42" x2="695" y2="145" />
+    <line class="fp-wall" x1="695" y1="215" x2="695" y2="360" />
+    <line class="fp-wall" x1="695" y1="42" x2="915" y2="42" />
+    <line class="fp-wall" x1="915" y1="42" x2="915" y2="360" />
+    <line class="fp-wall" x1="695" y1="360" x2="915" y2="360" />
+    <line class="fp-wall" x1="242" y1="478" x2="242" y2="532" />
+  </g>
+  <g id="layer-doors">
+    <line class="fp-bifold" x1="130.0" y1="478.0" x2="152.5" y2="468.1" />
+    <line class="fp-bifold" x1="152.5" y1="468.1" x2="175.0" y2="478.0" />
+    <line class="fp-bifold" x1="175.0" y1="478.0" x2="197.5" y2="468.1" />
+    <line class="fp-bifold" x1="197.5" y1="468.1" x2="220.0" y2="478.0" />
+    <line class="fp-bifold" x1="265.0" y1="478.0" x2="287.5" y2="468.1" />
+    <line class="fp-bifold" x1="287.5" y1="468.1" x2="310.0" y2="478.0" />
+    <line class="fp-bifold" x1="310.0" y1="478.0" x2="332.5" y2="468.1" />
+    <line class="fp-bifold" x1="332.5" y1="468.1" x2="355.0" y2="478.0" />
+    <line class="fp-door-leaf" x1="575.0" y1="135.0" x2="575.0" y2="180.0" />
+    <polyline class="fp-door-arc" points="620.0,135.0 619.8,139.4 619.1,143.8 618.1,148.1 616.6,152.2 614.7,156.2 612.4,160.0 609.8,163.5 606.8,166.8 603.5,169.8 600.0,172.4 596.2,174.7 592.2,176.6 588.1,178.1 583.8,179.1 579.4,179.8 575.0,180.0" />
+    <line class="fp-door-leaf" x1="695.0" y1="145.0" x2="765.0" y2="145.0" />
+    <polyline class="fp-door-arc" points="695.0,215.0 701.9,214.7 708.7,213.7 715.3,212.0 721.8,209.7 728.0,206.7 733.9,203.2 739.4,199.1 744.5,194.5 749.1,189.4 753.2,183.9 756.7,178.0 759.7,171.8 762.0,165.3 763.7,158.7 764.7,151.9 765.0,145.0" />
+  </g>
+</svg>
