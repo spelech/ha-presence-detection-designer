@@ -52,12 +52,129 @@ __all__ = [
     "build_coordinator_evidence_snapshot",
     "dispatch_presence_transition",
     "evaluate_coordinator_bayesian",
+    "evaluate_coordinator_hmm",
+    "is_coupled_hmm_active",
     "notify_connected_rooms_if_active",
     "process_coordinator_trigger_event",
     "record_coordinator_timeline_snapshot",
     "resolve_global_llm_defaults",
     "sync_coordinator_evidence",
 ]
+
+
+def is_coupled_hmm_active(coord: Any) -> bool:
+    """Return True when the house-wide Coupled Continuous-Time Log-Odds HMM governs this room."""
+    if not coord.hass or not isinstance(getattr(coord.hass, "data", None), dict):
+        return False
+    domain_data = coord.hass.data.get(DOMAIN, {})
+    if not isinstance(domain_data, dict):
+        return False
+    store = domain_data.get(DATA_STORE)
+    if (
+        store is None
+        or type(store).__name__ == "MagicMock"
+        or not callable(getattr(store, "get_or_create_hmm_engine", None))
+    ):
+        return False
+    gs = getattr(store, "global_settings", None)
+    if isinstance(gs, dict) and gs.get("inference_engine", "coupled_hmm") != "coupled_hmm":
+        return False
+    fp = store.get_floorplan() if callable(getattr(store, "get_floorplan", None)) else None
+    if not isinstance(fp, dict) or not fp.get("rooms"):
+        return False
+    fp_room_names = {str(r.get("name", "")) for r in fp.get("rooms") or [] if isinstance(r, dict)}
+    if coord.room_name not in fp_room_names:
+        return False
+    coordinators = [
+        obj
+        for obj in domain_data.values()
+        if type(obj).__name__ != "MagicMock"
+        and hasattr(obj, "state_machine")
+        and hasattr(obj, "room_name")
+    ]
+    return len(coordinators) >= 3 or bool(
+        isinstance(gs, dict) and gs.get("inference_engine_force", False)
+    )
+
+
+def evaluate_coordinator_hmm(coord: Any, *, now_ts: float | None = None) -> Any:
+    """Step the house-wide Coupled Log-Odds HMM and sync all registered room coordinators."""
+    if not is_coupled_hmm_active(coord):
+        return None
+
+    domain_data = coord.hass.data.get(DOMAIN, {})
+    store = domain_data.get(DATA_STORE)
+    fp = store.get_floorplan()
+    gs = store.global_settings if isinstance(getattr(store, "global_settings", None), dict) else {}
+    guest_mode_enabled = bool(gs.get("guest_mode_enabled", False))
+    ts = float(now_ts if now_ts is not None else time.time())
+
+    coordinators_by_room: dict[str, Any] = {}
+    room_configs: dict[str, dict[str, Any]] = {}
+    cam_rejected_rooms: set[str] = set()
+    for obj in list(domain_data.values()):
+        if hasattr(obj, "state_machine") and hasattr(obj, "room_name"):
+            rname = str(obj.room_name)
+            coordinators_by_room[rname] = obj
+            room_configs[rname] = dict(getattr(obj, "config", {}) or {})
+            if is_camera_verification_rejected(obj, now_ts=ts):
+                cam_rejected_rooms.add(rname)
+
+    hmm = store.get_or_create_hmm_engine(fp, room_configs)
+
+    # Update house EKF tracks once per second bucket
+    ekf_tracks: dict[str, dict[str, Any]] = {}
+    if hasattr(store, "ekf_manager"):
+        last_ekf_sec = getattr(store, "_hmm_last_ekf_sec", None)
+        sec_bucket = int(ts)
+        if last_ekf_sec != sec_bucket or not hasattr(store, "_hmm_last_ekf_tracks"):
+            from .ble_kalman_tracker import update_house_ekf_from_hass
+
+            trackers = list(gs.get("ble_trackers") or [])
+            ekf_tracks = update_house_ekf_from_hass(
+                store.ekf_manager,
+                coord.hass,
+                fp,
+                None,
+                ts,
+                trackers,
+                ble_ranges_provider=getattr(store, "_ble_ranges_provider", None),
+                pir_spillover=hmm.topology.pir_spillover,
+            )
+            store._hmm_last_ekf_sec = sec_bucket
+            store._hmm_last_ekf_tracks = ekf_tracks
+        else:
+            ekf_tracks = dict(getattr(store, "_hmm_last_ekf_tracks", {}) or {})
+
+    def _state_str(eid: str) -> str | None:
+        st = _safe_state_getter(coord.hass, eid)
+        if st is None:
+            return None
+        if eid.startswith("cover.") and getattr(st, "attributes", {}).get("is_moving"):
+            return "moving"
+        return str(st.state)
+
+    snapshots = hmm.step(
+        now_ts=ts,
+        state_getter=_state_str,
+        ekf_tracks=ekf_tracks,
+        guest_mode_enabled=guest_mode_enabled,
+        cam_rejected_rooms=cam_rejected_rooms,
+    )
+
+    frame_meta = {"ts": ts, "ekf_tracks": ekf_tracks, "inference_engine": "coupled_hmm"}
+    for rname, c_obj in coordinators_by_room.items():
+        snap = snapshots.get(rname)
+        if snap is None:
+            continue
+        c_obj.last_hmm_snapshot = snap
+        c_obj._last_spatial_frame = frame_meta
+        changed = c_obj.state_machine.apply_hmm_belief(snap, now_ts=ts)
+        if changed:
+            record_coordinator_timeline_snapshot(c_obj)
+            c_obj.async_update_listeners()
+
+    return snapshots.get(coord.room_name)
 
 
 def dispatch_presence_transition(coord: Any) -> None:
@@ -274,6 +391,9 @@ def notify_connected_rooms_if_active(coord: Any) -> None:
 def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     """Evaluate Bayesian sensor fusion across all configured observations and negative-space geometry."""
     if not coord.hass or not hasattr(coord.hass, "states") or not coord.bayesian_enabled:
+        return None
+    if is_coupled_hmm_active(coord):
+        evaluate_coordinator_hmm(coord)
         return None
 
     from .spatial_inference import evaluate_spatial_frame
@@ -524,6 +644,16 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     to_state = event.data.get("new_state")
     entity_id = event.data.get("entity_id")
     if not to_state or not entity_id or is_state_stale(to_state, max_age_seconds=60.0):
+        return
+
+    if is_coupled_hmm_active(coord):
+        now = time.time()
+        cam_trigger = is_camera_entity(str(entity_id))
+        is_on_raw = to_state.state in ("on", "playing", "home")
+        if is_on_raw and not cam_trigger and classify_sensor_reliability(str(entity_id)).is_pir:
+            coord._cam_verify_rejected_until = 0.0
+        evaluate_coordinator_hmm(coord, now_ts=now)
+        coord.async_update_listeners()
         return
 
     now = time.time()

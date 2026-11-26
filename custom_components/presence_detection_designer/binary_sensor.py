@@ -74,6 +74,27 @@ def _extract_spatial_and_causal_attrs(coordinator: Any, is_present: bool) -> dic
                     "active_proxy_count": tr.get("active_proxy_count"),
                 }
 
+    hmm_snap = getattr(coordinator, "last_hmm_snapshot", None)
+    hmm_attrs: dict[str, Any] = {}
+    if hmm_snap is not None:
+        hmm_attrs = {
+            "inference_engine": "coupled_hmm",
+            "hmm_log_odds": hmm_snap.log_odds,
+            "confidence_tier": hmm_snap.confidence_tier,
+            "theta_enter_pct": round(hmm_snap.theta_enter * 100.0, 1),
+            "theta_clear_pct": round(hmm_snap.theta_clear * 100.0, 1),
+            "spillover_exposure_pct": round(hmm_snap.spillover_exposure * 100.0, 1),
+            "recommended_lighting_threshold_pct": round(
+                hmm_snap.recommended_lighting_threshold * 100.0, 1
+            ),
+            "meets_lighting_threshold": bool(
+                hmm_snap.probability >= hmm_snap.recommended_lighting_threshold
+            ),
+            "llm_ambiguity_active": hmm_snap.llm_ambiguity_active,
+            "ambiguity_dwell_sec": hmm_snap.ambiguity_dwell_sec,
+            "hmm_active_drivers": list(hmm_snap.active_drivers),
+        }
+
     return {
         "occupant_type": est.get("occupant_type", "human" if is_present else "none"),
         "occupant_label": est.get("occupant_label", "Occupant" if is_present else ""),
@@ -84,7 +105,7 @@ def _extract_spatial_and_causal_attrs(coordinator: Any, is_present: bool) -> dic
         "detected_animals": list(est.get("detected_animals", [])),
         "definitive_tracker_pinned": bool(est.get("definitive_tracker_pinned", False)),
         "inferred_subregion": est.get("inferred_subregion"),
-        "spatial_method": est.get("method", "none"),
+        "spatial_method": est.get("method", "coupled_hmm" if hmm_snap is not None else "none"),
         "ekf_room_probability_pct": ekf_room_prob,
         "ekf_track": ekf_summary,
         "guest_mode_enabled": guest_mode_enabled,
@@ -96,6 +117,7 @@ def _extract_spatial_and_causal_attrs(coordinator: Any, is_present: bool) -> dic
         "last_manual_entity": tracker_attrs.get("last_manual_entity"),
         "last_manual_action": tracker_attrs.get("last_manual_action"),
         "last_manual_ts": tracker_attrs.get("last_manual_ts"),
+        **hmm_attrs,
     }
 
 
