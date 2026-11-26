@@ -7122,7 +7122,7 @@ action:
                 }
               </div>
               <span id="fp-save-state" class="fp-save-badge ${this._fpDirty ? "dirty" : "saved"}">${this._fpDirty ? "Unsaved" : "Saved ✓"}</span>
-              <button type="button" class="btn btn-sm" id="btn-fp-save-top" data-tip="Save pin positions, camera angles, and room geometry to storage.">💾 Save</button>
+              <button type="button" class="btn btn-sm ${this._fpDirty ? "btn-primary" : ""}" id="btn-fp-save-top" data-tip="Save all sensor, proxy, camera, and room positions immediately (edits also auto-save).">💾 Save Floorplan</button>
               <button type="button" class="btn btn-sm" id="btn-toggle-fp-inspector" data-tip="Open the side panel to add cameras, PIR/door sensors, BLE proxies, or edit exact coordinates.">
                 ${this._showFloorplanInspector ? "Hide Details" : "Edit Details &amp; Add"}
               </button>
