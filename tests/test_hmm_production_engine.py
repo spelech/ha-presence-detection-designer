@@ -70,3 +70,52 @@ async def test_production_hmm_pet_exclusion_and_override_guardrails(tmp_path: Pa
             harness.advance(1.0)
         assert office.state_machine.state == OccupancyState.OVERRIDE
         assert office.state_machine.is_present is True
+
+
+def test_playback_suppresses_impossible_cross_floor_teleports() -> None:
+    """Simultaneous multi-floor occupancy and rapid non-adjacent cross-floor jumps do not draw fake moves."""
+    from custom_components.presence_detection_designer.timeline_reconstructor import (
+        reconstruct_house_timeline,
+    )
+
+    fp = load_golden_floorplan()
+    room_cfgs = {r["room_name"]: r for r in HOUSE_ROOM_CONFIGS}
+    start_ts = 1795650000.0
+    # Master Bedroom (upstairs) is occupied at t=0; Living Room (main) turns on at t=5 while
+    # Master Bedroom is STILL occupied (separate occupant / vertical BLE bounce).
+    coord_logs = {
+        "Master Bedroom": [
+            {
+                "ts": start_ts + 1.0,
+                "is_present": True,
+                "occupancy_state": "occupied_confirmed",
+                "probability_pct": 92.0,
+                "verified_by": "camera",
+                "camera_confirmed": True,
+                "entity_states": {"sensor.steve_s_s25_ble_area": "Master Bedroom"},
+            }
+        ],
+        "Living Room": [
+            {
+                "ts": start_ts + 5.0,
+                "is_present": True,
+                "occupancy_state": "occupied_confirmed",
+                "probability_pct": 88.0,
+                "verified_by": "camera",
+                "camera_confirmed": True,
+                "entity_states": {"sensor.steve_s_s25_ble_area": "Living Room"},
+            }
+        ],
+    }
+    res = reconstruct_house_timeline(
+        floorplan=fp,
+        room_configs=room_cfgs,
+        entity_timelines={},
+        start_ts=start_ts,
+        end_ts=start_ts + 20.0,
+        coordinator_timelines=coord_logs,
+    )
+    lr_txs = [t for t in res["transitions"] if t["to_room"] == "Living Room"]
+    assert lr_txs
+    assert lr_txs[0]["from_room"] is None
+    assert lr_txs[0]["from_floor"] is None
