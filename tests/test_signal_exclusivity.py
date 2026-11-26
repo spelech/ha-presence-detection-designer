@@ -184,7 +184,8 @@ async def test_leftover_lights_media_dhumidity_and_ups_never_trigger_vacant_room
     ]
 
     with VirtualHAHarness(
-        storage_dir=tmp_path, global_settings={"ble_decider_enabled": True}
+        storage_dir=tmp_path,
+        global_settings={"ble_decider_enabled": True, "inference_engine": "legacy"},
     ) as harness:
         await harness.async_add_rooms(rooms)
         for _k, _v in {

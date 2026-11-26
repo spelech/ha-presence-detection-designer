@@ -375,6 +375,22 @@ class VirtualHAHarness:
             entry[2](self.clock.dt_now())
 
         self.clock._now = target
+        # Advance 1 Hz Coupled HMM ticks across elapsed virtual seconds
+        from custom_components.presence_detection_designer.coordinator_dispatch import (
+            evaluate_coordinator_hmm,
+            is_coupled_hmm_active,
+        )
+
+        first_hmm_coord = next(
+            (c for c in self.coordinators.values() if is_coupled_hmm_active(c)),
+            None,
+        )
+        if first_hmm_coord is not None:
+            steps = max(1, int(round(max(0.0, float(seconds)))))
+            start_step_ts = target - float(steps - 1)
+            for s_idx in range(steps):
+                evaluate_coordinator_hmm(first_hmm_coord, now_ts=start_step_ts + float(s_idx))
+
         for coord in self.coordinators.values():
             if getattr(coord, "pir_validator", None) is not None:
                 coord.pir_validator.advance_time(0.0, now_ts=target)

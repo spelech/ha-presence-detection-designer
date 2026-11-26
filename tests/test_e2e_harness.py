@@ -307,6 +307,10 @@ async def test_e2e_pir_validation_false_positive_and_corroboration() -> None:
         Path(__file__).parent / "scenarios" / "pir_corroboration_and_false_positive.json"
     )
     spec = load_scenario_file(scenario_path)
+    spec["global_settings"] = {
+        **(spec.get("global_settings") or {}),
+        "inference_engine": "legacy",
+    }
     result = await run_scenario(
         spec,
         reproduction_command="python scripts/replay_scenario.py --scenario tests/scenarios/pir_corroboration_and_false_positive.json",
@@ -325,6 +329,10 @@ async def test_e2e_signal_exclusivity_ups_and_leftovers() -> None:
         Path(__file__).parent / "scenarios" / "signal_exclusivity_ups_and_leftovers.json"
     )
     spec = load_scenario_file(scenario_path)
+    spec["global_settings"] = {
+        **(spec.get("global_settings") or {}),
+        "inference_engine": "legacy",
+    }
     result = await run_scenario(
         spec,
         reproduction_command="python scripts/replay_scenario.py --scenario tests/scenarios/signal_exclusivity_ups_and_leftovers.json",

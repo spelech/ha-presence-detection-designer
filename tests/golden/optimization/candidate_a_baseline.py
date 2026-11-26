@@ -26,10 +26,12 @@ async def _run_single_bundle(
     actual_timeline: list[set[str]] = []
     prob_timeline: list[dict[str, float]] = []
 
+    gs = dict(bundle.scenario.global_settings)
+    gs["inference_engine"] = "legacy"
     with VirtualHAHarness(
         storage_dir=storage_dir,
         start_ts=1795650000.0,
-        global_settings=dict(bundle.scenario.global_settings),
+        global_settings=gs,
     ) as harness:
         await harness.async_add_rooms(room_configs, floorplan=floorplan)
         cur_tick = [0]
