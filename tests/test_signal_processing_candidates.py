@@ -15,6 +15,7 @@ from tests.golden.floorplan_snapshot import load_golden_floorplan
 from tests.golden.optimization.candidate_b_hmm import CandidateBRunner
 from tests.golden.optimization.candidate_c_grid import CandidateCRunner
 from tests.golden.optimization.candidate_d_phd import CandidateDRunner
+from tests.golden.optimization.candidate_e_hybrid import CandidateERunner
 from tests.golden.optimization.dataset import (
     build_ceiling_kitchen_floorplan,
     build_dataset,
@@ -69,7 +70,7 @@ def safety_bundles() -> tuple[HouseTopologyIndex, list[Any], list[str]]:
 
 @pytest.mark.parametrize(
     "runner_cls",
-    [CandidateBRunner, CandidateCRunner, CandidateDRunner],
+    [CandidateBRunner, CandidateCRunner, CandidateDRunner, CandidateERunner],
     ids=lambda cls: cls.name,
 )
 def test_candidate_bounds_determinism_and_safety_invariants(

@@ -6,6 +6,7 @@ from .candidate_a_baseline import evaluate_candidate_a
 from .candidate_b_hmm import CandidateBRunner
 from .candidate_c_grid import CandidateCRunner
 from .candidate_d_phd import CandidateDRunner
+from .candidate_e_hybrid import CandidateERunner
 from .dataset import (
     CEILING_KITCHEN_SPECS,
     TRAIN_SPECS,
@@ -31,6 +32,7 @@ __all__ = [
     "CandidateBRunner",
     "CandidateCRunner",
     "CandidateDRunner",
+    "CandidateERunner",
     "HouseTopologyIndex",
     "RunEvaluation",
     "ScenarioBundle",

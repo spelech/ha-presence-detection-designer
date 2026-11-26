@@ -11,6 +11,7 @@ _COLORS: dict[str, tuple[str, str]] = {
     "B_Coupled_HMM": ("#58a6ff", "B: Coupled HMM"),
     "C_2D_Occupancy_Grid": ("#2dd4bf", "C: 2D Raycast Grid"),
     "D_RFS_PHD_HSMM": ("#f59e0b", "D: RFS-PHD + HSMM"),
+    "E_Hybrid_HMM_Weibull": ("#3fb950", "E: Hybrid HMM+Weibull"),
 }
 
 
@@ -42,10 +43,16 @@ def generate_pareto_frontier_svg(results: dict[str, Any], out_path: Path) -> Pat
     train_pareto: dict[str, list[dict[str, Any]]] = results.get("train_pareto", {})
     heldout: dict[str, Any] = results.get("heldout_validation", {})
 
-    # Determine zoomed axis bounds for B, C, D safe points so frontier isn't squashed by outlier A
+    # Determine zoomed axis bounds for B..E safe points so frontier isn't squashed by outlier A
+    opt_names = (
+        "B_Coupled_HMM",
+        "C_2D_Occupancy_Grid",
+        "D_RFS_PHD_HSMM",
+        "E_Hybrid_HMM_Weibull",
+    )
     all_bcd_safe = [
         p
-        for cname in ("B_Coupled_HMM", "C_2D_Occupancy_Grid", "D_RFS_PHD_HSMM")
+        for cname in opt_names
         for p in train_sprawl.get(cname, [])
         if int(p.get("total_safety_violations", 0)) == 0
     ]
@@ -79,7 +86,7 @@ def generate_pareto_frontier_svg(results: dict[str, Any], out_path: Path) -> Pat
         "</style>",
         f'<rect width="{w}" height="{h}" rx="12" fill="#0d1117" stroke="#30363d"/>',
         f'<text x="{w / 2:.0f}" y="30" text-anchor="middle" class="title">'
-        "4-Candidate Signal-Processing Optimization Sprawl &amp; Held-Out Pareto Frontier</text>",
+        "5-Candidate Signal-Processing Optimization Sprawl &amp; Held-Out Pareto Frontier</text>",
         f'<text x="{w / 2:.0f}" y="50" text-anchor="middle" class="sub">'
         "Train split (seeds 42, 101, 202 = 48 runs/config) vs. Unseen Held-Out Validation (seeds 303, 404, 505 = 48 runs)</text>",
         # Panel backgrounds
@@ -120,7 +127,7 @@ def generate_pareto_frontier_svg(results: dict[str, Any], out_path: Path) -> Pat
     )
 
     # Scatter all LHS + refined train points + draw Pareto frontier polylines
-    for cname in ("B_Coupled_HMM", "C_2D_Occupancy_Grid", "D_RFS_PHD_HSMM"):
+    for cname in opt_names:
         col, _ = _COLORS[cname]
         for pt in train_sprawl.get(cname, []):
             fp = float(pt["total_fp_sec"])
@@ -195,6 +202,7 @@ def generate_pareto_frontier_svg(results: dict[str, Any], out_path: Path) -> Pat
         ("B_Coupled_HMM", "B (HMM)"),
         ("C_2D_Occupancy_Grid", "C (Grid)"),
         ("D_RFS_PHD_HSMM", "D (RFS-PHD)"),
+        ("E_Hybrid_HMM_Weibull", "E (Hybrid)"),
     ):
         bal = (heldout.get(cname) or {}).get("balanced")
         if bal:
@@ -237,8 +245,9 @@ def generate_pareto_frontier_svg(results: dict[str, Any], out_path: Path) -> Pat
     callout_cfg: dict[str, tuple[float, float, str]] = {
         "A_Baseline_v6_1": (0.0, -16.0, "middle"),
         "B_Coupled_HMM": (-14.0, -48.0, "end"),
-        "C_2D_Occupancy_Grid": (-14.0, -82.0, "end"),
+        "C_2D_Occupancy_Grid": (-14.0, -78.0, "end"),
         "D_RFS_PHD_HSMM": (-14.0, 26.0, "end"),
+        "E_Hybrid_HMM_Weibull": (-14.0, -132.0, "end"),
     }
     for _idx, (cname, short, data) in enumerate(ho_items):
         col = _COLORS[cname][0]
@@ -272,15 +281,23 @@ def generate_pareto_frontier_svg(results: dict[str, Any], out_path: Path) -> Pat
 
     # Bottom Legend
     leg_y = h - 22
-    leg_x = 45.0
-    for cname in ("A_Baseline_v6_1", "B_Coupled_HMM", "C_2D_Occupancy_Grid", "D_RFS_PHD_HSMM"):
+    leg_x = 32.0
+    for cname in (
+        "A_Baseline_v6_1",
+        "B_Coupled_HMM",
+        "C_2D_Occupancy_Grid",
+        "D_RFS_PHD_HSMM",
+        "E_Hybrid_HMM_Weibull",
+    ):
         col, label = _COLORS[cname]
-        lines.append(f'<circle cx="{leg_x:.1f}" cy="{leg_y - 4}" r="5.5" fill="{col}"/>')
-        lines.append(f'<text x="{leg_x + 11:.1f}" y="{leg_y}" class="leg">{_esc(label)}</text>')
-        leg_x += 172.0
+        lines.append(f'<circle cx="{leg_x:.1f}" cy="{leg_y - 4}" r="5.0" fill="{col}"/>')
+        lines.append(
+            f'<text x="{leg_x + 10:.1f}" y="{leg_y}" class="ax" fill="#e6edf3">{_esc(label)}</text>'
+        )
+        leg_x += 164.0
     lines.append(
-        f'<text x="{w - 28}" y="{leg_y}" text-anchor="end" class="ax">'
-        "Stars = Balanced Winner | Polyline = Safe Pareto Frontier | x = Safety Violation</text>"
+        f'<text x="{w - 22}" y="{leg_y}" text-anchor="end" class="ax">'
+        "Stars = Winner | Lines = Safe Pareto</text>"
     )
     lines.append("</svg>")
 
@@ -300,6 +317,7 @@ def generate_comparison_bars_svg(results: dict[str, Any], out_path: Path) -> Pat
         ("B_Coupled_HMM", "B HMM"),
         ("C_2D_Occupancy_Grid", "C Grid"),
         ("D_RFS_PHD_HSMM", "D PHD"),
+        ("E_Hybrid_HMM_Weibull", "E Hyb"),
     ):
         bal = (heldout.get(cname) or {}).get("balanced")
         if bal:

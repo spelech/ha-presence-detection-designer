@@ -17,6 +17,7 @@ from .candidate_a_baseline import evaluate_candidate_a
 from .candidate_b_hmm import CANDIDATE_B_BOUNDS, CANDIDATE_B_DEFAULTS, CandidateBRunner
 from .candidate_c_grid import CANDIDATE_C_BOUNDS, CANDIDATE_C_DEFAULTS, CandidateCRunner
 from .candidate_d_phd import CANDIDATE_D_BOUNDS, CANDIDATE_D_DEFAULTS, CandidateDRunner
+from .candidate_e_hybrid import CANDIDATE_E_BOUNDS, CANDIDATE_E_DEFAULTS, CandidateERunner
 from .charts import generate_comparison_bars_svg, generate_pareto_frontier_svg
 from .dataset import (
     CEILING_KITCHEN_SPECS,
@@ -41,6 +42,7 @@ _RUNNER_REGISTRY: dict[
     "B_Coupled_HMM": (CandidateBRunner, CANDIDATE_B_BOUNDS, CANDIDATE_B_DEFAULTS),
     "C_2D_Occupancy_Grid": (CandidateCRunner, CANDIDATE_C_BOUNDS, CANDIDATE_C_DEFAULTS),
     "D_RFS_PHD_HSMM": (CandidateDRunner, CANDIDATE_D_BOUNDS, CANDIDATE_D_DEFAULTS),
+    "E_Hybrid_HMM_Weibull": (CandidateERunner, CANDIDATE_E_BOUNDS, CANDIDATE_E_DEFAULTS),
 }
 
 # Worker process global state (initialized once per worker process)
@@ -342,7 +344,12 @@ def run_optimization_sprawl(
     heldout_validation: dict[str, Any] = {"A_Baseline_v6_1": a_val}
     ceiling_sensitivity: dict[str, Any] = {"A_Baseline_v6_1": a_ceil}
 
-    for cname in ("B_Coupled_HMM", "C_2D_Occupancy_Grid", "D_RFS_PHD_HSMM"):
+    for cname in (
+        "B_Coupled_HMM",
+        "C_2D_Occupancy_Grid",
+        "D_RFS_PHD_HSMM",
+        "E_Hybrid_HMM_Weibull",
+    ):
         _, bounds, defaults = _RUNNER_REGISTRY[cname]
         print(f"\n[opt] Stage 1 LHS ({lhs_samples} configs + default) for {cname}...")
         lhs_cfgs = [dict(defaults)] + sample_lhs(bounds, lhs_samples, rng)
@@ -428,7 +435,7 @@ def run_optimization_sprawl(
             "total_scenario_runs": (
                 sum(len(v) for v in train_sprawl.values()) * len(train_bundles)
                 + len(train_bundles)
-                + len(val_bundles) * 4
+                + len(val_bundles) * (len(train_sprawl) + 1)
             ),
             "elapsed_sec": total_time,
         },
