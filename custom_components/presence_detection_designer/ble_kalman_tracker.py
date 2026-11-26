@@ -37,6 +37,47 @@ class KalmanConfig:
     pir_sigma_ft: float = 6.0
     # Minimum 1-sigma floor (ft) so covariance never collapses to numerical zero
     min_sigma_ft: float = 1.0
+    # Multi-occupant 2-DOF Mahalanobis gate (99.5% = 10.60) & max association distance (ft)
+    assoc_chi2_2dof: float = 10.60
+    assoc_max_dist_ft: float = 16.0
+    # Bounded supporting-only EKF likelihood ratio range for Bayesian fusion
+    ekf_max_lr: float = 4.5
+    ekf_min_lr: float = 0.25
+
+
+def ekf_room_probability_to_likelihood(
+    room_prob: float,
+    *,
+    sigma_ft: float = 4.0,
+    max_lr: float = 4.5,
+    min_lr: float = 0.25,
+) -> tuple[float, float]:
+    """Map continuous EKF room probability [0..1] to bounded supporting Bayesian (p_true, p_false).
+
+    Properties:
+    - p = 0.50 (straddling a boundary) -> neutral (0.50, 0.50), LR = 1.0
+    - p -> 1.0 (squarely inside room)  -> supporting confirmation up to LR <= max_lr (never solo-triggers)
+    - p -> 0.0 (squarely elsewhere)    -> smooth contradiction attenuation down to LR >= min_lr
+    - High covariance (large sigma_ft) -> confidence factor tapers smoothly toward neutral (0.50, 0.50)
+    """
+    p = max(0.0, min(1.0, float(room_prob)))
+    # Uncertainty taper: full authority at sigma <= 3 ft, decays smoothly toward 0 as sigma grows
+    conf = 1.0 / (1.0 + max(0.0, float(sigma_ft) - 3.0) / 6.0)
+    conf = max(0.15, min(1.0, conf))
+
+    # Signed log-likelihood ratio interpolated smoothly across p in [0, 1]
+    if p >= 0.5:
+        frac = (p - 0.5) / 0.5  # [0, 1]
+        log_lr = conf * frac * math.log(max(1.01, float(max_lr)))
+    else:
+        frac = (0.5 - p) / 0.5  # [0, 1]
+        log_lr = -conf * frac * math.log(1.0 / max(0.05, min(0.99, float(min_lr))))
+
+    lr = math.exp(log_lr)
+    # Convert symmetric LR to (p_true, p_false) with p_true + p_false = 1 -> p_true / p_false = lr
+    p_true = lr / (1.0 + lr)
+    p_false = 1.0 / (1.0 + lr)
+    return round(max(0.05, min(0.95, p_true)), 3), round(max(0.05, min(0.95, p_false)), 3)
 
 
 @dataclass(frozen=True)
@@ -361,21 +402,75 @@ class BLEKalmanTracker:
         floor: str,
         now_ts: float,
         gate: bool = False,
-    ) -> None:
+    ) -> bool:
         """Fuse a direct 2D position observation (Frigate camera sub-zone or PIR centroid)."""
-        if not self.initialized or floor != self.floor:
-            if not self.initialized:
-                self._init_from_xy(x_px, y_px, floor, sigma_ft=sigma_ft, now_ts=now_ts)
-                return
-            # Strong camera/PIR confirmation on another floor shifts the floor immediately
+        if not self.initialized:
+            self._init_from_xy(x_px, y_px, floor, sigma_ft=sigma_ft, now_ts=now_ts)
+            return True
+        if floor != self.floor:
+            if gate:
+                return False
             self.floor = floor
             self._init_from_xy(x_px, y_px, floor, sigma_ft=sigma_ft, now_ts=now_ts)
-            return
+            return True
 
         self.predict(now_ts)
-        r_var = (max(self.cfg.min_sigma_ft, sigma_ft) * self.cfg.px_per_foot) ** 2
-        self._scalar_ekf_update([1.0, 0.0, 0.0, 0.0], float(x_px) - self.x[0], r_var, gate=gate)
-        self._scalar_ekf_update([0.0, 1.0, 0.0, 0.0], float(y_px) - self.x[1], r_var, gate=gate)
+        scale = self.cfg.px_per_foot
+        r_var = (max(self.cfg.min_sigma_ft, sigma_ft) * scale) ** 2
+        if gate:
+            dx = float(x_px) - self.x[0]
+            dy = float(y_px) - self.x[1]
+            dist_ft = math.hypot(dx, dy) / scale
+            if dist_ft > self.cfg.assoc_max_dist_ft:
+                return False
+            # 2-DOF Mahalanobis check using marginal variances
+            sx2 = max(1e-6, self.P[0][0] + r_var)
+            sy2 = max(1e-6, self.P[1][1] + r_var)
+            d2 = (dx * dx) / sx2 + (dy * dy) / sy2
+            if d2 > self.cfg.assoc_chi2_2dof:
+                return False
+
+        self._scalar_ekf_update([1.0, 0.0, 0.0, 0.0], float(x_px) - self.x[0], r_var, gate=False)
+        self._scalar_ekf_update([0.0, 1.0, 0.0, 0.0], float(y_px) - self.x[1], r_var, gate=False)
+        return True
+
+    def update_position_gated(
+        self,
+        x_px: float,
+        y_px: float,
+        *,
+        sigma_ft: float,
+        floor: str,
+        now_ts: float,
+        allow_floor_jump_when_ble_absent: bool = True,
+    ) -> bool:
+        """Multi-occupant safe position fusion: rejects hits that belong to another person.
+
+        When BLE proxies are actively tracking this person, only camera/PIR detections
+        on the same floor and within the 2-DOF Mahalanobis & distance association gate
+        are fused. When BLE has 0 active proxies (e.g., Garage), allows unassociated
+        snapping so coverage gaps remain seamlessly tracked.
+        """
+        if not self.initialized:
+            self._init_from_xy(x_px, y_px, floor, sigma_ft=sigma_ft, now_ts=now_ts)
+            return True
+
+        has_live_ble = self.last_active_proxies > 0
+        if floor != self.floor:
+            if has_live_ble or not allow_floor_jump_when_ble_absent:
+                return False
+            return self.update_position(
+                x_px, y_px, sigma_ft=sigma_ft, floor=floor, now_ts=now_ts, gate=False
+            )
+
+        return self.update_position(
+            x_px,
+            y_px,
+            sigma_ft=sigma_ft,
+            floor=floor,
+            now_ts=now_ts,
+            gate=has_live_ble,
+        )
 
     def compute_room_probabilities(
         self,
@@ -539,3 +634,107 @@ def read_bermuda_proxy_ranges(
             )
         )
     return out
+
+
+class HouseEKFManager:
+    """Manage per-tracker 2D+Floor EKF instances and fuse live Bermuda + camera/PIR hits."""
+
+    def __init__(self, config: KalmanConfig | None = None) -> None:
+        self.cfg = config or KalmanConfig()
+        self.trackers: dict[str, BLEKalmanTracker] = {}
+
+    def get_tracker(self, tracker_entity_id: str) -> BLEKalmanTracker:
+        """Return or create a persistent BLEKalmanTracker for `tracker_entity_id`."""
+        eid = str(tracker_entity_id).strip()
+        if eid not in self.trackers:
+            self.trackers[eid] = BLEKalmanTracker(self.cfg)
+        return self.trackers[eid]
+
+    def update_from_observations(
+        self,
+        *,
+        tracker_entity_id: str,
+        ble_ranges: list[BLERangeMeasurement],
+        floorplan: dict[str, Any] | None,
+        now_ts: float,
+        active_camera_hits: list[tuple[str, float, float]] | None = None,
+        active_pir_hits: list[tuple[str, float, float]] | None = None,
+        bermuda_area_floor: str | None = None,
+    ) -> KalmanEstimate:
+        """Update one tracker with BLE ranges + Mahalanobis-gated camera/PIR observations."""
+        ekf = self.get_tracker(tracker_entity_id)
+        fp = floorplan if isinstance(floorplan, dict) else {}
+
+        # Floor hints: only use Bermuda's own calibrated floor or hits consistent with BLE
+        floor_hints: dict[str, float] = {}
+        if bermuda_area_floor:
+            floor_hints[bermuda_area_floor] = floor_hints.get(bermuda_area_floor, 0.0) + 1.5
+
+        # If BLE has live proxies on at least one floor, do NOT inject unattributed other-floor hints
+        live_ble_floors = {
+            m.floor
+            for m in ble_ranges
+            if m.age_sec <= self.cfg.max_ble_age_sec and m.distance_ft <= self.cfg.max_ble_range_ft
+        }
+        if not live_ble_floors:
+            for cfl, _cx, _cy in active_camera_hits or []:
+                floor_hints[cfl] = floor_hints.get(cfl, 0.0) + 3.0
+            for pfl, _px, _py in active_pir_hits or []:
+                floor_hints[pfl] = floor_hints.get(pfl, 0.0) + 1.5
+
+        ekf.update_ble_ranges(ble_ranges, now_ts=now_ts, floor_hints=floor_hints)
+
+        # Fuse camera sub-zones first (tight sigma), gated so other occupants never pull this track
+        fused_cam = False
+        for cfl, cx, cy in active_camera_hits or []:
+            if ekf.update_position_gated(
+                cx, cy, sigma_ft=self.cfg.camera_sigma_ft, floor=cfl, now_ts=now_ts
+            ):
+                fused_cam = True
+
+        # Fuse fast PIR centroids only when no camera snapped this tick (prevents double-pull)
+        if not fused_cam:
+            for pfl, px, py in active_pir_hits or []:
+                ekf.update_position_gated(
+                    px, py, sigma_ft=self.cfg.pir_sigma_ft, floor=pfl, now_ts=now_ts
+                )
+
+        rooms_on_floor = [
+            r
+            for r in (fp.get("rooms") or [])
+            if isinstance(r, dict) and str(r.get("floor") or "") == ekf.floor
+        ]
+        return ekf.get_estimate(rooms_on_floor)
+
+    def serialize_tracks(self, floorplan: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        """Serialize all initialized EKF tracks for API/UI rendering and Bayesian fusion."""
+        fp = floorplan if isinstance(floorplan, dict) else {}
+        rooms = fp.get("rooms") or []
+        out: dict[str, dict[str, Any]] = {}
+        for eid, ekf in self.trackers.items():
+            if not ekf.initialized:
+                continue
+            rooms_on_floor = [
+                r for r in rooms if isinstance(r, dict) and str(r.get("floor") or "") == ekf.floor
+            ]
+            est = ekf.get_estimate(rooms_on_floor)
+            out[eid] = {
+                "entity_id": eid,
+                "floor": est.floor,
+                "x_px": est.x_px,
+                "y_px": est.y_px,
+                "vx_px_s": est.vx_px_s,
+                "vy_px_s": est.vy_px_s,
+                "speed_ft_s": est.speed_ft_s,
+                "heading_deg": est.heading_deg,
+                "sigma_x_ft": est.sigma_x_ft,
+                "sigma_y_ft": est.sigma_y_ft,
+                "sigma_x_px": round(est.sigma_x_ft * ekf.cfg.px_per_foot, 1),
+                "sigma_y_px": round(est.sigma_y_ft * ekf.cfg.px_per_foot, 1),
+                "room_probabilities": est.room_probabilities,
+                "top_room": est.top_room,
+                "top_room_prob": est.top_room_prob,
+                "active_proxy_count": est.active_proxy_count,
+                "rejected_outliers": est.rejected_outliers,
+            }
+        return out

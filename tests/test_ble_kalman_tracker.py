@@ -9,7 +9,9 @@ from unittest.mock import MagicMock
 from custom_components.presence_detection_designer.ble_kalman_tracker import (
     BLEKalmanTracker,
     BLERangeMeasurement,
+    HouseEKFManager,
     KalmanConfig,
+    ekf_room_probability_to_likelihood,
     read_bermuda_proxy_ranges,
 )
 from custom_components.presence_detection_designer.spatial_topology import get_default_floorplan
@@ -192,3 +194,58 @@ def test_read_bermuda_proxy_ranges_from_runtime_data():
     assert ranges[0].floor == "upstairs"
     assert abs(ranges[0].distance_ft - 6.56) < 0.05
     assert ranges[0].age_sec == 1.0
+
+
+def test_ekf_multi_occupant_gating_ignores_distant_person():
+    """Margot triggering upstairs or in Family Room must not pull Steve's Kitchen EKF track."""
+    fp = get_default_floorplan()
+    mgr = HouseEKFManager()
+
+    # Steve is cleanly tracked in Kitchen on main floor via BLE proxies
+    kitchen_x, kitchen_y = 390.0, 180.0
+    main_proxies = [p for p in fp["ble_proxies"] if p["floor"] == "main"]
+    for t in range(1, 12):
+        meas = [
+            BLERangeMeasurement(
+                proxy_id=p["id"],
+                floor="main",
+                x_px=float(p["x"]),
+                y_px=float(p["y"]),
+                distance_ft=_dist_ft(kitchen_x, kitchen_y, float(p["x"]), float(p["y"])),
+            )
+            for p in main_proxies
+        ]
+        # Simultaneously, Margot sits in Margot's Room (upstairs) and triggers a distant Family Room camera
+        est = mgr.update_from_observations(
+            tracker_entity_id="sensor.steve_s_s25_ble_area",
+            ble_ranges=meas,
+            floorplan=fp,
+            now_ts=float(t),
+            active_camera_hits=[("upstairs", 460.0, 120.0), ("main", 720.0, 220.0)],
+        )
+
+    assert est.floor == "main"
+    assert est.top_room == "Kitchen"
+    assert _dist_ft(est.x_px, est.y_px, kitchen_x, kitchen_y) < 3.0
+
+
+def test_ekf_room_probability_to_likelihood_is_smooth_and_bounded():
+    """Continuous EKF probability maps smoothly to supporting-only bounded Bayesian likelihoods."""
+    # Straddling a border -> neutral (0.50, 0.50)
+    pt_mid, pf_mid = ekf_room_probability_to_likelihood(0.50, sigma_ft=3.0)
+    assert pt_mid == 0.5
+    assert pf_mid == 0.5
+
+    # High confidence inside room -> bounded positive confirmation (LR <= 4.5, never solo-trigger)
+    pt_hi, pf_hi = ekf_room_probability_to_likelihood(0.98, sigma_ft=2.5)
+    lr_hi = pt_hi / pf_hi
+    assert 3.0 < lr_hi <= 4.6
+
+    # High confidence elsewhere -> smooth contradiction attenuation (LR >= 0.24)
+    pt_lo, pf_lo = ekf_room_probability_to_likelihood(0.02, sigma_ft=2.5)
+    lr_lo = pt_lo / pf_lo
+    assert 0.22 <= lr_lo < 0.35
+
+    # Large uncertainty tapers toward neutral
+    pt_unc, pf_unc = ekf_room_probability_to_likelihood(0.95, sigma_ft=14.0)
+    assert (pt_unc / pf_unc) < lr_hi
