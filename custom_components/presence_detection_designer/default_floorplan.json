@@ -1988,9 +1988,9 @@
       "name": "Basement NFC Reader (BLE Proxy)",
       "model_preset": "esphome_ble_proxy",
       "floor": "basement",
-      "host_room": "Basement Play Area",
-      "x": 510,
-      "y": 360,
+      "host_room": "Basement Theater",
+      "x": 104,
+      "y": 280,
       "radius_px": 210
     },
     {

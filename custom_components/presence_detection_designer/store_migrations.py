@@ -228,6 +228,9 @@ def migrate_and_backfill_store_payload(
                 ) and dp.get("entity_id"):
                     cur_p["entity_id"] = dp["entity_id"]
                     dirty = True
+                if pid == "nfc_basement" and cur_p.get("host_room") != "Basement Theater":
+                    cur_p["host_room"] = "Basement Theater"
+                    dirty = True
 
         # Enforce hardware preset specs (ray distance / FOV / radius) on preset-backed devices
         if enforce_floorplan_preset_specs(fp_dict):

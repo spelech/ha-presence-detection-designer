@@ -38,6 +38,8 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-m 'not golden'"
 markers = [
     "requirement(id, category, req_type): SRS requirement traceability marker",
+    "golden: Layered + fuzzed golden ground-truth presence simulation suite",
 ]
