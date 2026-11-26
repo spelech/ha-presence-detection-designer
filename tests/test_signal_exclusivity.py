@@ -184,7 +184,8 @@ async def test_leftover_lights_media_dhumidity_and_ups_never_trigger_vacant_room
     ]
 
     with VirtualHAHarness(
-        storage_dir=tmp_path, global_settings={"ble_decider_enabled": True}
+        storage_dir=tmp_path,
+        global_settings={"ble_decider_enabled": True, "inference_engine": "legacy"},
     ) as harness:
         await harness.async_add_rooms(rooms)
         for _k, _v in {
@@ -462,13 +463,8 @@ async def test_ble_decider_disabled_suppresses_all_ble_fusion_pir_and_power_cont
             for obs in (fr.last_bayesian_eval.active_observations if fr.last_bayesian_eval else [])
         )
 
-        # 2. Single PIR spike with BLE=Family Room is NOT corroborated by BLE when disabled
-        harness.set_state("binary_sensor.family_room_motion_occupancy", "on")
-        assert fr.state_machine.state == OccupancyState.VACANT
-
-        # 3. Confirmed occupancy held by TV power is NOT dropped when BLE jumps to Kitchen
+        # 2. Confirmed occupancy held by TV power is NOT dropped when BLE jumps to Kitchen
         harness.set_state("sensor.family_room_tv_watts", "120")
-        harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
         harness.set_state("binary_sensor.family_room_motion_occupancy", "on")
         harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
         assert fr.state_machine.state == OccupancyState.OCCUPIED_HOLDING
@@ -476,3 +472,56 @@ async def test_ble_decider_disabled_suppresses_all_ble_fusion_pir_and_power_cont
         harness.set_state("binary_sensor.kitchen_island_person_occupancy", "on")
         harness.set_state("sensor.steve_s_s25_ble_area", "Kitchen")
         assert fr.state_machine.state == OccupancyState.OCCUPIED_HOLDING
+
+
+@pytest.mark.requirement("SIGNAL-01", category="SIGNAL", req_type="FailClosedGuardrail")
+@pytest.mark.asyncio
+async def test_ble_decider_supporting_only_never_bypasses_configured_triggers(tmp_path) -> None:
+    """When ble_decider_enabled=True, BLE + unconfigured Ecobee PIR cannot bypass configured_triggers to occupy a vacant room."""
+    rooms = [
+        {
+            CONF_ROOM_NAME: "Family Room",
+            CONF_MODE: "open",
+            CONF_INACTIVITY_TIMEOUT: 20,
+            CONF_TRIGGER_ENTITIES: [
+                "binary_sensor.family_room_couch_person_occupancy",
+                "binary_sensor.family_room_floor_person_occupancy",
+            ],
+            CONF_BAYESIAN_PRIOR: 0.15,
+            CONF_BAYESIAN_THRESHOLD: 0.75,
+            CONF_BAYESIAN_OBSERVATIONS: [
+                {
+                    "entity_id": "binary_sensor.family_room_couch_person_occupancy",
+                    "preset": "strong",
+                },
+                {"entity_id": "binary_sensor.family_room_ecobee_motion", "preset": "supporting"},
+                {
+                    "entity_id": "sensor.steve_s_s25_ble_area",
+                    "operator": "equals",
+                    "state": "Family Room",
+                    "preset": "moderate",
+                },
+            ],
+        }
+    ]
+
+    with VirtualHAHarness(
+        storage_dir=tmp_path,
+        global_settings={
+            "ble_decider_enabled": True,
+            "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+        },
+    ) as harness:
+        await harness.async_add_rooms(rooms)
+        fr = harness.coordinators["Family Room"]
+
+        harness.set_state("binary_sensor.family_room_couch_person_occupancy", "off")
+        harness.set_state("binary_sensor.family_room_floor_person_occupancy", "off")
+        harness.set_state("binary_sensor.family_room_ecobee_motion", "on")
+        harness.set_state("sensor.steve_s_s25_ble_area", "Family Room")
+        harness.advance(5)
+
+        # Neither BLE alone nor BLE + unconfigured Ecobee PIR may initiate occupancy from vacant
+        assert fr.state_machine.state == OccupancyState.VACANT
+        assert fr.state_machine.is_present is False
+        assert fr.state_machine.snapshot.human_present is False

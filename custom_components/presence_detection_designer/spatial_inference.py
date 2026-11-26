@@ -414,6 +414,34 @@ def evaluate_spatial_frame(
         if est.get("pet_present")
     ]
 
+    # Reuse cached PIR spillover matrix if floorplan sensors/rooms signature is unchanged
+    fp_sig = (
+        len(fp.get("sensors") or []),
+        len(fp.get("rooms") or []),
+        tuple(
+            (
+                str(s.get("entity_id") or s.get("id") or ""),
+                s.get("x"),
+                s.get("y"),
+                s.get("heading_deg"),
+                s.get("fov_deg"),
+                s.get("range_px"),
+            )
+            for s in (fp.get("sensors") or [])
+            if isinstance(s, dict) and s.get("sensor_type") == "pir_motion"
+        ),
+    )
+    if (
+        isinstance(prev_frame, dict)
+        and prev_frame.get("_pir_spillover_sig") == fp_sig
+        and isinstance(prev_frame.get("pir_spillover_matrix"), dict)
+    ):
+        pir_spillover_matrix = prev_frame["pir_spillover_matrix"]
+    else:
+        from .spatial_topology import compute_pir_spillover_matrix
+
+        pir_spillover_matrix = compute_pir_spillover_matrix(fp)
+
     return {
         "ts": now_ts,
         "negative_space_enabled": effective_neg_space,
@@ -435,4 +463,6 @@ def evaluate_spatial_frame(
         "recent_shade_move_ts": recent_shade_move_ts,
         "prev_shade_states": prev_shade_states,
         "prev_ble_states": prev_ble_states,
+        "pir_spillover_matrix": pir_spillover_matrix,
+        "_pir_spillover_sig": fp_sig,
     }

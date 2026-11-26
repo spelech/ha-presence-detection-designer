@@ -456,7 +456,7 @@ def test_floorplan_multi_sensor_layers_and_compilation():
     """Verify PIR motion cones, Frigate 2D sub-zones, door contacts, and BLE proxy anchors compile on the floorplan."""
     fp = get_default_floorplan()
     assert len(fp.get("sensors", [])) >= 12
-    assert len(fp.get("ble_proxies", [])) == 6
+    assert len(fp.get("ble_proxies", [])) == 16
 
     pir_sensors = [s for s in fp["sensors"] if s.get("sensor_type") == "pir_motion"]
     door_sensors = [s for s in fp["sensors"] if s.get("sensor_type") == "door_contact"]
@@ -473,7 +473,7 @@ def test_floorplan_multi_sensor_layers_and_compilation():
     compiled = compile_floorplan_topology(fp)
     assert len(compiled.get("pir_analysis", [])) == len(pir_sensors)
     assert len(compiled.get("sub_zone_analysis", [])) >= 20
-    assert len(compiled.get("ble_proxy_analysis", [])) == 6
+    assert len(compiled.get("ble_proxy_analysis", [])) == 16
 
     # PIR analysis includes wall-occluded visibility polygons
     first_pir = compiled["pir_analysis"][0]

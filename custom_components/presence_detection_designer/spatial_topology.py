@@ -49,6 +49,56 @@ __all__ = [
 ]
 
 
+def compute_pir_spillover_matrix(
+    floorplan: dict[str, Any] | None,
+    *,
+    min_overlap_pct: float = 5.0,
+) -> dict[str, dict[str, float]]:
+    """Compute {pir_entity_id: {other_room_name: overlap_fraction}} from floorplan geometry."""
+    if not isinstance(floorplan, dict):
+        return {}
+    rooms = floorplan.get("rooms") or []
+    sensors = floorplan.get("sensors") or []
+    if not rooms or not sensors:
+        return {}
+    raw_walls = floorplan.get("floor_wall_segments") or {}
+    segs_by_floor: dict[str, list[tuple[tuple[float, float], tuple[float, float]]]] = {}
+    for fl, segs in raw_walls.items():
+        parsed: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        for s in segs or []:
+            if isinstance(s, (list, tuple)) and len(s) == 2:
+                parsed.append(((float(s[0][0]), float(s[0][1])), (float(s[1][0]), float(s[1][1]))))
+        segs_by_floor[str(fl)] = parsed
+
+    matrix: dict[str, dict[str, float]] = {}
+    for sen in sensors:
+        if not isinstance(sen, dict) or sen.get("sensor_type") != "pir_motion":
+            continue
+        eid = str(sen.get("entity_id") or sen.get("id") or "").strip()
+        if not eid:
+            continue
+        fl = str(sen.get("floor") or "")
+        host = str(sen.get("host_room") or "")
+        spills: dict[str, float] = {}
+        for r in rooms:
+            if not isinstance(r, dict):
+                continue
+            rname = str(r.get("name") or "")
+            if str(r.get("floor") or "") != fl or not rname or rname == host:
+                continue
+            pct = compute_cone_room_overlap_pct(
+                sen,
+                r,
+                grid_steps=10,
+                solid_segments=segs_by_floor.get(fl, []),
+            )
+            if pct >= min_overlap_pct:
+                spills[rname] = round(pct / 100.0, 4)
+        if spills:
+            matrix[eid] = spills
+    return matrix
+
+
 def _build_spatial_ambiguities(
     rooms_list: list[dict[str, Any]],
     rooms_by_name: dict[str, dict[str, Any]],

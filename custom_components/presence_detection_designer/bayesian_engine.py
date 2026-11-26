@@ -276,6 +276,37 @@ def build_effective_observations(config: dict[str, Any]) -> list[dict[str, Any]]
     return normalized
 
 
+def get_active_pir_spillover_fraction(
+    hass: Any,
+    entity_id: str,
+    spatial_frame: dict[str, Any] | None,
+) -> float:
+    """Return max geometric spillover fraction [0..1] of `entity_id` into any OCCUPIED_CONFIRMED room."""
+    if (
+        not isinstance(spatial_frame, dict)
+        or not hass
+        or not isinstance(getattr(hass, "data", None), dict)
+    ):
+        return 0.0
+    spill_matrix = spatial_frame.get("pir_spillover_matrix")
+    if not isinstance(spill_matrix, dict):
+        return 0.0
+    spills = spill_matrix.get(str(entity_id))
+    if not isinstance(spills, dict) or not spills:
+        return 0.0
+    domain_data = hass.data.get(DOMAIN, {})
+    if not isinstance(domain_data, dict):
+        return 0.0
+    max_spill = 0.0
+    for peer in domain_data.values():
+        pname = getattr(peer, "room_name", None)
+        if pname in spills:
+            peer_sm = getattr(peer, "state_machine", None)
+            if peer_sm and peer_sm.state == OccupancyState.OCCUPIED_CONFIRMED:
+                max_spill = max(max_spill, float(spills[pname]))
+    return max_spill
+
+
 def apply_contextual_bayesian_penalties(
     observations: list[dict[str, Any]],
     *,
@@ -332,30 +363,70 @@ def apply_contextual_bayesian_penalties(
         eid = str(entry.get("entity_id", ""))
         prof = classify_sensor_reliability(eid)
         if prof.category == "ble_tracker":
-            raw_area = raw_ble_positions.get(eid)
-            if raw_area is None and hass and hasattr(hass, "states"):
-                st_obj = hass.states.get(eid)
-                raw_area = getattr(st_obj, "state", None) if st_obj is not None else None
-            target_room = (
-                (_normalize_ble_area_to_room(str(raw_area)) or str(raw_area).strip())
-                if raw_area is not None
-                else ""
-            )
-            t_low = target_room.lower()
-            is_known_other = (
-                bool(t_low)
-                and t_low not in ("unknown", "unavailable", "none", "away", "not_home")
-                and t_low != room_low
-            )
-            entry["penalize_when_off"] = bool(
+            # Prefer continuous 2D+Floor EKF Gaussian room probability when multi-proxy ranges are active
+            ekf_tracks = frame.get("ekf_tracks") if isinstance(frame, dict) else None
+            ekf_track = ekf_tracks.get(eid) if isinstance(ekf_tracks, dict) else None
+            if (
                 not guest_mode_enabled
-                and not has_ble_here
-                and is_known_other
-                and t_low in confirmed_rooms
-            )
+                and isinstance(ekf_track, dict)
+                and int(ekf_track.get("active_proxy_count", 0)) >= 1
+            ):
+                from .ble_kalman_tracker import ekf_room_probability_to_likelihood
+
+                room_probs = ekf_track.get("room_probabilities") or {}
+                p_room = float(room_probs.get(room_name, 0.0))
+                sigma_ft = max(
+                    float(ekf_track.get("sigma_x_ft", 4.0)),
+                    float(ekf_track.get("sigma_y_ft", 4.0)),
+                )
+                pt_ekf, pf_ekf = ekf_room_probability_to_likelihood(p_room, sigma_ft=sigma_ft)
+                entry["prob_given_true"] = pt_ekf
+                entry["prob_given_false"] = pf_ekf
+                entry["penalize_when_off"] = False
+                entry["_ekf_continuous"] = True
+                entry["_ekf_room_prob"] = round(p_room, 4)
+                entry["operator"] = "equals"
+                entry["state"] = "__ekf_active__"
+                entry["label"] = (
+                    f"{entry.get('label') or 'BLE EKF'} "
+                    f"(EKF {round(p_room * 100.0)}% ±{sigma_ft:.1f}ft)"
+                )
+            else:
+                raw_area = raw_ble_positions.get(eid)
+                if raw_area is None and hass and hasattr(hass, "states"):
+                    st_obj = hass.states.get(eid)
+                    raw_area = getattr(st_obj, "state", None) if st_obj is not None else None
+                target_room = (
+                    (_normalize_ble_area_to_room(str(raw_area)) or str(raw_area).strip())
+                    if raw_area is not None
+                    else ""
+                )
+                t_low = target_room.lower()
+                is_known_other = (
+                    bool(t_low)
+                    and t_low not in ("unknown", "unavailable", "none", "away", "not_home")
+                    and t_low != room_low
+                )
+                entry["penalize_when_off"] = bool(
+                    not guest_mode_enabled
+                    and not has_ble_here
+                    and is_known_other
+                    and t_low in confirmed_rooms
+                )
         else:
             # Camera off, PIR off, and non-exclusive sensors remain strictly neutral
             entry["penalize_when_off"] = False
+            # Spatial cross-talk attenuation when a spilling PIR's target room is actively occupied
+            if not guest_mode_enabled and hass and prof.is_pir:
+                sp_frac = get_active_pir_spillover_fraction(hass, eid, frame)
+                if sp_frac > 0.0:
+                    from .sensor_reliability import apply_signal_weight
+
+                    w_ct = max(0.15, 1.0 - 2.5 * sp_frac)
+                    _preset, pt_cur, pf_cur = resolve_observation_weights(entry)
+                    pt_w, pf_w = apply_signal_weight(pt_cur, pf_cur, w_ct)
+                    entry["prob_given_true"] = pt_w
+                    entry["prob_given_false"] = pf_w
         contextual.append(entry)
     return contextual
 

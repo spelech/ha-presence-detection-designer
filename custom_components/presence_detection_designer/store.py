@@ -31,6 +31,7 @@ except Exception:  # noqa: BLE001
             self._mem = copy.deepcopy(data)
 
 
+from .ble_kalman_tracker import HouseEKFManager
 from .const import (
     DATA_STORE,
     DEFAULT_BLE_DECIDER_ENABLED,
@@ -56,6 +57,7 @@ from .const import (
     STORAGE_VERSION,
     LLMProviderType,
 )
+from .hmm_engine import DEFAULT_HMM_PARAMS, HouseHMMEngine, HouseTopologyModel
 from .spatial_topology import get_default_floorplan
 from .store_migrations import migrate_and_backfill_store_payload
 
@@ -80,6 +82,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
     "ble_decider_enabled": DEFAULT_BLE_DECIDER_ENABLED,
+    "inference_engine": "coupled_hmm",
+    "hmm_params": dict(DEFAULT_HMM_PARAMS),
     "pir_validation_enabled": DEFAULT_PIR_VALIDATION_ENABLED,
     "pir_candidate_window": DEFAULT_PIR_CANDIDATE_WINDOW,
     "ui_advanced_mode": False,
@@ -118,7 +122,41 @@ class PDDStore:
         self._store: Any = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._data: dict[str, Any] = _default_store_data()
         self._loaded: bool = False
+        self.ekf_manager: HouseEKFManager = HouseEKFManager()
+        self.hmm_engine: HouseHMMEngine | None = None
+        self._hmm_sig: Any = None
+        self._ble_ranges_provider: Any = None
         self._save_locks: dict[int, asyncio.Lock] = {}
+
+    def get_or_create_hmm_engine(
+        self,
+        floorplan: dict[str, Any],
+        room_configs: dict[str, dict[str, Any]],
+    ) -> HouseHMMEngine:
+        """Return house-wide Coupled Log-Odds HMM engine, rebuilding if topology changed."""
+        fp_rooms = tuple(
+            str(r.get("name", ""))
+            for r in (floorplan.get("rooms") or [])
+            if isinstance(r, dict) and r.get("name")
+        )
+        fp_sens = len(floorplan.get("sensors") or [])
+        fp_cams = len(floorplan.get("cameras") or [])
+        cfg_rooms = tuple(sorted(room_configs.keys()))
+        raw_params = self.global_settings.get("hmm_params")
+        params_sig = (
+            tuple(sorted((str(k), float(v)) for k, v in raw_params.items()))
+            if isinstance(raw_params, dict)
+            else ()
+        )
+        sig = (fp_rooms, fp_sens, fp_cams, cfg_rooms, params_sig)
+        if self.hmm_engine is None or self._hmm_sig != sig:
+            topo = HouseTopologyModel(floorplan, room_configs)
+            params = dict(DEFAULT_HMM_PARAMS)
+            if isinstance(raw_params, dict):
+                params.update({str(k): float(v) for k, v in raw_params.items()})
+            self.hmm_engine = HouseHMMEngine(topology=topo, params=params)
+            self._hmm_sig = sig
+        return self.hmm_engine
 
     async def async_load(self) -> dict[str, Any]:
         """Load .storage data and synchronize any existing ConfigEntries."""
@@ -435,10 +473,12 @@ class PDDStore:
         """Persist an updated 2D spatial floorplan to .storage."""
         if not isinstance(floorplan, dict) or not floorplan.get("floors"):
             floorplan = get_default_floorplan()
-        self._data["floorplan"] = copy.deepcopy(floorplan)
-        from .trajectory_validator import clear_topology_cache
+        fp_copy = copy.deepcopy(floorplan)
+        from .store_migrations import enforce_floorplan_preset_specs
 
-        clear_topology_cache()
+        enforce_floorplan_preset_specs(fp_copy)
+        self._data["floorplan"] = fp_copy
+        self._hmm_sig = None
         await self.async_save()
         return copy.deepcopy(self._data["floorplan"])
 

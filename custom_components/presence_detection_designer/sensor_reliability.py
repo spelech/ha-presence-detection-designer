@@ -18,6 +18,8 @@ ECOBEE_MOTION_ENTITIES: frozenset[str] = frozenset(
         "binary_sensor.guest_room_motion",
         "binary_sensor.family_room_ecobee_motion",
         "binary_sensor.basement_ecobee_motion",
+        "binary_sensor.storage_room_ecobee_motion",
+        "binary_sensor.hallway_bathroom_motion",
     }
 )
 
@@ -31,6 +33,8 @@ ECOBEE_OCCUPANCY_ENTITIES: frozenset[str] = frozenset(
         "binary_sensor.guest_room_occupancy",
         "binary_sensor.family_room_ecobee_occupancy",
         "binary_sensor.basement_ecobee_occupancy",
+        "binary_sensor.storage_room_ecobee_occupancy",
+        "binary_sensor.hallway_bathroom_occupancy",
     }
 )
 

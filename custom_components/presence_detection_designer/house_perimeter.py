@@ -476,7 +476,7 @@ class HousePerimeterTracker:
         changed = False
         old_mode, old_count = self.state.mode, self.state.count
         if occupied_room_names is None:
-            from .trajectory_validator import get_all_room_coordinators
+            from .coordinator_helpers import get_all_room_coordinators
 
             occupied_room_names = [
                 c.room_name

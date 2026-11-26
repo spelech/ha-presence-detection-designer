@@ -480,6 +480,58 @@ class RoomPresenceStateMachine:
         """Invoke the transitions force_clear trigger safely."""
         return bool(self.trigger("force_clear", now_ts=now_ts, reason=reason))
 
+    def apply_hmm_belief(self, belief: Any, *, now_ts: float | None = None) -> bool:
+        """Synchronize state machine probability and hysteresis occupancy from HouseHMMEngine."""
+        now = self._now(now_ts)
+        prev_present = self.is_present
+
+        self.bayesian_probability = float(belief.probability)
+        self.bayesian_probability_pct = float(belief.probability_pct)
+        self.bayesian_occupied = bool(belief.is_occupied)
+        self.bayesian_threshold = float(belief.theta_enter)
+        drivers = list(getattr(belief, "active_drivers", ()) or ())
+        status_label = "Occupied" if belief.is_occupied else "Vacant"
+        driver_str = f" Drivers: {', '.join(drivers[:4])}." if drivers else ""
+        self.bayesian_summary = (
+            f"{belief.probability_pct:.1f}% probability ({status_label}; "
+            f"tier={belief.confidence_tier}, enter={belief.theta_enter * 100.0:.1f}%, "
+            f"clear={belief.theta_clear * 100.0:.1f}%).{driver_str}"
+        )
+        self.active_observations = [{"entity_id": d, "explanation": d, "label": d} for d in drivers]
+        if drivers:
+            self.last_trigger_entity = drivers[0]
+
+        if self.override:
+            return False
+
+        self.snapshot = RoomEvidenceSnapshot(
+            active_triggers=frozenset(drivers) if belief.is_occupied else frozenset(),
+            active_conditions=(("sustain",) if belief.sustaining_active else ()),
+            bayesian_occupied=bool(belief.is_occupied),
+            bayesian_probability=float(belief.probability),
+            bayesian_probability_pct=float(belief.probability_pct),
+            bayesian_summary=self.bayesian_summary,
+            active_observations=tuple(self.active_observations),
+            human_present=bool(belief.is_occupied),
+            camera_confirmed=any(str(d).startswith("cam:") for d in drivers),
+            last_trigger_entity=drivers[0] if drivers else self.last_trigger_entity,
+        )
+
+        if belief.is_occupied and not prev_present:
+            reason = (
+                f"HMM confidence {belief.probability_pct:.1f}% >= "
+                f"{belief.theta_enter * 100.0:.1f}%"
+                + (f" ({', '.join(drivers[:3])})" if drivers else "")
+            )
+            self.trigger("evidence_detected", now_ts=now, reason=reason)
+        elif not belief.is_occupied and prev_present:
+            reason = (
+                f"HMM confidence {belief.probability_pct:.1f}% <= {belief.theta_clear * 100.0:.1f}%"
+            )
+            self.force_clear_trigger(now_ts=now, reason=reason)
+
+        return self.is_present != prev_present
+
     def advance_time(self, seconds: float, now_ts: float | None = None) -> str | None:
         """Advance virtual clock and fire any expired state timer deterministically."""
         if now_ts is not None:
