@@ -1433,20 +1433,6 @@
       "range_px": 190
     },
     {
-      "id": "binary_sensor.garage_keypad_motion",
-      "entity_id": "binary_sensor.garage_keypad_motion",
-      "name": "Garage Keypad PIR (Ring 4AK1SZ)",
-      "sensor_type": "pir_motion",
-      "model_preset": "ring_keypad_pir",
-      "floor": "main",
-      "host_room": "Garage",
-      "x": 600,
-      "y": 428,
-      "heading_deg": 91,
-      "fov_deg": 100,
-      "range_px": 165
-    },
-    {
       "id": "binary_sensor.family_room_ring_motion",
       "entity_id": "binary_sensor.family_room_ring_motion",
       "name": "Family Room Ring Cam Motion (Kitchen / Back Door)",
@@ -1473,20 +1459,6 @@
       "heading_deg": 268,
       "fov_deg": 120,
       "range_px": 220
-    },
-    {
-      "id": "binary_sensor.keypad_motion",
-      "entity_id": "binary_sensor.keypad_motion",
-      "name": "Main Floor Keypad PIR (Between Peninsula & Powder Bath)",
-      "sensor_type": "pir_motion",
-      "model_preset": "ring_keypad_pir",
-      "floor": "main",
-      "host_room": "Front Entry",
-      "x": 410,
-      "y": 315,
-      "heading_deg": 0,
-      "fov_deg": 100,
-      "range_px": 165
     },
     {
       "id": "binary_sensor.garage_ring_motion",
@@ -1573,20 +1545,6 @@
       "heading_deg": 179,
       "fov_deg": 110,
       "range_px": 190
-    },
-    {
-      "id": "binary_sensor.upper_level_keypad_motion",
-      "entity_id": "binary_sensor.upper_level_keypad_motion",
-      "name": "Master Bedside Keypad PIR",
-      "sensor_type": "pir_motion",
-      "model_preset": "ring_keypad_pir",
-      "floor": "upstairs",
-      "host_room": "Master Bedroom",
-      "x": 138,
-      "y": 420,
-      "heading_deg": 0,
-      "fov_deg": 100,
-      "range_px": 165
     },
     {
       "id": "binary_sensor.basement_ecobee_motion",
@@ -2168,6 +2126,62 @@
       "label": "Basement Bath Door (Off East Basement Hall)",
       "to_room": "Basement Bathroom",
       "type": "unmonitored_door"
+    },
+    {
+      "from_room": "Front Entry",
+      "id": "conn_entry_basement_stairs",
+      "label": "Basement Stairs (Front Entry <-> Basement Play Area)",
+      "to_room": "Basement Play Area",
+      "type": "stairs"
+    },
+    {
+      "id": "conn_bridge_upstairs_kitchen",
+      "from_room": "Upstairs Hallway & Stairs",
+      "to_room": "Kitchen",
+      "type": "open_passage",
+      "label": "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Kitchen)"
+    },
+    {
+      "id": "conn_bridge_upstairs_family",
+      "from_room": "Upstairs Hallway & Stairs",
+      "to_room": "Family Room",
+      "type": "open_passage",
+      "label": "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Family Room)"
+    },
+    {
+      "id": "conn_bridge_upstairs_laundry",
+      "from_room": "Upstairs Hallway & Stairs",
+      "to_room": "Laundry Room",
+      "type": "open_passage",
+      "label": "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Laundry Room)"
+    },
+    {
+      "id": "conn_bridge_upstairs_basement",
+      "from_room": "Upstairs Hallway & Stairs",
+      "to_room": "Basement Play Area",
+      "type": "stairs",
+      "label": "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Basement Play Area)"
+    },
+    {
+      "id": "conn_bridge_upstairs_living",
+      "from_room": "Upstairs Hallway & Stairs",
+      "to_room": "Living Room",
+      "type": "open_passage",
+      "label": "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Living Room)"
+    },
+    {
+      "id": "conn_bridge_kitchen_laundry",
+      "from_room": "Kitchen",
+      "to_room": "Laundry Room",
+      "type": "open_passage",
+      "label": "Stair-Landing Bridge (Kitchen <-> Laundry Room)"
+    },
+    {
+      "id": "conn_bridge_kitchen_basement",
+      "from_room": "Kitchen",
+      "to_room": "Basement Play Area",
+      "type": "stairs",
+      "label": "Stair-Landing Bridge (Kitchen <-> Basement Play Area)"
     }
   ],
   "rooms": [

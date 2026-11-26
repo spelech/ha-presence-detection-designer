@@ -298,12 +298,15 @@ class LayeredSignalGenerator:
 
                 if wf_eid:
                     # Also check whole-frame visibility outside sub-zones
+                    # (Storage Room's Frigate zone masks out the doorway to Basement Play Area)
                     if not wf_human:
                         for tr in tracks:
                             if not tr.is_human:
                                 continue
                             pose = poses[tr.actor_id]
                             if pose.floor != cam_fl or pose.room is None:
+                                continue
+                            if cam_id == "camera.storage_room" and pose.room != "Storage Room":
                                 continue
                             if not point_in_cone(pose.x, pose.y, cx, cy, heading, fov, reach):
                                 continue
@@ -358,9 +361,12 @@ class LayeredSignalGenerator:
                 fov = float(sen.get("fov_deg", 110))
                 reach = float(sen.get("range_px", 190))
                 is_ecobee = eid in ECOBEE_MOTION_ENTITIES
+                is_pet_immune = str(sen.get("model_preset", "")) == "ring_alarm_pir_gen2"
 
                 triggered_now = False
                 for tr in tracks:
+                    if is_pet_immune and not tr.is_human:
+                        continue
                     pose = poses[tr.actor_id]
                     if pose.floor != sfl or pose.room is None:
                         continue
@@ -465,6 +471,7 @@ class LayeredSignalGenerator:
                 "media_player.family_room_tv",
                 "media_player.living_room_display_webos",
                 "media_player.master_bedroom_tv_androidtv",
+                "media_player.margot_s_tv",
                 "media_player.basement_display_webos",
             ):
                 playing = any(

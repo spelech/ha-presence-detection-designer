@@ -46,6 +46,9 @@ _REMOVED_SENSOR_IDS: frozenset[str] = frozenset(
         "binary_sensor.upstairs_hallway_motion",
         "binary_sensor.upstairs_stairs_motion",
         "binary_sensor.keypad_v2_motion_detection",
+        "binary_sensor.keypad_motion",
+        "binary_sensor.upper_level_keypad_motion",
+        "binary_sensor.garage_keypad_motion",
     }
 )
 
@@ -66,7 +69,6 @@ _BACKFILL_SENSOR_IDS: tuple[str, ...] = (
     "binary_sensor.basement_stairs_bottom_motion",
     "binary_sensor.upstairs_stairs_bottom_motion",
     "binary_sensor.garage_ring_motion",
-    "binary_sensor.garage_keypad_motion",
     "binary_sensor.basement_ecobee_motion",
     "binary_sensor.storage_room_ecobee_motion",
     "binary_sensor.hallway_bathroom_motion",
@@ -267,6 +269,83 @@ def migrate_and_backfill_store_payload(
                 conn["entity_id"] = "binary_sensor.laundry_room_door"
                 dirty = True
 
+        # Ensure Front Entry <-> Basement Play Area stairs and stair-landing bridge connections exist
+        conns = fp_dict.setdefault("connections", [])
+        required_conns = [
+            (
+                "conn_entry_basement_stairs",
+                "Front Entry",
+                "Basement Play Area",
+                "stairs",
+                "Basement Stairs (Front Entry <-> Basement Play Area)",
+            ),
+            (
+                "conn_bridge_upstairs_kitchen",
+                "Upstairs Hallway & Stairs",
+                "Kitchen",
+                "open_passage",
+                "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Kitchen)",
+            ),
+            (
+                "conn_bridge_upstairs_family",
+                "Upstairs Hallway & Stairs",
+                "Family Room",
+                "open_passage",
+                "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Family Room)",
+            ),
+            (
+                "conn_bridge_upstairs_laundry",
+                "Upstairs Hallway & Stairs",
+                "Laundry Room",
+                "open_passage",
+                "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Laundry Room)",
+            ),
+            (
+                "conn_bridge_upstairs_basement",
+                "Upstairs Hallway & Stairs",
+                "Basement Play Area",
+                "stairs",
+                "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Basement Play Area)",
+            ),
+            (
+                "conn_bridge_upstairs_living",
+                "Upstairs Hallway & Stairs",
+                "Living Room",
+                "open_passage",
+                "Stair-Landing Bridge (Upstairs Hallway & Stairs <-> Living Room)",
+            ),
+            (
+                "conn_bridge_kitchen_laundry",
+                "Kitchen",
+                "Laundry Room",
+                "open_passage",
+                "Stair-Landing Bridge (Kitchen <-> Laundry Room)",
+            ),
+            (
+                "conn_bridge_kitchen_basement",
+                "Kitchen",
+                "Basement Play Area",
+                "stairs",
+                "Stair-Landing Bridge (Kitchen <-> Basement Play Area)",
+            ),
+        ]
+        existing_pairs = {
+            frozenset((c.get("from_room"), c.get("to_room"))) for c in conns if isinstance(c, dict)
+        }
+        for cid, from_r, to_r, ctype, label in required_conns:
+            if frozenset((from_r, to_r)) not in existing_pairs:
+                conns.append(
+                    {
+                        "id": cid,
+                        "from_room": from_r,
+                        "to_room": to_r,
+                        "type": ctype,
+                        "label": label,
+                    }
+                )
+                existing_pairs.add(frozenset((from_r, to_r)))
+                dirty = True
+
         orig_sensors = list(fp_dict.get("sensors", []) or [])
         filtered_sensors = [s for s in orig_sensors if s.get("id") not in _REMOVED_SENSOR_IDS]
         if len(filtered_sensors) != len(orig_sensors):
@@ -454,14 +533,6 @@ def migrate_and_backfill_store_payload(
                 "Garage Ring PIR Motion",
                 "strong",
                 0.90,
-                0.05,
-            ),
-            (
-                "binary_sensor.keypad_v2_motion_detection",
-                "binary_sensor.garage_keypad_motion",
-                "Garage Keypad Proximity Motion",
-                "strong",
-                0.88,
                 0.05,
             ),
         ],

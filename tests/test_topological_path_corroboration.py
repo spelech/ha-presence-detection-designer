@@ -60,13 +60,12 @@ def test_topology_graph_building_and_path_finding():
     assert "Kitchen" in graph
     assert "Basement Play Area" in graph
 
-    # Master Bedroom -> Living Room paths
+    # Master Bedroom -> Living Room paths (direct stair-landing bridge is shortest)
     mbr_lr_paths = find_all_simple_paths(graph, "Master Bedroom", "Living Room")
     assert len(mbr_lr_paths) >= 2
     assert mbr_lr_paths[0] == [
         "Master Bedroom",
         "Upstairs Hallway & Stairs",
-        "Front Entry",
         "Living Room",
     ]
 
@@ -78,11 +77,14 @@ def test_topology_graph_building_and_path_finding():
     assert ("Dining Room",) in path_intermediaries
     assert ("Front Entry",) in path_intermediaries
 
-    # Master Bedroom -> Basement Play Area
+    # Master Bedroom -> Basement Play Area (direct stair-landing bridge is shortest)
     mbr_basement_paths = find_all_simple_paths(graph, "Master Bedroom", "Basement Play Area")
     assert len(mbr_basement_paths) >= 1
-    assert "Upstairs Hallway & Stairs" in mbr_basement_paths[0]
-    assert "Family Room" in mbr_basement_paths[0]
+    assert mbr_basement_paths[0] == [
+        "Master Bedroom",
+        "Upstairs Hallway & Stairs",
+        "Basement Play Area",
+    ]
 
 
 def test_high_confidence_source_preservation_blocks_impossible_jump(mock_hass):
@@ -189,7 +191,6 @@ def test_corroborated_path_transition_success(mock_hass):
     assert traj.corroborated_path == [
         "Master Bedroom",
         "Upstairs Hallway & Stairs",
-        "Front Entry",
         "Living Room",
     ]
     assert "corroborated_via" in traj.reason

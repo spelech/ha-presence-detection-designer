@@ -26,7 +26,13 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "inactivity_timeout": 180,
         "grace_timeout": 45,
         "extend_timeout": 600,
-        "connected_rooms": ["Basement Play Area", "Front Entry", "Kitchen", "Laundry Room"],
+        "connected_rooms": [
+            "Basement Play Area",
+            "Front Entry",
+            "Kitchen",
+            "Laundry Room",
+            "Upstairs Hallway & Stairs",
+        ],
         "trigger_entities": [
             "binary_sensor.family_room_couch_person_occupancy",
             "binary_sensor.family_room_recliner_person_occupancy",
@@ -101,7 +107,14 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "inactivity_timeout": 180,
         "grace_timeout": 45,
         "extend_timeout": 600,
-        "connected_rooms": ["Dining Room", "Family Room", "Front Entry"],
+        "connected_rooms": [
+            "Basement Play Area",
+            "Dining Room",
+            "Family Room",
+            "Front Entry",
+            "Laundry Room",
+            "Upstairs Hallway & Stairs",
+        ],
         "trigger_entities": [
             "binary_sensor.kitchen_island_person_occupancy",
             "binary_sensor.kitchen_motion_occupancy",
@@ -181,7 +194,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "inactivity_timeout": 180,
         "grace_timeout": 45,
         "extend_timeout": 600,
-        "connected_rooms": ["Dining Room", "Front Entry"],
+        "connected_rooms": ["Dining Room", "Front Entry", "Upstairs Hallway & Stairs"],
         "trigger_entities": [
             "binary_sensor.living_room_couch_person_occupancy",
             "binary_sensor.living_room_bay_windows_person_occupancy",
@@ -241,6 +254,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "grace_timeout": 30,
         "extend_timeout": 300,
         "connected_rooms": [
+            "Basement Play Area",
             "Family Room",
             "Kitchen",
             "Laundry Room",
@@ -249,7 +263,6 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         ],
         "trigger_entities": [
             "binary_sensor.living_room_entry_person_occupancy",
-            "binary_sensor.keypad_motion",
         ],
         "sustaining_conditions": [],
         "bayesian_enabled": True,
@@ -267,11 +280,6 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.02,
             },
             {
-                "entity_id": "binary_sensor.keypad_motion",
-                "prob_given_true": 0.88,
-                "prob_given_false": 0.05,
-            },
-            {
                 "entity_id": "sensor.steve_s_s25_ble_area",
                 "operator": "equals",
                 "state": "Front Entry",
@@ -286,7 +294,13 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "inactivity_timeout": 90,
         "grace_timeout": 30,
         "extend_timeout": 300,
-        "connected_rooms": ["Family Room", "Front Entry", "Garage"],
+        "connected_rooms": [
+            "Family Room",
+            "Front Entry",
+            "Garage",
+            "Kitchen",
+            "Upstairs Hallway & Stairs",
+        ],
         "boundary_entities": ["binary_sensor.laundry_room_door"],
         "trigger_entities": ["binary_sensor.laundry_room_ring_motion"],
         "sustaining_conditions": [],
@@ -320,7 +334,6 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
             "binary_sensor.garage_parking_person_occupancy",
             "binary_sensor.garage_person_occupancy",
             "binary_sensor.garage_ring_motion",
-            "binary_sensor.garage_keypad_motion",
         ],
         "sustaining_conditions": [],
         "bayesian_enabled": True,
@@ -334,11 +347,6 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
             },
             {
                 "entity_id": "binary_sensor.garage_ring_motion",
-                "prob_given_true": 0.88,
-                "prob_given_false": 0.05,
-            },
-            {
-                "entity_id": "binary_sensor.garage_keypad_motion",
                 "prob_given_true": 0.88,
                 "prob_given_false": 0.05,
             },
@@ -473,13 +481,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
             "binary_sensor.sim_rig_person_occupancy",
             "binary_sensor.office_floor_person_occupancy",
         ],
-        "sustaining_conditions": [
-            {
-                "entity_id": "sensor.office_ups_used_watts_filtered",
-                "operator": "greater_than",
-                "state": "90",
-            },
-        ],
+        "sustaining_conditions": [],
         "bayesian_enabled": True,
         "bayesian_prior": 0.15,
         "bayesian_threshold": 0.75,
@@ -503,13 +505,6 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "entity_id": "binary_sensor.office_floor_person_occupancy",
                 "prob_given_true": 0.88,
                 "prob_given_false": 0.05,
-            },
-            {
-                "entity_id": "sensor.office_ups_used_watts_filtered",
-                "operator": "greater_than",
-                "state": "90",
-                "prob_given_true": 0.668,
-                "prob_given_false": 0.263,
             },
             {
                 "entity_id": "binary_sensor.office_motion",
@@ -620,8 +615,13 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "grace_timeout": 30,
         "extend_timeout": 300,
         "connected_rooms": [
+            "Basement Play Area",
+            "Family Room",
             "Front Entry",
             "Guest Room",
+            "Kitchen",
+            "Laundry Room",
+            "Living Room",
             "Margot's Room",
             "Master Bedroom",
             "Office",
@@ -738,7 +738,14 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "inactivity_timeout": 180,
         "grace_timeout": 45,
         "extend_timeout": 600,
-        "connected_rooms": ["Basement Theater", "Family Room", "Storage Room"],
+        "connected_rooms": [
+            "Basement Theater",
+            "Family Room",
+            "Front Entry",
+            "Kitchen",
+            "Storage Room",
+            "Upstairs Hallway & Stairs",
+        ],
         "trigger_entities": [
             "binary_sensor.basement_play_floor_person_occupancy",
             "binary_sensor.basement_play_area_far_person_occupancy",
@@ -793,7 +800,6 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "extend_timeout": 600,
         "connected_rooms": ["Basement Play Area"],
         "trigger_entities": [
-            "binary_sensor.storage_room_workout_person_occupancy",
             "binary_sensor.storage_room_person_occupancy",
         ],
         "sustaining_conditions": [],
@@ -801,11 +807,6 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "bayesian_prior": 0.20,
         "bayesian_threshold": 0.75,
         "bayesian_observations": [
-            {
-                "entity_id": "binary_sensor.storage_room_workout_person_occupancy",
-                "prob_given_true": 0.96,
-                "prob_given_false": 0.02,
-            },
             {
                 "entity_id": "binary_sensor.storage_room_person_occupancy",
                 "prob_given_true": 0.96,
