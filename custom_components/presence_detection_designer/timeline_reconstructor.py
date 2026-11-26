@@ -20,6 +20,59 @@ _GENERIC_HUMAN_LABELS = frozenset(
     {"", "Occupant", "Guest / Untracked Occupant", "Margot / Untracked Occupant"}
 )
 
+_MIN_NON_ADJACENT_FLOOR_TRANSIT_SEC = 10.0
+
+
+def _build_room_adjacency_pairs(
+    fp: dict[str, Any],
+    room_configs: dict[str, dict[str, Any]] | None,
+) -> set[tuple[str, str]]:
+    """Build undirected connected room pairs from floorplan connections and room configs."""
+    pairs: set[tuple[str, str]] = set()
+    for conn in fp.get("connections") or []:
+        if not isinstance(conn, dict):
+            continue
+        a = str(conn.get("from_room") or conn.get("from") or "").strip()
+        b = str(conn.get("to_room") or conn.get("to") or "").strip()
+        if a and b and a != b:
+            pairs.add((a, b))
+            pairs.add((b, a))
+    for cfg in (room_configs or {}).values():
+        if not isinstance(cfg, dict):
+            continue
+        src = str(cfg.get("room_name") or "").strip()
+        for dst in cfg.get("connected_rooms") or []:
+            dst_s = str(dst).strip()
+            if src and dst_s and src != dst_s:
+                pairs.add((src, dst_s))
+                pairs.add((dst_s, src))
+    return pairs
+
+
+def _is_plausible_floor_transition(
+    prev_room: str | None,
+    prev_floor: str | None,
+    curr_room: str,
+    curr_floor: str,
+    *,
+    active_rooms_now: set[str],
+    adj_pairs: set[tuple[str, str]],
+    elapsed_sec: float | None,
+) -> bool:
+    """Return False when a cross-floor jump is a simultaneous multi-room activation or vertical BLE bleed."""
+    if not prev_room or not prev_floor or prev_floor == curr_floor:
+        return True
+    # If the previous room on another floor is STILL occupied, treat as a separate occupant arrival
+    if prev_room in active_rooms_now:
+        return False
+    # Direct stair/portal connection across floors is always plausible
+    if (prev_room, curr_room) in adj_pairs:
+        return True
+    # Non-adjacent cross-floor jumps faster than stair transit time are suppressed
+    if elapsed_sec is not None and elapsed_sec < _MIN_NON_ADJACENT_FLOOR_TRANSIT_SEC:
+        return False
+    return True
+
 
 def _consolidate_frame_occupants(
     raw_occ_list: list[dict[str, Any]],
@@ -223,6 +276,8 @@ def _reconstruct_from_component_logs(
     transitions: list[dict[str, Any]] = []
     last_primary_room: str | None = None
     last_primary_floor: str | None = None
+    adj_pairs = _build_room_adjacency_pairs(fp, cfgs)
+    last_primary_ts: float | None = None
     last_occupant_loc: dict[str, dict[str, Any]] = {}
     current_leg_by_slot: dict[str, tuple[str | None, str | None]] = {}
     per_room_on_frames: dict[str, int] = {}
@@ -363,6 +418,7 @@ def _reconstruct_from_component_logs(
             reverse=True,
         )
 
+        active_rooms_now = {str(o["room"]) for o in occ_list}
         seen_occ_keys: set[str] = set()
         for idx_occ, occ in enumerate(occ_list):
             occ.pop("_ev_ts", None)
@@ -380,15 +436,32 @@ def _reconstruct_from_component_logs(
                 prev_floor = prev_info["floor"] if prev_info else last_primary_floor
                 prev_x = prev_info["x"] if prev_info else None
                 prev_y = prev_info["y"] if prev_info else None
+                prev_ts = prev_info.get("ts") if prev_info else last_primary_ts
             else:
                 prev_room = prev_info["room"] if prev_info else None
                 prev_floor = prev_info["floor"] if prev_info else None
                 prev_x = prev_info["x"] if prev_info else None
                 prev_y = prev_info["y"] if prev_info else None
+                prev_ts = prev_info.get("ts") if prev_info else None
 
             if not prev_room and occ.get("last_handoff_room"):
                 prev_room = str(occ["last_handoff_room"])
                 prev_floor = str((fp_rooms.get(prev_room) or {}).get("floor") or curr_floor)
+
+            elapsed_sec = (ts - float(prev_ts)) if prev_ts is not None else None
+            if not _is_plausible_floor_transition(
+                prev_room,
+                prev_floor,
+                curr_room,
+                curr_floor,
+                active_rooms_now=active_rooms_now,
+                adj_pairs=adj_pairs,
+                elapsed_sec=elapsed_sec,
+            ):
+                prev_room = None
+                prev_floor = None
+                prev_x = None
+                prev_y = None
 
             if curr_room != prev_room:
                 if prev_room:
@@ -428,10 +501,12 @@ def _reconstruct_from_component_logs(
                     "floor": curr_floor,
                     "x": occ["x"],
                     "y": occ["y"],
+                    "ts": ts,
                 }
                 if idx_occ == 0:
                     last_primary_room = curr_room
                     last_primary_floor = curr_floor
+                    last_primary_ts = ts
 
             leg_room, leg_floor = current_leg_by_slot.get(occ_key, (None, None))
             if leg_room and leg_room != curr_room:
@@ -635,6 +710,8 @@ def reconstruct_house_timeline(
     last_primary_floor: str | None = None
     last_primary_x: Any = None
     last_primary_y: Any = None
+    adj_pairs_rec = _build_room_adjacency_pairs(fp, room_configs)
+    last_primary_ts_rec: float | None = None
     last_occupant_loc: dict[str, dict[str, Any]] = {}
     current_leg_by_slot: dict[str, tuple[str | None, str | None]] = {}
 
@@ -759,6 +836,28 @@ def reconstruct_house_timeline(
                     prev_x = prev_info["x"] if prev_info else None
                     prev_y = prev_info["y"] if prev_info else None
 
+                active_rooms_rec = {str(o["room"]) for o in occ_list}
+                prev_ts_rec = (
+                    prev_info.get("ts")
+                    if prev_info
+                    else (last_primary_ts_rec if idx_occ == 0 else None)
+                )
+                elapsed_rec = (ts - float(prev_ts_rec)) if prev_ts_rec is not None else None
+                if not _is_plausible_floor_transition(
+                    prev_room,
+                    prev_floor,
+                    curr_room,
+                    curr_floor,
+                    active_rooms_now=active_rooms_rec,
+                    adj_pairs=adj_pairs_rec,
+                    elapsed_sec=elapsed_rec,
+                ):
+                    prev_room = None
+                    prev_sub = None
+                    prev_floor = None
+                    prev_x = None
+                    prev_y = None
+
                 if curr_room != prev_room or curr_sub != prev_sub:
                     if prev_room and prev_room != curr_room:
                         current_leg_by_slot[slot_key] = (prev_room, prev_floor)
@@ -795,6 +894,7 @@ def reconstruct_house_timeline(
                         "floor": curr_floor,
                         "x": occ["x"],
                         "y": occ["y"],
+                        "ts": ts,
                     }
                     if idx_occ == 0:
                         last_primary_room = curr_room
@@ -802,6 +902,7 @@ def reconstruct_house_timeline(
                         last_primary_floor = curr_floor
                         last_primary_x = occ["x"]
                         last_primary_y = occ["y"]
+                        last_primary_ts_rec = ts
 
                 leg_from_room, leg_from_floor = current_leg_by_slot.get(slot_key, (None, None))
                 if leg_from_room and leg_from_room != curr_room:
