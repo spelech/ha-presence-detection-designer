@@ -861,7 +861,7 @@
       "y": 335,
       "heading_deg": 30,
       "fov_deg": 110,
-      "range_px": 520,
+      "range_px": 560,
       "spills_into": [
         "Front Entry"
       ],
@@ -925,7 +925,7 @@
       "y": 96,
       "heading_deg": 128,
       "fov_deg": 110,
-      "range_px": 320,
+      "range_px": 560,
       "spills_into": [
         "Living Room"
       ],
@@ -967,7 +967,7 @@
       "y": 96,
       "heading_deg": 142,
       "fov_deg": 110,
-      "range_px": 620,
+      "range_px": 560,
       "spills_into": [
         "Kitchen",
         "Front Entry"
@@ -1061,7 +1061,7 @@
       "y": 536,
       "heading_deg": 313,
       "fov_deg": 110,
-      "range_px": 620,
+      "range_px": 560,
       "spills_into": [
         "Upstairs Hallway & Stairs",
         "Master Bathroom"
@@ -1137,7 +1137,7 @@
       "y": 246,
       "heading_deg": 311,
       "fov_deg": 110,
-      "range_px": 340,
+      "range_px": 560,
       "spills_into": [],
       "notes": "Lower-left corner of Nursery looking NE; sees West wall posters, bed, dresser, open East reach-in closet, and hallway door.",
       "zones": [
@@ -1166,7 +1166,7 @@
       "y": 538,
       "heading_deg": 313,
       "fov_deg": 110,
-      "range_px": 380,
+      "range_px": 560,
       "spills_into": [
         "Upstairs Hallway & Stairs"
       ],
@@ -1230,7 +1230,7 @@
       "y": 64,
       "heading_deg": 42,
       "fov_deg": 110,
-      "range_px": 700,
+      "range_px": 560,
       "spills_into": [
         "Basement Play Area"
       ],
@@ -1316,7 +1316,7 @@
       "y": 68,
       "heading_deg": 121,
       "fov_deg": 110,
-      "range_px": 680,
+      "range_px": 560,
       "spills_into": [
         "Basement Theater"
       ],
@@ -1369,7 +1369,7 @@
       "y": 54,
       "heading_deg": 135,
       "fov_deg": 110,
-      "range_px": 420,
+      "range_px": 560,
       "spills_into": [],
       "notes": "Upper-right corner of Storage Room looking SW across green gym floor toward South storage shelves and West door to hallway.",
       "zones": [
@@ -1712,7 +1712,7 @@
       "y": 540,
       "heading_deg": 270,
       "fov_deg": 120,
-      "range_px": 95
+      "range_px": 405
     },
     {
       "id": "binary_sensor.basement_stairs_top_motion",
@@ -1726,7 +1726,7 @@
       "y": 330,
       "heading_deg": 90,
       "fov_deg": 120,
-      "range_px": 95
+      "range_px": 405
     },
     {
       "id": "binary_sensor.basement_stairs_bottom_motion",
@@ -1740,7 +1740,7 @@
       "y": 395,
       "heading_deg": 90,
       "fov_deg": 120,
-      "range_px": 95
+      "range_px": 405
     },
     {
       "id": "binary_sensor.front_door",
@@ -1810,7 +1810,7 @@
       "y": 380,
       "heading_deg": 180,
       "fov_deg": 110,
-      "range_px": 160
+      "range_px": 190
     },
     {
       "id": "binary_sensor.storage_room_ecobee_motion",
@@ -1881,7 +1881,7 @@
       "host_room": "Margot's Room",
       "x": 465,
       "y": 140,
-      "radius_px": 190
+      "radius_px": 210
     },
     {
       "id": "guest_room_speaker",
@@ -1892,7 +1892,7 @@
       "host_room": "Guest Room",
       "x": 720,
       "y": 140,
-      "radius_px": 200
+      "radius_px": 210
     },
     {
       "id": "office_speaker",
@@ -1903,7 +1903,7 @@
       "host_room": "Office",
       "x": 765,
       "y": 400,
-      "radius_px": 200
+      "radius_px": 210
     },
     {
       "id": "basement_speaker",
@@ -1914,7 +1914,7 @@
       "host_room": "Basement Play Area",
       "x": 450,
       "y": 295,
-      "radius_px": 260
+      "radius_px": 210
     },
     {
       "id": "upstairs_bt_proxy",
@@ -1928,14 +1928,14 @@
       "radius_px": 210
     },
     {
-      "id": "mainfloor_bt_proxy",
-      "entity_id": "esphome.mainfloor_bt_proxy",
-      "name": "Main Floor Bluetooth Proxy",
-      "model_preset": "esphome_ble_proxy",
-      "floor": "main",
-      "host_room": "Kitchen",
-      "x": 390,
-      "y": 190,
+      "id": "hci0",
+      "entity_id": "bluetooth.hci0",
+      "name": "HA Host Bluetooth (hci0)",
+      "model_preset": "host_bluetooth_hci",
+      "floor": "basement",
+      "host_room": "Storage Room",
+      "x": 800,
+      "y": 220,
       "radius_px": 210
     },
     {
@@ -1980,7 +1980,7 @@
       "host_room": "Margot's Room",
       "x": 420,
       "y": 180,
-      "radius_px": 190
+      "radius_px": 210
     },
     {
       "id": "nfc_basement",
@@ -1991,7 +1991,7 @@
       "host_room": "Basement Play Area",
       "x": 510,
       "y": 360,
-      "radius_px": 240
+      "radius_px": 210
     },
     {
       "id": "basement_fridge",
@@ -2002,7 +2002,7 @@
       "host_room": "Basement Play Area",
       "x": 580,
       "y": 190,
-      "radius_px": 220
+      "radius_px": 210
     }
   ],
   "connections": [

@@ -326,6 +326,15 @@ DEVICE_MODEL_PRESETS: dict[str, dict[str, Any]] = {
         "radius_px": 210,
         "description": "Dedicated ESP32 / ESPHome Bluetooth Low Energy RSSI proxy.",
     },
+    "host_bluetooth_hci": {
+        "id": "host_bluetooth_hci",
+        "name": "Host Bluetooth Adapter (hci0)",
+        "label": "Host Bluetooth (hci0)",
+        "category": "ble_proxy",
+        "device_type": "ble_proxy",
+        "radius_px": 210,
+        "description": "Onboard / USB Bluetooth adapter on the Home Assistant host (hci0).",
+    },
 }
 
 _FLOORPLAN_JSON_PATH = Path(__file__).parent / "default_floorplan.json"

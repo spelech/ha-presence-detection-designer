@@ -18,6 +18,7 @@ from .const import (
     DEFAULT_NOTIFY_SLACK,
     DOMAIN,
 )
+from .floorplan_presets import DEVICE_MODEL_PRESETS
 from .sensor_reliability import temper_observation_dict_reliability
 from .spatial_topology import get_default_floorplan
 
@@ -132,7 +133,18 @@ def migrate_and_backfill_store_payload(
                 fl["underlay_svg"] = copy.deepcopy(def_fl["underlay_svg"])
                 dirty = True
 
-        # Backfill newly deployed BLE proxies and refresh stale speaker entity IDs (preserving x/y)
+        # Backfill newly deployed BLE proxies, drop stale duplicates, and refresh speaker entity IDs (preserving x/y)
+        _removed_proxy_ids = {"mainfloor_bt_proxy"}
+        orig_proxies = list(fp_dict.get("ble_proxies", []) or [])
+        filtered_proxies = [
+            p
+            for p in orig_proxies
+            if not (isinstance(p, dict) and p.get("id") in _removed_proxy_ids)
+        ]
+        if len(filtered_proxies) != len(orig_proxies):
+            fp_dict["ble_proxies"] = filtered_proxies
+            dirty = True
+
         default_proxies = {
             p["id"]: p
             for p in default_fp.get("ble_proxies", []) or []
@@ -154,6 +166,49 @@ def migrate_and_backfill_store_payload(
                 ) and dp.get("entity_id"):
                     cur_p["entity_id"] = dp["entity_id"]
                     dirty = True
+
+        # Enforce hardware preset specs (ray distance / FOV / radius) on preset-backed devices
+        for cam in fp_dict.get("cameras", []) or []:
+            if not isinstance(cam, dict):
+                continue
+            preset = DEVICE_MODEL_PRESETS.get(str(cam.get("model_preset") or ""))
+            if not preset:
+                continue
+            if "fov_deg" in preset and cam.get("fov_deg") != preset["fov_deg"]:
+                cam["fov_deg"] = preset["fov_deg"]
+                dirty = True
+            if "default_range_px" in preset and cam.get("range_px") != preset["default_range_px"]:
+                cam["range_px"] = preset["default_range_px"]
+                dirty = True
+
+        for sen in fp_dict.get("sensors", []) or []:
+            if not isinstance(sen, dict):
+                continue
+            preset = DEVICE_MODEL_PRESETS.get(str(sen.get("model_preset") or ""))
+            if not preset:
+                continue
+            if "fov_deg" in preset and sen.get("fov_deg") != preset["fov_deg"]:
+                sen["fov_deg"] = preset["fov_deg"]
+                dirty = True
+            if "default_range_px" in preset and sen.get("range_px") != preset["default_range_px"]:
+                sen["range_px"] = preset["default_range_px"]
+                dirty = True
+            if "inner_fov_deg" in preset and sen.get("inner_fov_deg") != preset["inner_fov_deg"]:
+                sen["inner_fov_deg"] = preset["inner_fov_deg"]
+                dirty = True
+            if "inner_range_px" in preset and sen.get("inner_range_px") != preset["inner_range_px"]:
+                sen["inner_range_px"] = preset["inner_range_px"]
+                dirty = True
+
+        for bp in fp_dict.get("ble_proxies", []) or []:
+            if not isinstance(bp, dict):
+                continue
+            preset = DEVICE_MODEL_PRESETS.get(str(bp.get("model_preset") or ""))
+            if not preset:
+                continue
+            if "radius_px" in preset and bp.get("radius_px") != preset["radius_px"]:
+                bp["radius_px"] = preset["radius_px"]
+                dirty = True
 
         default_cams = {c["id"]: c for c in default_fp.get("cameras", []) if c.get("id")}
         for cam in fp_dict.get("cameras", []):
