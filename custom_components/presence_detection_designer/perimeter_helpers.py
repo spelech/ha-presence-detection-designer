@@ -12,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def host_room_had_recent_activity(tracker: Any, host_room: str, now: float) -> bool:
     """Snapshot whether host_room already had interior motion/presence before door opened."""
-    from .trajectory_validator import get_all_room_coordinators
+    from .coordinator_helpers import get_all_room_coordinators
 
     for coord in get_all_room_coordinators(tracker.hass):
         if getattr(coord, "room_name", "") != host_room:
@@ -60,7 +60,7 @@ def infer_door_vector(
     had_motion_on_open: bool | None = None,
 ) -> tuple[str, float, str]:
     """Directionally vector door transit into ingress vs egress based on sensor timings."""
-    from .trajectory_validator import get_all_room_coordinators
+    from .coordinator_helpers import get_all_room_coordinators
 
     coords = {getattr(c, "room_name", ""): c for c in get_all_room_coordinators(tracker.hass)}
     host_coord = coords.get(host_room)
@@ -191,8 +191,8 @@ def has_active_pet_presence(tracker: Any) -> bool:
     hass = getattr(tracker, "hass", None)
     if not hass:
         return False
+    from .coordinator_helpers import get_all_room_coordinators
     from .spatial_catalog import ROOM_DOG_OCCUPANCY_ENTITIES
-    from .trajectory_validator import get_all_room_coordinators
 
     for coord in get_all_room_coordinators(hass):
         sm = getattr(coord, "state_machine", None)

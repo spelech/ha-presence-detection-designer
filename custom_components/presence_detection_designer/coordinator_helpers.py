@@ -34,8 +34,6 @@ from .const import (
     CONF_NOTIFY_ON_CLEARED,
     CONF_NOTIFY_ON_OCCUPIED,
     CONF_NOTIFY_SLACK,
-    CONF_PIR_CANDIDATE_WINDOW,
-    CONF_PIR_VALIDATION_ENABLED,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
@@ -47,7 +45,6 @@ from .const import (
     DEFAULT_LLM_PROMPT,
     DEFAULT_MAX_HOLD_TIMEOUT,
     DEFAULT_PIR_CANDIDATE_WINDOW,
-    DEFAULT_PIR_VALIDATION_ENABLED,
     DEFAULT_VERIFY_TIMEOUT,
     DOMAIN,
     LLMProviderType,
@@ -55,11 +52,15 @@ from .const import (
 )
 from .evidence_snapshot import RoomEvidenceSnapshot
 from .llm_verifier import LLMVerifier
-from .pir_validation import PIRValidationStateMachine
 from .sensor_reliability import (
     classify_sensor_reliability,
     is_camera_entity,
     is_human_exclusive_initiator,
+)
+from .spatial_catalog import (
+    PRIMARY_BLE_TRACKER_ENTITIES,
+    SECONDARY_BLE_TRACKER_ENTITIES,
+    _normalize_ble_area_to_room,
 )
 from .state_machine import RoomPresenceStateMachine
 
@@ -131,39 +132,9 @@ def apply_coordinator_config_fields(
             bayesian_threshold=coord.bayesian_threshold,
         )
 
-    raw_pir_en = config.get(CONF_PIR_VALIDATION_ENABLED)
-    raw_pir_win = config.get(CONF_PIR_CANDIDATE_WINDOW)
-    if (
-        (raw_pir_en is None or raw_pir_win is None)
-        and coord.hass
-        and isinstance(getattr(coord.hass, "data", None), dict)
-    ):
-        st = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
-        if st is not None and isinstance(getattr(st, "global_settings", None), dict):
-            if raw_pir_en is None:
-                raw_pir_en = st.global_settings.get(CONF_PIR_VALIDATION_ENABLED)
-            if raw_pir_win is None:
-                raw_pir_win = st.global_settings.get(CONF_PIR_CANDIDATE_WINDOW)
-    coord.pir_validation_enabled = (
-        DEFAULT_PIR_VALIDATION_ENABLED if raw_pir_en is None else bool(raw_pir_en)
-    )
-    pir_cand_win = max(
-        1.0,
-        float(
-            DEFAULT_PIR_CANDIDATE_WINDOW
-            if raw_pir_win is None
-            else (raw_pir_win or DEFAULT_PIR_CANDIDATE_WINDOW)
-        ),
-    )
-    coord.pir_candidate_window = pir_cand_win
-    if preserve_state and getattr(coord, "pir_validator", None) is not None:
-        coord.pir_validator.room_name = coord.room_name
-        coord.pir_validator.candidate_window_sec = max(1.0, pir_cand_win)
-    else:
-        coord.pir_validator = PIRValidationStateMachine(
-            room_name=coord.room_name,
-            candidate_window_sec=pir_cand_win,
-        )
+    coord.pir_validation_enabled = False
+    coord.pir_candidate_window = float(DEFAULT_PIR_CANDIDATE_WINDOW)
+    coord.pir_validator = None
 
     llm_cfg = coord._resolve_global_llm_defaults(config)
     coord.verifier = LLMVerifier(
@@ -479,3 +450,74 @@ def record_coordinator_timeline_snapshot(coord: Any) -> None:
             "entity_states": entity_states,
         },
     )
+
+
+def get_all_room_coordinators(hass: Any) -> list[Any]:
+    """Retrieve all RoomPresenceCoordinator instances from hass.data."""
+    if not hass or not isinstance(getattr(hass, "data", None), dict):
+        return []
+    domain_data = hass.data.get(DOMAIN, {})
+    if not isinstance(domain_data, dict):
+        return []
+    return [
+        obj
+        for obj in domain_data.values()
+        if type(obj).__name__ != "MagicMock"
+        and hasattr(obj, "state_machine")
+        and isinstance(getattr(obj, "room_name", None), str)
+    ]
+
+
+def is_condition_contradicted_by_ble(coord: Any, entity_id: str) -> bool:
+    """Return True when a power-monitor hold is contradicted by primary resident BLE telemetry (SIGNAL-03)."""
+    prof = classify_sensor_reliability(entity_id)
+    if prof.category != "power_monitor":
+        return False
+    if getattr(coord, "_active_triggers", None):
+        return False
+    if callable(getattr(coord, "_is_guest_mode_active", None)) and coord._is_guest_mode_active():
+        return False
+
+    hass = getattr(coord, "hass", None)
+    if not hass or not hasattr(hass, "states"):
+        return False
+
+    store = (
+        hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if isinstance(getattr(hass, "data", None), dict)
+        else None
+    )
+    trackers: list[str] = []
+    if store is not None and isinstance(getattr(store, "global_settings", None), dict):
+        gs = store.global_settings
+        if "ble_decider_enabled" in gs and not bool(gs.get("ble_decider_enabled", False)):
+            return False
+        trackers = [
+            str(t)
+            for t in (gs.get("ble_trackers") or [])
+            if t and str(t) not in SECONDARY_BLE_TRACKER_ENTITIES
+        ]
+    if not trackers:
+        trackers = list(PRIMARY_BLE_TRACKER_ENTITIES)
+
+    room_low = str(getattr(coord, "room_name", "")).strip().lower()
+    in_this_room = False
+    contradicted = False
+    for tracker_eid in trackers:
+        st = _safe_state_getter(hass, tracker_eid)
+        if st is None:
+            continue
+        raw = str(st.state).strip()
+        low = raw.lower().replace("_", " ")
+        if low in ("unknown", "unavailable", "none", ""):
+            continue
+        if low in ("away", "not home", "not_home"):
+            contradicted = True
+            continue
+        norm = (_normalize_ble_area_to_room(raw) or raw).strip().lower()
+        if norm == room_low:
+            in_this_room = True
+        else:
+            contradicted = True
+
+    return contradicted and not in_this_room

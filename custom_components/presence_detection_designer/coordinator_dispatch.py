@@ -11,39 +11,26 @@ from .bayesian_engine import (
     evaluate_bayesian,
     get_active_pir_spillover_fraction,
 )
-from .camera_guard import (
-    is_camera_verification_rejected,
-    maybe_gate_uncorroborated_camera_trigger,
-    sanitize_pir_camera_corroboration,
-)
+from .camera_guard import is_camera_verification_rejected
 from .condition_evaluator import is_state_stale
 from .const import (
     DATA_STORE,
     DOMAIN,
     EVENT_PRESENCE_TRANSITION,
     OccupancyState,
-    PIRValidationState,
 )
 from .coordinator_helpers import (
     _safe_state_getter,
+    async_send_coordinator_test_notification,
     build_coordinator_evidence_snapshot,
     record_coordinator_timeline_snapshot,
+    resolve_global_llm_defaults,
     sync_coordinator_evidence,
-)
-from .pir_corroboration import (
-    build_pir_corroboration_context,
-    handle_pir_validation_for_trigger,
 )
 from .sensor_reliability import (
     apply_signal_weight,
     classify_sensor_reliability,
     is_camera_entity,
-)
-from .trajectory_validator import (
-    async_send_coordinator_test_notification,
-    check_coordinator_trajectory,
-    resolve_global_llm_defaults,
-    should_defer_for_settling,
 )
 
 __all__ = [
@@ -604,36 +591,11 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
     )
     coord.last_bayesian_eval = evaluation
     should_trigger_sm = coord.has_explicit_bayesian
-    if (
-        evaluation.is_occupied
-        and not coord.state_machine.is_present
-        and should_trigger_sm
-        and not guest_mode_enabled
-    ):
-        if not check_coordinator_trajectory(coord, now_ts=time.time()).is_valid:
-            should_trigger_sm = False
-
-    pv = getattr(coord, "pir_validator", None)
-    pv_promoted = False
-    if (
-        pv is not None
-        and getattr(coord, "pir_validation_enabled", True)
-        and pv.state in (PIRValidationState.CANDIDATE, PIRValidationState.SUPPRESSED)
-    ):
-        ctx = build_pir_corroboration_context(coord, now_ts=now_ts)
-        if not guest_mode_enabled:
-            ctx = sanitize_pir_camera_corroboration(coord, ctx, now_ts=now_ts)
-        pv_promoted = pv.on_corroboration_update(ctx, now_ts=now_ts)
-
     coord._bayesian_drives_occupancy = bool(should_trigger_sm)
     sync_coordinator_evidence(coord, trigger_bayesian=should_trigger_sm, now_ts=now_ts)
-    if pv_promoted and pv is not None and not pv.active_pir_sensors:
-        pv.pir_cleared(now_ts=now_ts)
-        sync_coordinator_evidence(coord, trigger_bayesian=should_trigger_sm, now_ts=now_ts)
     record_coordinator_timeline_snapshot(coord)
     if (
-        (evaluation.is_occupied and should_trigger_sm and coord.state_machine.is_present)
-        or pv_promoted
+        evaluation.is_occupied and should_trigger_sm and coord.state_machine.is_present
     ) and not guest_mode_enabled:
         notify_connected_rooms_if_active(coord)
     return evaluation
@@ -675,66 +637,38 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
 
     is_active = is_on_raw and entity_id not in suppressed
 
-    traj: Any | None = None
-    in_cooling = getattr(coord.state_machine, "state", None) in (
-        OccupancyState.OCCUPIED_COOLING,
-        str(OccupancyState.OCCUPIED_COOLING),
-    )
-    if is_active and (not coord.state_machine.is_present or (cam_trigger and in_cooling)):
+    if is_active and not coord.state_machine.is_present:
         last_cleared = getattr(coord.state_machine, "last_cleared_time", 0.0)
         cooldown = float(getattr(coord.state_machine, "retrigger_cooldown", 20.0))
         b_occupied = bool(coord.last_bayesian_eval and coord.last_bayesian_eval.is_occupied)
 
         if (
-            not coord.state_machine.is_present
-            and last_cleared > 0.0
+            last_cleared > 0.0
             and (now - last_cleared) < cooldown
             and not b_occupied
             and not cam_trigger
         ):
             return
 
-        if not coord._is_guest_mode_active():
-            if not cam_trigger:
-                sp_frac = get_active_pir_spillover_fraction(
-                    coord.hass, str(entity_id), getattr(coord, "_last_spatial_frame", None)
+        if not coord._is_guest_mode_active() and not cam_trigger:
+            sp_frac = get_active_pir_spillover_fraction(
+                coord.hass, str(entity_id), getattr(coord, "_last_spatial_frame", None)
+            )
+            if (
+                sp_frac >= 0.08
+                and coord.last_bayesian_eval is not None
+                and not coord.last_bayesian_eval.is_occupied
+            ):
+                coord._last_suppressed_reason = (
+                    f"spatial_crosstalk_attenuated_{int(sp_frac * 100)}pct"
                 )
-                if (
-                    sp_frac >= 0.08
-                    and not coord.state_machine.is_present
-                    and coord.last_bayesian_eval is not None
-                    and not coord.last_bayesian_eval.is_occupied
-                ):
-                    coord._last_suppressed_reason = (
-                        f"spatial_crosstalk_attenuated_{int(sp_frac * 100)}pct"
-                    )
-                    return
-
-                traj = check_coordinator_trajectory(coord, now_ts=now)
-                if not traj.is_valid:
-                    coord._last_suppressed_reason = traj.reason
-                    return
-
-                if should_defer_for_settling(coord, entity_id, is_active, traj, now):
-                    return
-            else:
-                traj = check_coordinator_trajectory(coord, now_ts=now)
-                if maybe_gate_uncorroborated_camera_trigger(
-                    coord, str(entity_id), traj=traj, now_ts=now
-                ):
-                    coord._active_triggers.discard(str(entity_id))
-                    return
-
-    if not is_active and getattr(coord, "_settling_entity", None) == entity_id:
-        coord._settling_entity = None
+                return
 
     if is_active:
         coord._active_triggers.add(str(entity_id))
         coord._last_trigger_entity = str(entity_id)
-        handle_pir_validation_for_trigger(coord, str(entity_id), True, traj=traj, now_ts=now)
     else:
         coord._active_triggers.discard(str(entity_id))
-        handle_pir_validation_for_trigger(coord, str(entity_id), False, now_ts=now)
 
     if hasattr(coord, "_refresh_condition_descs"):
         coord._refresh_condition_descs()

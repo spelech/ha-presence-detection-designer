@@ -463,13 +463,8 @@ async def test_ble_decider_disabled_suppresses_all_ble_fusion_pir_and_power_cont
             for obs in (fr.last_bayesian_eval.active_observations if fr.last_bayesian_eval else [])
         )
 
-        # 2. Single PIR spike with BLE=Family Room is NOT corroborated by BLE when disabled
-        harness.set_state("binary_sensor.family_room_motion_occupancy", "on")
-        assert fr.state_machine.state == OccupancyState.VACANT
-
-        # 3. Confirmed occupancy held by TV power is NOT dropped when BLE jumps to Kitchen
+        # 2. Confirmed occupancy held by TV power is NOT dropped when BLE jumps to Kitchen
         harness.set_state("sensor.family_room_tv_watts", "120")
-        harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
         harness.set_state("binary_sensor.family_room_motion_occupancy", "on")
         harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
         assert fr.state_machine.state == OccupancyState.OCCUPIED_HOLDING

@@ -478,9 +478,7 @@ class PDDStore:
 
         enforce_floorplan_preset_specs(fp_copy)
         self._data["floorplan"] = fp_copy
-        from .trajectory_validator import clear_topology_cache
-
-        clear_topology_cache()
+        self._hmm_sig = None
         await self.async_save()
         return copy.deepcopy(self._data["floorplan"])
 

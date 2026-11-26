@@ -270,10 +270,6 @@ class VirtualHAHarness:
         floorplan: dict[str, Any] | None = None,
     ) -> None:
         """Instantiate and set up real coordinators + entities for all scenario rooms."""
-        from custom_components.presence_detection_designer.trajectory_validator import (
-            clear_topology_cache,
-        )
-
         if floorplan and isinstance(floorplan, dict) and floorplan.get("rooms"):
             fp_copy = dict(floorplan)
             fp_copy.setdefault("floors", [{"id": "main", "name": "Main Floor"}])
@@ -297,7 +293,6 @@ class VirtualHAHarness:
                 "rooms": fp_rooms,
                 "connections": fp_conns,
             }
-        clear_topology_cache()
 
         for idx, raw_cfg in enumerate(room_configs):
             cfg = dict(raw_cfg)
