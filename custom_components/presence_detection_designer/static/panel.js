@@ -6681,6 +6681,57 @@ action:
     });
     const occupantsSvg = liveAllTokens.join("");
 
+    // Live 2D+Floor EKF tracks: 2-sigma/1-sigma uncertainty ellipses, heading vector, and position dot
+    const ekfTracksMap = this._overview?.spatial_inference?.ekf_tracks || {};
+    const ekfTracksOnFloor = Object.values(ekfTracksMap).filter(
+      (tr) => tr && tr.floor === activeFloor.id && Number.isFinite(Number(tr.x_px))
+    );
+    const ekfTracksSvg = ekfTracksOnFloor
+      .map((tr) => {
+        const ex = Math.max(8, Math.min(992, Number(tr.x_px || 0)));
+        const ey = Math.max(8, Math.min(572, Number(tr.y_px || 0)));
+        const sx = Math.max(10, Math.min(260, Number(tr.sigma_x_px || 30)));
+        const sy = Math.max(10, Math.min(260, Number(tr.sigma_y_px || 30)));
+        const spd = Number(tr.speed_ft_s || 0);
+        const hdg = tr.heading_deg != null ? Number(tr.heading_deg) : null;
+        const topRoom = tr.top_room || "—";
+        const topPct = Math.round(Number(tr.top_room_prob || 0) * 100);
+        const sxFt = Number(tr.sigma_x_ft || 0).toFixed(1);
+        const syFt = Number(tr.sigma_y_ft || 0).toFixed(1);
+        const proxiesN = Number(tr.active_proxy_count || 0);
+        const gatedN = Number(tr.rejected_outliers || 0);
+        const tip = `EKF (${tr.entity_id || "BLE"}): ${topRoom} (${topPct}%) | pos=(${Math.round(ex)},${Math.round(ey)}) | ±${sxFt}×${syFt}ft (1σ) | ${spd.toFixed(1)} ft/s${hdg != null ? ` @ ${Math.round(hdg)}°` : ""} | proxies=${proxiesN}, gated=${gatedN}`;
+
+        let headingSvg = "";
+        if (hdg != null && spd >= 0.35) {
+          const rad = (hdg * Math.PI) / 180.0;
+          const len = Math.max(22, Math.min(68, spd * 14));
+          const x2 = ex + Math.cos(rad) * len;
+          const y2 = ey + Math.sin(rad) * len;
+          const headLen = 9;
+          const a1 = rad + 2.55;
+          const a2 = rad - 2.55;
+          headingSvg = `
+            <line x1="${ex.toFixed(1)}" y1="${ey.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#06b6d4" stroke-width="2.6" stroke-linecap="round" />
+            <polygon points="${x2.toFixed(1)},${y2.toFixed(1)} ${(x2 + Math.cos(a1) * headLen).toFixed(1)},${(y2 + Math.sin(a1) * headLen).toFixed(1)} ${(x2 + Math.cos(a2) * headLen).toFixed(1)},${(y2 + Math.sin(a2) * headLen).toFixed(1)}" fill="#06b6d4" />
+          `;
+        }
+
+        const badgeY = ey - 16 < 20 ? ey + 24 : ey - 14;
+        const labelText = `EKF ${topRoom} ${topPct}% (±${sxFt}ft)`;
+        return `
+          <g class="fp-ekf-track" data-tracker="${this._escape(tr.entity_id || "")}">
+            <title>${this._escape(tip)}</title>
+            <ellipse cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" rx="${(sx * 2).toFixed(1)}" ry="${(sy * 2).toFixed(1)}" fill="rgba(6, 182, 212, 0.06)" stroke="#06b6d4" stroke-width="1.2" stroke-dasharray="5,4" style="pointer-events:none;" />
+            <ellipse cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" rx="${sx.toFixed(1)}" ry="${sy.toFixed(1)}" fill="rgba(6, 182, 212, 0.16)" stroke="#0891b2" stroke-width="1.6" style="pointer-events:none;" />
+            ${headingSvg}
+            <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="6" fill="#06b6d4" stroke="#ffffff" stroke-width="2" />
+            <text x="${ex.toFixed(1)}" y="${badgeY.toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="700" fill="#0e7490" stroke="#ffffff" stroke-width="3" paint-order="stroke" style="pointer-events:none;">${this._escape(labelText)}</text>
+          </g>
+        `;
+      })
+      .join("");
+
     const bleControlsSvg = layerOn("ble")
       ? fProxies
           .map((proxy) => {
@@ -6868,6 +6919,7 @@ action:
       ${layerOn("overlaps") ? `<g class="fp-overlaps-layer" style="pointer-events:none;">${overlapShapes.join("")}</g>` : ""}
       ${layerOn("subzones") ? subZonesSvg : ""}
       ${layerOn("pir") ? pirConesSvg : ""}
+      ${layerOn("occupants") || layerOn("ble") ? `<g class="fp-ekf-layer">${ekfTracksSvg}</g>` : ""}
       ${layerOn("occupants") ? occupantsSvg : ""}
       <g class="fp-controls-layer">
         ${bleControlsSvg}
