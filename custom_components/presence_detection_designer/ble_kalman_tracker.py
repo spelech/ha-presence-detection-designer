@@ -41,9 +41,10 @@ class KalmanConfig:
     assoc_chi2_2dof: float = 10.60
     assoc_max_dist_ft: float = 16.0
     # Bounded supporting-only EKF likelihood ratio range for Bayesian fusion:
-    # max_lr=4.5 -> solo posterior <= 44% (never solo-triggers);
+    # max_lr=9.75 (matches calibrated moderate BLE 0.78/0.08): solo posterior <= 63% (< 75% threshold),
+    #   yet EKF + Ecobee (~2.4x) = 80.6% (> 75%) to smoothly sustain stationary desk/couch occupancy;
     # min_lr=0.45 -> decays stale holds without overpowering another occupant's decisive camera
-    ekf_max_lr: float = 4.5
+    ekf_max_lr: float = 9.75
     ekf_min_lr: float = 0.45
 
 
@@ -51,7 +52,7 @@ def ekf_room_probability_to_likelihood(
     room_prob: float,
     *,
     sigma_ft: float = 4.0,
-    max_lr: float = 4.5,
+    max_lr: float = 9.75,
     min_lr: float = 0.45,
 ) -> tuple[float, float]:
     """Map continuous EKF room probability [0..1] to bounded supporting Bayesian (p_true, p_false).

@@ -43,10 +43,18 @@ async def execute_golden_scenario(
         global_settings=dict(scenario.global_settings),
     ) as harness:
         await harness.async_add_rooms(HOUSE_ROOM_CONFIGS, floorplan=fp)
+        cur_tick = [0]
+        if timeline.ble_ranges_by_t and getattr(harness, "store", None) is not None:
+            harness.store._ble_ranges_provider = lambda _eid, _fp, _ts: (
+                timeline.ble_ranges_by_t[cur_tick[0]]
+                if cur_tick[0] < len(timeline.ble_ranges_by_t)
+                else []
+            )
         for eid, val in timeline.initial_states.items():
             harness.set_state(eid, val)
 
         for t in range(timeline.duration_sec):
+            cur_tick[0] = t
             if t > 0:
                 harness.advance(1.0)
             for eid, val in (events_by_t.get(t) or {}).items():

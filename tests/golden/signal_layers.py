@@ -13,6 +13,10 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
+from custom_components.presence_detection_designer.ble_kalman_tracker import (
+    DEFAULT_PX_PER_FOOT,
+    BLERangeMeasurement,
+)
 from custom_components.presence_detection_designer.sensor_reliability import (
     ECOBEE_MOTION_ENTITIES,
 )
@@ -123,6 +127,7 @@ class GeneratedTimeline:
     expected_occupied: list[set[str]]  # index = second t, value = expected occupied rooms
     initial_states: dict[str, str]
     events: list[tuple[int, dict[str, str]]] = field(default_factory=list)
+    ble_ranges_by_t: list[list[BLERangeMeasurement]] = field(default_factory=list)
 
 
 def _interpolate_actor(track: ActorTrack, t: int) -> ActorWaypoint:
@@ -226,6 +231,7 @@ class LayeredSignalGenerator:
 
         expected_occupied: list[set[str]] = []
         raw_frames: list[dict[str, str]] = []
+        ble_ranges_by_t: list[list[BLERangeMeasurement]] = []
 
         # Layer 2 stateful cooldown / stillness trackers
         pir_hold_until: dict[str, int] = {}
@@ -454,6 +460,43 @@ class LayeredSignalGenerator:
                         last_ble_area = PROXY_ROOM_TO_BERMUDA_AREA.get(host_room, host_room)
             state_map["sensor.steve_s_s25_ble_area"] = last_ble_area
 
+            # --- Layer 4B: Multi-proxy BLE calibrated range readings (1Hz for EKF trilateration) ---
+            t_ranges: list[BLERangeMeasurement] = []
+            if steve_track is not None:
+                spose_r = poses[steve_track.actor_id]
+                if spose_r.room is not None and spose_r.activity != "away":
+                    is_fuzzed_ble = (
+                        fz.ble_adjacent_bounce_prob > 0
+                        or fz.ble_vertical_bleed_prob > 0
+                        or fz.event_jitter_max_sec > 0
+                    )
+                    for p in self.floorplan.get("ble_proxies", []):
+                        px_f = float(p.get("x", 0.0))
+                        py_f = float(p.get("y", 0.0))
+                        d_ft = math.hypot(spose_r.x - px_f, spose_r.y - py_f) / DEFAULT_PX_PER_FOOT
+                        if str(p.get("floor", "")) != spose_r.floor:
+                            d_ft = math.hypot(d_ft, 11.0) + 4.0
+                        if d_ft > 38.0:
+                            continue
+                        if is_fuzzed_ble:
+                            noise = rng.gauss(0.0, 1.5 + 0.12 * d_ft)
+                            if rng.random() < 0.08:
+                                noise += rng.uniform(15.0, 25.0)
+                        else:
+                            noise = rng.gauss(0.0, 0.6 + 0.05 * d_ft)
+                        t_ranges.append(
+                            BLERangeMeasurement(
+                                proxy_id=str(p.get("id", "")),
+                                floor=str(p.get("floor", "main")),
+                                x_px=px_f,
+                                y_px=py_f,
+                                distance_ft=max(0.5, d_ft + noise),
+                                age_sec=0.0,
+                                host_room=str(p.get("host_room", "")),
+                            )
+                        )
+            ble_ranges_by_t.append(t_ranges)
+
             # --- Sustaining actuators (UPS, TVs, Shower Humidity, Shades) ---
             ups_val = 45.0
             for t0, t1, watts in fz.remote_ups_watts_windows:
@@ -491,10 +534,11 @@ class LayeredSignalGenerator:
 
             raw_frames.append(state_map)
 
-        # Compress 1Hz frames into delta events (optionally with Layer 3 timing jitter)
+        # Compress 1Hz frames into delta events (preserving strict per-entity causal ordering under jitter)
         initial_states = dict(raw_frames[0]) if raw_frames else {}
         prev_states = dict(initial_states)
         scheduled: dict[int, dict[str, str]] = {}
+        last_eid_t: dict[str, int] = {}
 
         for t in range(1, len(raw_frames)):
             frame = raw_frames[t]
@@ -506,7 +550,9 @@ class LayeredSignalGenerator:
                         if fz.event_jitter_max_sec > 0
                         else 0
                     )
-                    ev_t = min(duration_sec - 1, t + jitter)
+                    min_t = last_eid_t.get(eid, 0) + 1 if eid in last_eid_t else t
+                    ev_t = min(duration_sec - 1, max(min_t, t + jitter))
+                    last_eid_t[eid] = ev_t
                     scheduled.setdefault(ev_t, {})[eid] = val
 
         events = sorted(scheduled.items(), key=lambda kv: kv[0])
@@ -516,4 +562,5 @@ class LayeredSignalGenerator:
             expected_occupied=expected_occupied,
             initial_states=initial_states,
             events=events,
+            ble_ranges_by_t=ble_ranges_by_t,
         )

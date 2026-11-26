@@ -236,10 +236,10 @@ def test_ekf_room_probability_to_likelihood_is_smooth_and_bounded():
     assert pt_mid == 0.5
     assert pf_mid == 0.5
 
-    # High confidence inside room -> bounded positive confirmation (LR <= 4.5, never solo-trigger)
+    # High confidence inside room -> bounded positive confirmation (LR <= 9.75, never solo-trigger)
     pt_hi, pf_hi = ekf_room_probability_to_likelihood(0.98, sigma_ft=2.5)
     lr_hi = pt_hi / pf_hi
-    assert 3.0 < lr_hi <= 4.6
+    assert 6.0 < lr_hi <= 10.0
 
     # High confidence elsewhere -> smooth contradiction attenuation (LR >= 0.45 so cameras stay safe)
     pt_lo, pf_lo = ekf_room_probability_to_likelihood(0.02, sigma_ft=2.5)
