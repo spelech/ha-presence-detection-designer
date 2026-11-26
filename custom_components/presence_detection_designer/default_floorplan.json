@@ -707,7 +707,7 @@
         ],
         [
           572,
-          532
+          410
         ]
       ],
       [
@@ -842,7 +842,7 @@
       "name": "Basement Level",
       "order": 2,
       "underlay_svg": {
-        "url": "/presence_detection_designer_static/floor_basement.svg?v=5",
+        "url": "/presence_detection_designer_static/floor_basement.svg?v=6",
         "x": 0,
         "y": 0,
         "width": 1000,

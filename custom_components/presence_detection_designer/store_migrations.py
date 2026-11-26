@@ -160,7 +160,7 @@ def migrate_and_backfill_store_payload(
                 fp_dict[layer_key] = copy.deepcopy(default_fp[layer_key])
                 dirty = True
 
-        # Upgrade legacy raster .webp underlays to crisp 1000x580 vector SVG underlays
+        # Upgrade legacy raster .webp or older SVG underlays to latest 1000x580 vector SVG underlays
         default_floors_by_id = {
             fl["id"]: fl
             for fl in default_fp.get("floors", []) or []
@@ -174,12 +174,26 @@ def migrate_and_backfill_store_payload(
             def_fl = default_floors_by_id.get(fl_id)
             if (
                 isinstance(cur_u, dict)
-                and str(cur_u.get("url", "")).endswith(".webp?v=4")
                 and isinstance(def_fl, dict)
-                and def_fl.get("underlay_svg")
+                and isinstance(def_fl.get("underlay_svg"), dict)
+                and cur_u.get("url") != def_fl["underlay_svg"].get("url")
+                and (
+                    str(cur_u.get("url", "")).endswith(".webp?v=4")
+                    or str(cur_u.get("url", "")).startswith(
+                        f"/presence_detection_designer_static/floor_{fl_id}.svg"
+                    )
+                )
             ):
                 fl["underlay_svg"] = copy.deepcopy(def_fl["underlay_svg"])
                 dirty = True
+
+        # Fix basement stair wall segment so base of stairs opens into Basement Play Area
+        basement_walls = (fp_dict.get("floor_wall_segments") or {}).get("basement")
+        if isinstance(basement_walls, list):
+            for idx, seg in enumerate(basement_walls):
+                if seg == [[572, 230], [572, 532]] or seg == [[572.0, 230.0], [572.0, 532.0]]:
+                    basement_walls[idx] = [[572, 230], [572, 410]]
+                    dirty = True
 
         # Backfill newly deployed BLE proxies, drop stale duplicates, and refresh speaker entity IDs (preserving x/y)
         _removed_proxy_ids = {"mainfloor_bt_proxy"}
