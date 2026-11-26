@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -546,6 +548,10 @@ class BLEKalmanTracker:
         )
 
 
+def _norm_token(val: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(val or "").lower()).strip("_")
+
+
 def read_bermuda_proxy_ranges(
     hass: Any,
     tracker_entity_id: str,
@@ -572,61 +578,116 @@ def read_bermuda_proxy_ranges(
     if bermuda_coord is None:
         return []
 
-    # Resolve target Bermuda device by matching current_mac attribute or entity slug
+    # Resolve target Bermuda device by MAC, IRK advert MAC, or normalized name/slug
     st_obj = hass.states.get(tracker_entity_id) if hasattr(hass, "states") else None
-    cur_mac = str((getattr(st_obj, "attributes", {}) or {}).get("current_mac") or "").lower()
-    slug = tracker_entity_id.split(".", 1)[-1].replace("_ble_area", "").replace("_area", "").lower()
+    st_attrs = getattr(st_obj, "attributes", {}) or {}
+    cur_mac = str(st_attrs.get("current_mac") or "").lower()
+    friendly_norm = _norm_token(str(st_attrs.get("friendly_name") or "").removesuffix("Area"))
+    slug = _norm_token(
+        tracker_entity_id.split(".", 1)[-1].replace("_ble_area", "").replace("_area", "")
+    )
 
     target_dev = None
     devices = getattr(bermuda_coord, "devices", {}) or {}
     for addr, dev in devices.items():
-        if cur_mac and str(addr).lower() == cur_mac:
+        if cur_mac and (
+            str(addr).lower() == cur_mac
+            or str(getattr(dev, "address", "") or "").lower() == cur_mac
+            or any(
+                str(getattr(a, "device_address", "") or "").lower() == cur_mac
+                for a in (getattr(dev, "adverts", {}) or {}).values()
+            )
+        ):
             target_dev = dev
             break
-        dev_name = str(getattr(dev, "name", "") or "").lower().replace(" ", "_").replace("'", "_")
-        if slug and slug in dev_name:
-            target_dev = dev
+    if target_dev is None:
+        for _addr, dev in devices.items():
+            dev_norm = _norm_token(getattr(dev, "name", ""))
+            if not dev_norm:
+                continue
+            if (friendly_norm and (friendly_norm == dev_norm or dev_norm in friendly_norm)) or (
+                slug and (slug in dev_norm or dev_norm in slug)
+            ):
+                if getattr(dev, "adverts", None):
+                    target_dev = dev
+                    break
     if target_dev is None:
         return []
 
-    # Index floorplan proxies by normalized id, name, and host_room
+    # Index floorplan proxies by normalized id, name, entity_id, and unique host_room/area
     proxy_by_key: dict[str, dict[str, Any]] = {}
+    proxies_by_room: dict[str, list[dict[str, Any]]] = {}
     for p in proxies:
         if not isinstance(p, dict):
             continue
         for k in (p.get("id"), p.get("name"), p.get("entity_id")):
             if k:
-                norm = (
-                    str(k)
-                    .lower()
-                    .replace("esphome.", "")
-                    .replace("bluetooth.", "")
-                    .replace("-", "_")
-                )
-                proxy_by_key[norm] = p
+                raw_k = str(k).replace("esphome.", "").replace("bluetooth.", "")
+                norm = _norm_token(raw_k)
+                if norm:
+                    proxy_by_key[norm] = p
+        for rk in (p.get("host_room"), p.get("area_name")):
+            rn = _norm_token(rk)
+            if rn:
+                proxies_by_room.setdefault(rn, []).append(p)
+
+    # Bermuda uses monotonic_time_coarse() for advert.stamp; bridge wall-clock vs monotonic cleanly
+    try:
+        from bluetooth_data_tools import monotonic_time_coarse
+
+        mono_now = float(monotonic_time_coarse())
+    except Exception:  # noqa: BLE001
+        mono_now = time.monotonic()
 
     adverts = getattr(target_dev, "adverts", {}) or {}
     out: list[BLERangeMeasurement] = []
-    for _scanner_addr, adv in adverts.items():
+    seen_proxy_ids: set[str] = set()
+    for _scanner_key, adv in adverts.items():
         dist_m = getattr(adv, "rssi_distance", None)
         if dist_m is None:
             continue
         scanner_dev = getattr(adv, "scanner_device", None)
-        s_name = str(getattr(scanner_dev, "name", "") or getattr(adv, "name", "") or "").lower()
-        s_norm = s_name.replace(" ", "_").replace("-", "_")
+        s_name = str(getattr(scanner_dev, "name", "") or getattr(adv, "name", "") or "")
+        s_norm = _norm_token(s_name)
         matched_proxy = proxy_by_key.get(s_norm)
-        if matched_proxy is None:
+        if matched_proxy is None and s_norm:
             for key, p in proxy_by_key.items():
                 if key in s_norm or s_norm in key:
                     matched_proxy = p
                     break
         if matched_proxy is None:
+            adv_area = _norm_token(
+                getattr(adv, "area_name", "") or getattr(scanner_dev, "area_name", "")
+            )
+            cands = proxies_by_room.get(adv_area) or []
+            if len(cands) == 1:
+                matched_proxy = cands[0]
+            elif cands and s_norm:
+                matched_proxy = next(
+                    (c for c in cands if _norm_token(c.get("id")) in s_norm), cands[0]
+                )
+        if matched_proxy is None:
             continue
+
+        pid = str(matched_proxy.get("id", s_norm))
+        if pid in seen_proxy_ids:
+            continue
+        seen_proxy_ids.add(pid)
+
         stamp = getattr(adv, "stamp", None)
-        age = max(0.0, float(now_ts) - float(stamp)) if stamp is not None else 0.0
+        if stamp is None:
+            age = 0.0
+        else:
+            st_f = float(stamp)
+            # Detect monotonic clock (< 1e9) vs epoch wall-clock (> 1e9)
+            if float(now_ts) > 1e9 and st_f < 1e9:
+                age = max(0.0, mono_now - st_f)
+            else:
+                age = max(0.0, float(now_ts) - st_f)
+
         out.append(
             BLERangeMeasurement(
-                proxy_id=str(matched_proxy.get("id", s_norm)),
+                proxy_id=pid,
                 floor=str(matched_proxy.get("floor", "main")),
                 x_px=float(matched_proxy.get("x", 0.0)),
                 y_px=float(matched_proxy.get("y", 0.0)),

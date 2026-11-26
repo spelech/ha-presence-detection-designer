@@ -305,3 +305,36 @@ def test_ekf_continuous_bayesian_fusion_and_no_pir_double_counting(mock_hass=Non
     res = evaluate_bayesian(adjusted, _getter, prior=0.15, threshold=0.75)
     assert res.is_occupied is True
     assert res.probability > 0.75
+
+
+def test_read_bermuda_proxy_ranges_handles_irk_mac_and_monotonic_stamp():
+    """Live Bermuda IRK devices with monotonic_time_coarse stamps produce fresh ranges."""
+    import time
+
+    fp = get_default_floorplan()
+    mono_stamp = time.monotonic() - 2.0
+    adv = SimpleNamespace(
+        device_address="73:09:e8:e6:be:a4",
+        rssi_distance=1.5,
+        rssi=-58,
+        stamp=mono_stamp,
+        area_name="Master Bedroom",
+        scanner_device=SimpleNamespace(name="Master Bedroom Speaker", area_name="Master Bedroom"),
+    )
+    dev = SimpleNamespace(
+        name="Steve's S25+ (BLE)", address="irk_abc123", adverts={("x", "y"): adv}
+    )
+    bermuda_entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=SimpleNamespace(devices={"irk_abc123": dev}))
+    )
+    hass = MagicMock()
+    hass.config_entries.async_entries.return_value = [bermuda_entry]
+    hass.states.get.return_value = SimpleNamespace(
+        state="Master Bedroom",
+        attributes={"current_mac": "73:09:e8:e6:be:a4", "friendly_name": "Steve's S25+ (BLE) Area"},
+    )
+
+    ranges = read_bermuda_proxy_ranges(hass, "sensor.steve_s_s25_ble_area", fp, now_ts=1795665580.0)
+    assert len(ranges) == 1
+    assert ranges[0].proxy_id == "master_bedroom_speaker"
+    assert ranges[0].age_sec < 5.0
