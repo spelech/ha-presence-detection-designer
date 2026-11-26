@@ -2,6 +2,8 @@
 
 > **Design Objective:** Rather than forcing brittle binary yes/no decisions from noisy residential sensors—or layering ad-hoc overrides that fight one another—Presence Detection Designer (**PDD**) models indoor occupancy as a **continuous statistical estimation and output-based control problem**. Physical sensors are conditioned by their hardware dynamics and room geometry, fused via an **Extended Kalman Filter (EKF)** and **bounded Bayesian log-odds engine** into an explainable **0–100% occupancy confidence score**, and finally resolved into clean, chatter-free room states by a **hierarchical finite state machine**.
 
+> **See also:** [Signal-Processing Optimization Sprawl & 4-Candidate Comparison Report](SIGNAL_PROCESSING_OPTIMIZATION_REPORT.md) — empirical head-to-head race (`244` configurations, `11,904` scenario runs across train and unseen held-out seeds) comparing Production v6.1 Baseline against Coupled Continuous-Time HMM, 2D Raycast Grid, and RFS-PHD + HSMM architectures.
+
 ---
 
 ## Table of Contents
