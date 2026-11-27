@@ -338,3 +338,78 @@ def test_read_bermuda_proxy_ranges_handles_irk_mac_and_monotonic_stamp():
     assert len(ranges) == 1
     assert ranges[0].proxy_id == "master_bedroom_speaker"
     assert ranges[0].age_sec < 5.0
+
+
+def test_ekf_floor_stability_v2_prevents_2proxy_count_bias():
+    """With v2 enabled, 2 slightly farther upstairs proxies cannot overpower 1 main-floor proxy."""
+    # v2 enabled (default): 1 main proxy at 3.5 ft holds against 2 upstairs proxies at 3.3 + 4.0 ft
+    ekf_v2 = BLEKalmanTracker(KalmanConfig(ekf_floor_stability_v2=True))
+    init_main = [BLERangeMeasurement("lr_spk", "main", 210.0, 410.0, 3.5)]
+    for t in range(1, 6):
+        ekf_v2.update_ble_ranges(init_main, now_ts=float(t))
+    assert ekf_v2.floor == "main"
+
+    contested = [
+        BLERangeMeasurement("lr_spk", "main", 210.0, 410.0, 3.5),
+        BLERangeMeasurement("mb_nfc", "upstairs", 210.0, 410.0, 3.3),
+        BLERangeMeasurement("up_pxy", "upstairs", 260.0, 410.0, 3.6),
+    ]
+    for t in range(6, 15):
+        ekf_v2.update_ble_ranges(contested, now_ts=float(t))
+    assert ekf_v2.floor == "main"
+
+    # Legacy v1 (toggle off): 2-proxy sum on upstairs beats 1-proxy main and flips floors
+    ekf_v1 = BLEKalmanTracker(KalmanConfig(ekf_floor_stability_v2=False))
+    for t in range(1, 6):
+        ekf_v1.update_ble_ranges(init_main, now_ts=float(t))
+    for t in range(6, 15):
+        ekf_v1.update_ble_ranges(contested, now_ts=float(t))
+    assert ekf_v1.floor == "upstairs"
+
+
+def test_ekf_floor_stability_v2_no_bermuda_double_count_and_camera_hold():
+    """With v2 enabled, Bermuda area bounce is not double-counted and incumbent camera holds floor."""
+    fp = get_default_floorplan()
+    mgr = HouseEKFManager(KalmanConfig(ekf_floor_stability_v2=True))
+    tid = "sensor.steve_s_s25_ble_area"
+
+    # Establish track on main floor in Living Room (near x=210, y=410)
+    main_ble = [BLERangeMeasurement("lr_spk", "main", 210.0, 410.0, 4.0)]
+    for t in range(1, 6):
+        mgr.update_from_observations(
+            tracker_entity_id=tid,
+            ble_ranges=main_ble,
+            floorplan=fp,
+            now_ts=float(t),
+            active_camera_hits=[("main", 215.0, 405.0)],
+            bermuda_area_floor="main",
+        )
+    assert mgr.get_tracker(tid).floor == "main"
+
+    # Bermuda area bounces to upstairs + weak upstairs BLE, while Living Room camera still sees occupant
+    noisy = [
+        BLERangeMeasurement("lr_spk", "main", 210.0, 410.0, 6.0),
+        BLERangeMeasurement("mb_nfc", "upstairs", 210.0, 410.0, 3.0),
+    ]
+    for t in range(6, 15):
+        mgr.update_from_observations(
+            tracker_entity_id=tid,
+            ble_ranges=noisy,
+            floorplan=fp,
+            now_ts=float(t),
+            active_camera_hits=[("main", 215.0, 405.0)],
+            bermuda_area_floor="upstairs",
+        )
+    assert mgr.get_tracker(tid).floor == "main"
+
+    # Unattributed camera on another floor must NOT pull the track while live BLE is present
+    for t in range(15, 22):
+        mgr.update_from_observations(
+            tracker_entity_id=tid,
+            ble_ranges=main_ble,
+            floorplan=fp,
+            now_ts=float(t),
+            active_camera_hits=[("upstairs", 215.0, 405.0)],
+            bermuda_area_floor="main",
+        )
+    assert mgr.get_tracker(tid).floor == "main"

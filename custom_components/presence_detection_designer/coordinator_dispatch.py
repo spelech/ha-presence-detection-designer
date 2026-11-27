@@ -458,6 +458,11 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                     if isinstance(getattr(store, "global_settings", None), dict)
                     else []
                 )
+                ekf_floor_v2 = (
+                    bool(store.global_settings.get("ekf_floor_stability_v2", True))
+                    if isinstance(getattr(store, "global_settings", None), dict)
+                    else True
+                )
                 frame["ekf_tracks"] = update_house_ekf_from_hass(
                     store.ekf_manager,
                     coord.hass,
@@ -466,6 +471,7 @@ def evaluate_coordinator_bayesian(coord: Any) -> BayesianEvaluation | None:
                     now_ts,
                     trackers,
                     ble_ranges_provider=getattr(store, "_ble_ranges_provider", None),
+                    ekf_floor_stability_v2=ekf_floor_v2,
                 )
             if store is not None:
                 store._last_spatial_frame = frame
