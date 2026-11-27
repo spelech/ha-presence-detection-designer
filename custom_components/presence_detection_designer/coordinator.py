@@ -520,11 +520,10 @@ class RoomPresenceCoordinator:
     async def async_send_test_notification(
         self,
         service: str | None = None,
-        channel: str | None = None,
+        target: str | None = None,
         verbosity: str | None = None,
-        daily_thread: bool | None = None,
     ) -> bool:
-        """Send a test diagnostic notification to verify Slack connectivity."""
+        """Send a test diagnostic notification via Home Assistant notify.* service."""
         return await async_send_coordinator_test_notification(
-            self, service=service, channel=channel, verbosity=verbosity, daily_thread=daily_thread
+            self, service=service, target=target, verbosity=verbosity
         )

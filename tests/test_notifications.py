@@ -1,4 +1,4 @@
-"""Tests for Slack Presence Notifications & Diagnostic Attribution."""
+"""Tests for Home Assistant Presence Notifications & Diagnostic Attribution."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from custom_components.presence_detection_designer.notifications import (
+    EVENT_PRESENCE_TRANSITION,
     NotificationDispatcher,
     TransitionAttribution,
 )
@@ -59,11 +60,6 @@ def test_resolve_driver_occupied_sensor() -> None:
         "prob_threshold": 0.70,
         "inactivity_timeout": 240,
     }
-    prev_eval: dict[str, Any] = {
-        "probability": 0.15,
-        "is_occupied": False,
-        "active_entities": [],
-    }
     curr_eval: dict[str, Any] = {
         "probability": 0.92,
         "is_occupied": True,
@@ -78,7 +74,7 @@ def test_resolve_driver_occupied_sensor() -> None:
         from_state="clear",
         to_state="occupied",
         room_config=room_config,
-        prev_eval=prev_eval,
+        prev_eval=None,
         curr_eval=curr_eval,
         adjacent_context="Entered from Upstairs Hallway & Stairs",
     )
@@ -99,11 +95,6 @@ def test_resolve_driver_cleared_timeout() -> None:
         "prob_threshold": 0.70,
         "inactivity_timeout": 180,
     }
-    prev_eval: dict[str, Any] = {
-        "probability": 0.85,
-        "is_occupied": True,
-        "active_entities": ["binary_sensor.office_motion"],
-    }
     curr_eval: dict[str, Any] = {
         "probability": 0.10,
         "is_occupied": False,
@@ -117,336 +108,93 @@ def test_resolve_driver_cleared_timeout() -> None:
         from_state="occupied",
         to_state="clear",
         room_config=room_config,
-        prev_eval=prev_eval,
+        prev_eval=None,
         curr_eval=curr_eval,
-        duration_seconds=1250,
+        duration_seconds=2058,
     )
 
     assert attribution.to_state == "clear"
-    assert "Inactivity timeout" in attribution.primary_driver
-    assert attribution.duration_occupied_str == "20m 50s"
-    assert attribution.confidence_pct == 10.0
+    assert attribution.driver_type == "inactivity_timeout"
+    assert attribution.duration_occupied_str == "34m 18s"
 
 
-def test_format_slack_message_occupied(sample_attribution_occupied: TransitionAttribution) -> None:
+def test_format_notification_message_variants(
+    sample_attribution_occupied: TransitionAttribution,
+    sample_attribution_cleared: TransitionAttribution,
+) -> None:
     dispatcher = NotificationDispatcher()
-    msg = dispatcher.format_slack_message(sample_attribution_occupied)
 
-    assert "text" in msg
-    assert "🟢 *Living Room → Occupied*" in msg["text"]
-    assert "Frigate Camera" in msg["text"]
-    assert "88%" in msg["text"]
-    assert "Kitchen" in msg["text"]
+    occ_compact = dispatcher.format_notification_message(sample_attribution_occupied, "compact")
+    assert "Living Room → Occupied" in occ_compact["text"]
+    assert "88%" in occ_compact["text"]
 
+    occ_minimal = dispatcher.format_notification_message(sample_attribution_occupied, "minimal")
+    assert "Living Room occupied" in occ_minimal["text"]
 
-def test_format_slack_message_cleared(sample_attribution_cleared: TransitionAttribution) -> None:
-    dispatcher = NotificationDispatcher()
-    msg = dispatcher.format_slack_message(sample_attribution_cleared)
+    occ_full = dispatcher.format_notification_message(sample_attribution_occupied, "full")
+    assert "Primary Driver:" in occ_full["text"]
+    assert "Active Sensors:" in occ_full["text"]
 
-    assert "text" in msg
-    assert "⚪ *Living Room → Cleared*" in msg["text"]
-    assert "34m 18s" in msg["text"]
-    assert "Inactivity timeout" in msg["text"]
+    clr_compact = dispatcher.format_notification_message(sample_attribution_cleared, "compact")
+    assert "Living Room → Cleared" in clr_compact["text"]
+    assert "34m 18s" in clr_compact["text"]
 
 
 @pytest.mark.asyncio
-async def test_async_dispatch_notification(
+async def test_dispatch_notification_calls_ha_service_and_fires_event(
     sample_attribution_occupied: TransitionAttribution,
 ) -> None:
     dispatcher = NotificationDispatcher()
     hass = MagicMock()
+    hass.services.has_service = MagicMock(return_value=True)
     hass.services.async_call = AsyncMock()
     hass.bus.async_fire = MagicMock()
 
     global_settings = {
         "notifications_enabled": True,
-        "slack_notify_service": "notify.scdbots",
-        "slack_channel": "#presence-alerts",
+        "notify_service": "notify.mobile_app_phone",
+        "notify_target": "phone",
+        "notify_verbosity": "compact",
     }
-    room_config = {
-        "notify_slack": True,
-        "notify_on_occupied": True,
-        "notify_on_cleared": True,
-    }
+    room_config = {"notify_enabled": True, "notify_on_occupied": True}
 
-    success = await dispatcher.async_dispatch_notification(
-        hass=hass,
-        attribution=sample_attribution_occupied,
-        global_settings=global_settings,
-        room_config=room_config,
+    ok = await dispatcher.async_dispatch_notification(
+        hass, sample_attribution_occupied, global_settings, room_config
     )
-
-    assert success is True
-    hass.services.async_call.assert_called_once()
-    call_args = hass.services.async_call.call_args
-    assert call_args[0][0] == "notify"
-    assert call_args[0][1] == "scdbots"
-    assert call_args[0][2]["target"] == ["#presence-alerts"]
-    assert "Living Room → Occupied" in call_args[0][2]["message"]
-
+    assert ok is True
     hass.bus.async_fire.assert_called_once()
-    event_args = hass.bus.async_fire.call_args
-    assert event_args[0][0] == "presence_detection_designer_transition"
-    assert event_args[0][1]["room_id"] == "living_room"
-    assert event_args[0][1]["to_state"] == "occupied"
+    assert hass.bus.async_fire.call_args[0][0] == EVENT_PRESENCE_TRANSITION
+    hass.services.async_call.assert_called_once()
+    domain, service, payload = hass.services.async_call.call_args[0][:3]
+    assert domain == "notify"
+    assert service == "mobile_app_phone"
+    assert payload["target"] == ["phone"]
+    assert "Living Room" in payload["message"]
 
 
 @pytest.mark.asyncio
-async def test_debounce_suppression(sample_attribution_occupied: TransitionAttribution) -> None:
-    dispatcher = NotificationDispatcher()
-    hass = MagicMock()
-    hass.services.async_call = AsyncMock()
-    hass.bus.async_fire = MagicMock()
-
-    global_settings = {
-        "notifications_enabled": True,
-        "slack_notify_service": "notify.scdbots",
-        "slack_channel": "#presence-alerts",
-    }
-    room_config = {"notify_slack": True, "notify_on_occupied": True}
-
-    # First dispatch succeeds
-    res1 = await dispatcher.async_dispatch_notification(
-        hass, sample_attribution_occupied, global_settings, room_config
-    )
-    assert res1 is True
-
-    # Immediate second dispatch is debounced
-    res2 = await dispatcher.async_dispatch_notification(
-        hass, sample_attribution_occupied, global_settings, room_config
-    )
-    assert res2 is False
-    assert hass.services.async_call.call_count == 1
-
-
-@pytest.mark.asyncio
-async def test_auto_create_missing_slack_channel_and_negative_space_formatting(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_dispatch_notification_debounces_and_respects_disabled(
+    sample_attribution_occupied: TransitionAttribution,
 ) -> None:
     dispatcher = NotificationDispatcher()
     hass = MagicMock()
+    hass.services.has_service = MagicMock(return_value=True)
     hass.services.async_call = AsyncMock()
     hass.bus.async_fire = MagicMock()
 
-    async def _run_sync(func, *args):
-        return func(*args)
-
-    hass.async_add_executor_job = AsyncMock(side_effect=_run_sync)
-
-    slack_entry = MagicMock()
-    slack_entry.data = {"api_key": "xoxb-test-slack-token", "default_channel": "notifications"}
-    hass.config_entries.async_entries = MagicMock(return_value=[slack_entry])
-
-    created_channels: list[str] = []
-
-    def _fake_slack_api(
-        url: str, token: str, payload: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        if "conversations.list" in url:
-            return {
-                "ok": True,
-                "channels": [{"name": "notifications", "id": "C111", "is_member": True}],
-            }
-        if "conversations.create" in url and payload:
-            created_channels.append(payload["name"])
-            return {
-                "ok": True,
-                "channel": {"id": "C222", "name": payload["name"], "is_member": True},
-            }
-        return {"ok": True}
-
-    monkeypatch.setattr(dispatcher, "_call_slack_web_api", _fake_slack_api)
-
-    curr_eval: dict[str, Any] = {
-        "probability": 0.89,
-        "is_occupied": True,
-        "active_entities": ["binary_sensor.master_bathroom_person_occupancy"],
-        "active_sustaining_conditions": [],
-        "driver_entity": "binary_sensor.master_bathroom_person_occupancy",
-        "inferred_location": "Master Bathroom (Interior Shower/Vanity Blind Pocket)",
-        "negative_space_evidence": [
-            "camera.master_bedroom cone confirmed clear (88% of Master Bedroom excluded)"
-        ],
-    }
-    attr = dispatcher.resolve_transition_driver(
-        room_id="master_bath",
-        room_name="Master Bathroom",
-        from_state="clear",
-        to_state="occupied",
-        room_config={"room_name": "Master Bathroom", "prob_threshold": 0.75},
-        prev_eval=None,
-        curr_eval=curr_eval,
-    )
-    assert attr.inferred_location == "Master Bathroom (Interior Shower/Vanity Blind Pocket)"
-    assert attr.negative_space_evidence is not None
-    formatted = dispatcher.format_slack_message(attr)
-    assert "Master Bathroom (Interior Shower/Vanity Blind Pocket)" in formatted["text"]
-    assert "camera.master_bedroom cone confirmed clear" in formatted["text"]
-
-    # Room config with notify_slack=None defaults to enabled, and missing #new-presence-chan is auto-created
+    # Globally disabled
     ok = await dispatcher.async_dispatch_notification(
-        hass=hass,
-        attribution=attr,
-        global_settings={
-            "notifications_enabled": True,
-            "slack_notify_service": "notify.scdbots",
-            "slack_channel": "#new-presence-chan",
-        },
-        room_config={"notify_slack": None},
+        hass,
+        sample_attribution_occupied,
+        {"notifications_enabled": False, "notify_service": "notify.mobile_app_phone"},
+        {"notify_enabled": True},
     )
-    assert ok is True
-    assert created_channels == ["new-presence-chan"]
+    assert ok is False
 
-
-def test_collect_room_states_identifies_occupied_and_clear():
-    """Verify collect_room_states correctly reads is_present and driver attribution."""
-    import time
-
-    from custom_components.presence_detection_designer.const import DOMAIN
-    from custom_components.presence_detection_designer.notifications import format_duration
-    from custom_components.presence_detection_designer.slack_cards import SlackDailyThreadManager
-
-    mgr = SlackDailyThreadManager()
-    mock_hass = MagicMock()
-
-    coord_office = MagicMock()
-    coord_office.room_name = "Office"
-    coord_office.is_present = True
-    coord_office.state_machine.is_present = True
-    coord_office.state_machine.last_occupied_time = time.time() - 120.0
-    coord_office.state_machine.occupancy_state = "occupied_confirmed"
-    coord_office.state_machine.is_cooling_down = False
-    coord_office.state_machine.cooling_remaining_sec = 0
-    coord_office.state_machine.last_trigger_entity = "binary_sensor.steves_desk_pir"
-    coord_office.state_machine.active_conditions = []
-    coord_office.last_spatial_estimate = None
-
-    coord_kitchen = MagicMock()
-    coord_kitchen.room_name = "Kitchen"
-    coord_kitchen.is_present = False
-    coord_kitchen.state_machine.is_present = False
-    coord_kitchen.state_machine.occupancy_state = "vacant"
-    coord_kitchen.state_machine.is_cooling_down = False
-    coord_kitchen.state_machine.cooling_remaining_sec = 0
-
-    mock_hass.data = {
-        DOMAIN: {
-            "office_id": coord_office,
-            "kitchen_id": coord_kitchen,
-        }
-    }
-
-    occupied, clear = mgr.collect_room_states(mock_hass, format_duration)
-    assert len(occupied) == 1
-    assert occupied[0]["name"] == "Office"
-    assert "2m" in occupied[0]["duration_str"]
-    assert "Steves Desk Pir" in occupied[0]["driver"]
-
-    assert clear == ["Kitchen"]
-
-
-def test_build_daily_digest_blocks_structure():
-    """Verify build_daily_digest_blocks correctly formats occupied, clear, headcount, and transition muting."""
-    from custom_components.presence_detection_designer.slack_cards import build_daily_digest_blocks
-
-    blocks = build_daily_digest_blocks(
-        date_display="Wednesday, Nov 04, 2026",
-        occupied_rooms=[{"name": "Office", "duration_str": "15m", "driver": "Steve's S25+"}],
-        clear_rooms=["Kitchen", "Living Room"],
-        transition_count=42,
-        last_updated_time="07:30 PM",
-        house_headcount=1,
-        occupancy_mode="occupied",
-        notify_transitions=False,
+    # First enabled dispatch succeeds; immediate repeat is debounced
+    gs = {"notifications_enabled": True, "notify_service": "notify.mobile_app_phone"}
+    rc = {"notify_enabled": True}
+    assert await dispatcher.async_dispatch_notification(hass, sample_attribution_occupied, gs, rc)
+    assert not await dispatcher.async_dispatch_notification(
+        hass, sample_attribution_occupied, gs, rc
     )
-    serialized = str(blocks)
-    assert "Office" in serialized
-    assert "Kitchen, Living Room" in serialized
-    assert "*House Status:* Home _(1 occupant)_" in serialized
-    assert "*Mode:* Home" in serialized
-    assert "*Headcount:* 1" in serialized
-    assert "Transitions muted" in serialized
-
-    empty_blocks = build_daily_digest_blocks(
-        date_display="Wednesday, Nov 04, 2026",
-        occupied_rooms=[],
-        clear_rooms=["Kitchen", "Living Room"],
-        transition_count=42,
-        last_updated_time="07:30 PM",
-        house_headcount=1,
-        occupancy_mode="occupied",
-        notify_transitions=False,
-    )
-    empty_ser = str(empty_blocks)
-    assert "*House Status:* Home _(1 occupant)_ · All 2 rooms clear" in empty_ser
-    assert "0 occupied" not in empty_ser
-
-
-@pytest.mark.asyncio
-async def test_async_dispatch_notification_mutes_transition_spam(monkeypatch):
-    """Verify when slack_notify_transitions is False, individual replies are muted but digest is updated."""
-    from custom_components.presence_detection_designer.notifications import (
-        NotificationDispatcher,
-        TransitionAttribution,
-    )
-    from custom_components.presence_detection_designer.slack_cards import (
-        get_slack_daily_thread_manager,
-    )
-
-    dispatcher = NotificationDispatcher()
-    mock_hass = MagicMock()
-    mock_hass.bus = MagicMock()
-
-    mgr = get_slack_daily_thread_manager(mock_hass)
-    monkeypatch.setattr(mgr, "get_slack_token", lambda hass: "xoxb-fake-token")
-
-    post_thread_reply_called = False
-    update_digest_called = False
-
-    async def _mock_get_or_create(hass, channel, token, fmt_fn, call_api_fn=None):
-        return "12345.6789"
-
-    async def _mock_post_reply(*args, **kwargs):
-        nonlocal post_thread_reply_called
-        post_thread_reply_called = True
-        return True
-
-    async def _mock_update_digest(*args, **kwargs):
-        nonlocal update_digest_called
-        update_digest_called = True
-
-    monkeypatch.setattr(mgr, "async_get_or_create_daily_thread", _mock_get_or_create)
-    monkeypatch.setattr(mgr, "async_post_thread_reply", _mock_post_reply)
-    monkeypatch.setattr(mgr, "async_update_daily_digest", _mock_update_digest)
-    monkeypatch.setattr(dispatcher, "async_ensure_slack_channel", AsyncMock())
-
-    attr = TransitionAttribution(
-        room_id="office",
-        room_name="Office",
-        from_state="clear",
-        to_state="occupied",
-        primary_driver="Steve Phone",
-        driver_type="sensor",
-        confidence_pct=95.0,
-        threshold_pct=70.0,
-        active_sensors=["sensor.steve_phone"],
-        sustaining_conditions=[],
-    )
-
-    # When slack_notify_transitions is False:
-    result = await dispatcher.async_dispatch_notification(
-        hass=mock_hass,
-        attribution=attr,
-        global_settings={
-            "notifications_enabled": True,
-            "slack_daily_thread": True,
-            "slack_notify_transitions": False,
-            "slack_channel": "#presence-alerts",
-        },
-        room_config={},
-    )
-    assert result is True
-    # Individual reply is MUTED
-    assert post_thread_reply_called is False
-    # Main card update is SCHEDULED
-    assert mock_hass.async_create_task.called

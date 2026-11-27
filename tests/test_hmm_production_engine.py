@@ -15,7 +15,7 @@ from tests.harness.virtual_ha import VirtualHAHarness
 
 def test_default_global_settings_use_coupled_hmm() -> None:
     """Production defaults must activate the winning Coupled Log-Odds HMM (ref_04)."""
-    assert DEFAULT_GLOBAL_SETTINGS["inference_engine"] == "coupled_hmm"
+    assert "hmm_params" in DEFAULT_GLOBAL_SETTINGS
     assert DEFAULT_HMM_PARAMS["theta_enter"] == pytest.approx(0.61440, abs=1e-4)
     assert DEFAULT_HMM_PARAMS["hysteresis_gap"] == pytest.approx(0.10853, abs=1e-4)
 

@@ -221,7 +221,7 @@ class PDDCameraAlignView(HomeAssistantView):
 
 
 class PDDNotificationTestView(HomeAssistantView):
-    """View to dispatch a test Slack notification."""
+    """View to dispatch a test Home Assistant notification."""
 
     url = "/api/presence_detection_designer/notifications/test"
     name = "api:presence_detection_designer:notifications:test"
@@ -236,42 +236,39 @@ class PDDNotificationTestView(HomeAssistantView):
         except Exception:
             body = {}
 
-        service = body.get("slack_notify_service")
-        channel = body.get("slack_channel")
-        verbosity = body.get("slack_verbosity")
-        daily_thread = body.get("slack_daily_thread")
+        service = body.get("notify_service")
+        target = body.get("notify_target")
+        verbosity = body.get("notify_verbosity")
 
         domain_data = getattr(hass, "data", {}).get(DOMAIN, {})
         coordinators = [c for c in domain_data.values() if isinstance(c, RoomPresenceCoordinator)]
         if coordinators:
             success = await coordinators[0].async_send_test_notification(
-                service=service, channel=channel, verbosity=verbosity, daily_thread=daily_thread
+                service=service, target=target, verbosity=verbosity
             )
             if not success:
                 return self.json(
                     {
                         "success": False,
-                        "error": f"Test alert failed via {service or 'notify.scdbots'} to {channel or '#presence-alerts'}. Check HA logs, Slack token, or notify service.",
+                        "error": f"Test alert failed via {service or '(unconfigured)'}. Check HA logs or notify service.",
                     },
                     status_code=502,
                 )
             return self.json(
                 {
                     "success": True,
-                    "message": f"Test alert sent via {service or 'notify.scdbots'} to {channel or '#presence-alerts'} ({verbosity or 'compact'})",
+                    "message": f"Test alert sent via {service or '(default)'} ({verbosity or 'compact'})",
                 }
             )
 
         store = domain_data.get(DATA_STORE)
         global_settings = dict(getattr(store, "global_settings", {}) or {})
         if service:
-            global_settings["slack_notify_service"] = service
-        if channel:
-            global_settings["slack_channel"] = channel
+            global_settings["notify_service"] = service
+        if target:
+            global_settings["notify_target"] = target
         if verbosity:
-            global_settings["slack_verbosity"] = verbosity
-        if daily_thread is not None:
-            global_settings["slack_daily_thread"] = bool(daily_thread)
+            global_settings["notify_verbosity"] = verbosity
 
         dispatcher = NotificationDispatcher()
         attribution = TransitionAttribution(
@@ -292,20 +289,20 @@ class PDDNotificationTestView(HomeAssistantView):
             hass,
             attribution,
             global_settings,
-            {"notify_slack": True, "notify_on_occupied": True, "slack_notify_transitions": True},
+            {"notify_enabled": True, "notify_on_occupied": True},
             force_test=True,
         )
         if not success:
             return self.json(
                 {
                     "success": False,
-                    "error": f"Test alert failed via {global_settings.get('slack_notify_service', 'notify.scdbots')} to {global_settings.get('slack_channel', '#presence-alerts')}. Check HA logs, Slack token, or notify service.",
+                    "error": f"Test alert failed via {global_settings.get('notify_service') or '(unconfigured)'}. Check HA logs or notify service.",
                 },
                 status_code=502,
             )
         return self.json(
             {
                 "success": True,
-                "message": f"Test alert sent via {global_settings.get('slack_notify_service', 'notify.scdbots')} to {global_settings.get('slack_channel', '#presence-alerts')}",
+                "message": f"Test alert sent via {global_settings.get('notify_service') or '(default)'}",
             }
         )

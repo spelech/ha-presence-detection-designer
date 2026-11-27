@@ -44,12 +44,12 @@ from .const import (
     DEFAULT_INTERIOR_DOORS,
     DEFAULT_MAX_OCCUPANTS,
     DEFAULT_NEGATIVE_SPACE_ENABLED,
+    DEFAULT_NOTIFY_SERVICE,
+    DEFAULT_NOTIFY_TARGET,
+    DEFAULT_NOTIFY_VERBOSITY,
     DEFAULT_PERIMETER_DOORS,
     DEFAULT_PIR_CANDIDATE_WINDOW,
     DEFAULT_PIR_VALIDATION_ENABLED,
-    DEFAULT_SLACK_CHANNEL,
-    DEFAULT_SLACK_NOTIFY_SERVICE,
-    DEFAULT_SLACK_VERBOSITY,
     DEFAULT_STALE_COUNT_TIMEOUT,
     DOMAIN,
     MAX_ROOM_REVISIONS,
@@ -60,7 +60,6 @@ from .const import (
 )
 from .hmm_engine import DEFAULT_HMM_PARAMS, HouseHMMEngine, HouseTopologyModel
 from .spatial_topology import get_default_floorplan
-from .store_migrations import migrate_and_backfill_store_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,20 +70,15 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "llm_model": "gemini-2.5-flash",
     "llm_agent_id": "",
     "ble_trackers": list(DEFAULT_BLE_TRACKERS),
-    "notifications_enabled": True,
-    "slack_notify_service": DEFAULT_SLACK_NOTIFY_SERVICE,
-    "slack_channel": DEFAULT_SLACK_CHANNEL,
-    "slack_verbosity": DEFAULT_SLACK_VERBOSITY,
-    "slack_daily_thread": True,
-    "slack_notify_transitions": False,
-    "slack_webhook_id": "",
-    "slack_signing_secret": "",
-    "include_camera_snapshot": False,
+    "notifications_enabled": False,
+    "notify_service": DEFAULT_NOTIFY_SERVICE,
+    "notify_target": DEFAULT_NOTIFY_TARGET,
+    "notify_verbosity": DEFAULT_NOTIFY_VERBOSITY,
+    "designer_ui_enabled": True,
     "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
     "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
     "ble_decider_enabled": DEFAULT_BLE_DECIDER_ENABLED,
     "ekf_floor_stability_v2": DEFAULT_EKF_FLOOR_STABILITY_V2,
-    "inference_engine": "coupled_hmm",
     "hmm_params": dict(DEFAULT_HMM_PARAMS),
     "pir_validation_enabled": DEFAULT_PIR_VALIDATION_ENABLED,
     "pir_candidate_window": DEFAULT_PIR_CANDIDATE_WINDOW,
@@ -112,8 +106,50 @@ def _default_store_data() -> dict[str, Any]:
         "revisions": {},
         "timeline": {},
         "floorplan": get_default_floorplan(),
-        "daily_threads": {},
     }
+
+
+def _normalize_store_payload(hass: Any, stored: Any) -> tuple[dict[str, Any], bool]:
+    """Ensure loaded .storage payload has all required keys and sync ConfigEntries."""
+    if not isinstance(stored, dict):
+        stored = _default_store_data()
+        dirty = True
+    else:
+        dirty = False
+    defaults = _default_store_data()
+    for key, default_val in defaults.items():
+        if key not in stored or not isinstance(stored[key], type(default_val)):
+            stored[key] = copy.deepcopy(default_val)
+            dirty = True
+    gs = stored["global_settings"]
+    for key, default_val in DEFAULT_GLOBAL_SETTINGS.items():
+        if key not in gs:
+            gs[key] = copy.deepcopy(default_val)
+            dirty = True
+
+    if (
+        hass
+        and hasattr(hass, "config_entries")
+        and hasattr(hass.config_entries, "async_entries")
+    ):
+        rooms = stored["rooms"]
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            eid = getattr(entry, "entry_id", None)
+            if not eid or eid in rooms:
+                continue
+            merged = {**(getattr(entry, "data", None) or {}), **(getattr(entry, "options", None) or {})}
+            rooms[eid] = copy.deepcopy(merged)
+            dirty = True
+            for llm_key in (
+                "llm_provider_type",
+                "llm_api_url",
+                "llm_api_key",
+                "llm_model",
+                "llm_agent_id",
+            ):
+                if merged.get(llm_key) and not gs.get(llm_key):
+                    gs[llm_key] = merged[llm_key]
+    return stored, dirty
 
 
 class PDDStore:
@@ -168,12 +204,7 @@ class PDDStore:
             _LOGGER.warning("Could not load .storage/%s: %s", STORAGE_KEY, err)
             stored = None
 
-        stored, dirty = migrate_and_backfill_store_payload(
-            self.hass,
-            stored,
-            _default_store_data,
-            DEFAULT_GLOBAL_SETTINGS,
-        )
+        stored, dirty = _normalize_store_payload(self.hass, stored)
 
         self._data = stored
         self._loaded = True
@@ -355,25 +386,21 @@ class PDDStore:
             "llm_api_key",
             "llm_model",
             "llm_agent_id",
-            "slack_notify_service",
-            "slack_channel",
-            "slack_verbosity",
-            "slack_webhook_id",
-            "slack_signing_secret",
+            "notify_service",
+            "notify_target",
+            "notify_verbosity",
         ):
             if key in updates and updates[key] is not None:
                 gs[key] = str(updates[key]).strip()
 
         for bkey in (
             "notifications_enabled",
+            "designer_ui_enabled",
             "negative_space_enabled",
             "guest_mode_enabled",
             "ble_decider_enabled",
             "ekf_floor_stability_v2",
             "pir_validation_enabled",
-            "slack_daily_thread",
-            "slack_notify_transitions",
-            "include_camera_snapshot",
             "enable_conservation_law",
             "ui_advanced_mode",
         ):
@@ -434,22 +461,6 @@ class PDDStore:
         """Alias for async_update_global_settings."""
         return await self.async_update_global_settings(updates)
 
-    def get_daily_threads(self) -> dict[str, Any]:
-        """Return cached daily thread metadata map."""
-        return self._data.setdefault("daily_threads", {})
-
-    async def async_save_daily_thread(self, channel: str, data: dict[str, Any]) -> None:
-        """Persist daily thread timestamp for a channel."""
-        self._data.setdefault("daily_threads", {})[channel] = copy.deepcopy(data)
-        await self.async_save()
-
-    async def async_delete_daily_thread(self, channel: str) -> None:
-        """Remove cached daily thread metadata for a channel."""
-        threads = self._data.setdefault("daily_threads", {})
-        if channel in threads:
-            threads.pop(channel, None)
-            await self.async_save()
-
     def get_floorplan(self) -> dict[str, Any]:
         """Return a deep copy of the stored 2D spatial floorplan and camera view cones."""
         fp = self._data.get("floorplan")
@@ -477,9 +488,6 @@ class PDDStore:
         if not isinstance(floorplan, dict) or not floorplan.get("floors"):
             floorplan = get_default_floorplan()
         fp_copy = copy.deepcopy(floorplan)
-        from .store_migrations import enforce_floorplan_preset_specs
-
-        enforce_floorplan_preset_specs(fp_copy)
         self._data["floorplan"] = fp_copy
         self._hmm_sig = None
         await self.async_save()

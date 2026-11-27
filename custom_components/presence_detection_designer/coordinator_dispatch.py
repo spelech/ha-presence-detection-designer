@@ -228,7 +228,7 @@ def dispatch_presence_transition(coord: Any) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-    if not (coord.hass and coord.notify_slack):
+    if not (coord.hass and coord.notify_enabled):
         return
 
     global_settings: dict[str, Any] = {}

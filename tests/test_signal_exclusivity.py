@@ -10,7 +10,6 @@ from custom_components.presence_detection_designer.bayesian_engine import (
     resolve_observation_weights,
 )
 from custom_components.presence_detection_designer.const import (
-    CONF_AREA_ID,
     CONF_BAYESIAN_OBSERVATIONS,
     CONF_BAYESIAN_PRIOR,
     CONF_BAYESIAN_THRESHOLD,
@@ -30,13 +29,6 @@ from custom_components.presence_detection_designer.sensor_reliability import (
 )
 from custom_components.presence_detection_designer.spatial_inference import evaluate_spatial_frame
 from custom_components.presence_detection_designer.spatial_topology import get_default_floorplan
-from custom_components.presence_detection_designer.store import (
-    DEFAULT_GLOBAL_SETTINGS,
-    _default_store_data,
-)
-from custom_components.presence_detection_designer.store_migrations import (
-    migrate_and_backfill_store_payload,
-)
 from custom_components.presence_detection_designer.topology_rule_applier import (
     apply_compiled_topology_to_config,
 )
@@ -302,56 +294,8 @@ async def test_office_ups_remote_workload_suppressed_by_contradictory_ble(tmp_pa
 async def test_migration_topology_and_state_graph_demote_and_label_non_exclusive(
     mock_hass,
 ) -> None:
-    """@requirement SIGNAL-02: Migration and topology applier demote non-exclusive obs idempotently."""
-    payload = {
-        "rooms": {
-            "office_id": {
-                CONF_ROOM_NAME: "Office",
-                CONF_AREA_ID: "office",
-                CONF_BAYESIAN_OBSERVATIONS: [
-                    {
-                        "entity_id": "sensor.office_ups_used_watts_filtered",
-                        "label": "Office UPS",
-                        "preset": "strong",
-                        "operator": "greater_than",
-                        "state": "140",
-                        "prob_given_true": 0.88,
-                        "prob_given_false": 0.05,
-                    },
-                    {
-                        "entity_id": "light.office_lights",
-                        "label": "Office Lights",
-                        "preset": "moderate",
-                        "prob_given_true": 0.72,
-                        "prob_given_false": 0.12,
-                    },
-                ],
-            }
-        }
-    }
-    migrated, dirty = migrate_and_backfill_store_payload(
-        None, payload, _default_store_data, DEFAULT_GLOBAL_SETTINGS
-    )
-    assert dirty is True
-    obs = {o["entity_id"]: o for o in migrated["rooms"]["office_id"][CONF_BAYESIAN_OBSERVATIONS]}
-    assert obs["sensor.office_ups_used_watts_filtered"]["preset"] == "supporting"
-    assert obs["sensor.office_ups_used_watts_filtered"]["signal_weighted"] == "power_monitor"
-    assert obs["sensor.office_ups_used_watts_filtered"]["prob_given_true"] < 0.72
-    assert obs["light.office_lights"]["preset"] == "supporting"
-    assert obs["light.office_lights"]["signal_weighted"] == "actuator"
-
-    # Second run is idempotent
-    migrated2, dirty2 = migrate_and_backfill_store_payload(
-        None, migrated, _default_store_data, DEFAULT_GLOBAL_SETTINGS
-    )
-    assert dirty2 is False
-    obs2 = {o["entity_id"]: o for o in migrated2["rooms"]["office_id"][CONF_BAYESIAN_OBSERVATIONS]}
-    assert (
-        obs2["sensor.office_ups_used_watts_filtered"]["prob_given_true"]
-        == (obs["sensor.office_ups_used_watts_filtered"]["prob_given_true"])
-    )
-
-    # Topology applier also demotes non-human-exclusive observations
+    """@requirement SIGNAL-02: Topology applier demotes non-exclusive obs."""
+    # Topology applier demotes non-human-exclusive observations
     compiled = {
         "compiled_room_rules": {
             "Master Bathroom": {
@@ -383,7 +327,24 @@ async def test_migration_topology_and_state_graph_demote_and_label_non_exclusive
     assert bath_obs["signal_weighted"] == "environmental"
 
     # PDDStateGraphView exposes human_exclusive flag per sensor
-    coord = RoomPresenceCoordinator(mock_hass, "office_id", migrated["rooms"]["office_id"])
+    office_cfg = {
+        CONF_ROOM_NAME: "Office",
+        CONF_BAYESIAN_OBSERVATIONS: [
+            {
+                "entity_id": "sensor.office_ups_used_watts_filtered",
+                "label": "Office UPS",
+                "preset": "supporting",
+                "operator": "greater_than",
+                "state": "140",
+            },
+            {
+                "entity_id": "light.office_lights",
+                "label": "Office Lights",
+                "preset": "supporting",
+            },
+        ],
+    }
+    coord = RoomPresenceCoordinator(mock_hass, "office_id", office_cfg)
     mock_hass.data = {DOMAIN: {"office_id": coord}}
     view = PDDStateGraphView()
     req = MagicMock()

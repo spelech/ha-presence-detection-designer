@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import copy
-
 import pytest
 
 from custom_components.presence_detection_designer.bayesian_engine import (
@@ -27,13 +25,6 @@ from custom_components.presence_detection_designer.sensor_reliability import (
     temper_observation_dict_reliability,
 )
 from custom_components.presence_detection_designer.state_machine import RoomPresenceStateMachine
-from custom_components.presence_detection_designer.store import (
-    DEFAULT_GLOBAL_SETTINGS,
-    _default_store_data,
-)
-from custom_components.presence_detection_designer.store_migrations import (
-    migrate_and_backfill_store_payload,
-)
 from tests.harness.virtual_ha import VirtualHAHarness
 
 
@@ -158,55 +149,6 @@ def test_single_pass_tempering_supporting_floor_and_store_cleanup(mock_hass) -> 
     assert eco_occ["cooldown_weighted"] == 1800.0
     _, pt_occ_rt, pf_occ_rt = resolve_observation_weights(eco_occ)
     assert (pt_occ_rt, pf_occ_rt) == (eco_occ["prob_given_true"], eco_occ["prob_given_false"])
-
-    # Migration purges 0.5/0.5 dead entries, duplicates, and stray penalize_when_off on cameras/PIRs
-    payload = copy.deepcopy(_default_store_data())
-    payload["rooms"] = {
-        "guest_id": {
-            CONF_ROOM_NAME: "Guest Room",
-            CONF_BAYESIAN_PRIOR: 0.12,
-            CONF_BAYESIAN_THRESHOLD: 0.75,
-            CONF_BAYESIAN_OBSERVATIONS: [
-                {
-                    "entity_id": "binary_sensor.guest_room_motion_occupancy",
-                    "preset": "strong",
-                    "penalize_when_off": True,
-                },
-                {"entity_id": "binary_sensor.guest_room_motion_occupancy", "preset": "strong"},
-                {
-                    "entity_id": "light.guest_room_nightstands",
-                    "preset": "strong",
-                    "prob_given_true": 0.5,
-                    "prob_given_false": 0.5,
-                },
-                {
-                    "entity_id": "binary_sensor.guest_room_occupancy",
-                    "preset": "supporting",
-                    "prob_given_true": 0.45,
-                    "prob_given_false": 0.20,
-                },
-            ],
-        }
-    }
-    migrated, dirty = migrate_and_backfill_store_payload(
-        mock_hass, payload, _default_store_data, DEFAULT_GLOBAL_SETTINGS
-    )
-    assert dirty is True
-    g_obs = migrated["rooms"]["guest_id"][CONF_BAYESIAN_OBSERVATIONS]
-    assert (
-        len([o for o in g_obs if o["entity_id"] == "binary_sensor.guest_room_motion_occupancy"])
-        == 1
-    )
-    assert not any(o["entity_id"] == "light.guest_room_nightstands" for o in g_obs)
-    assert not any(o.get("penalize_when_off") for o in g_obs)
-    occ_g = next(o for o in g_obs if o["entity_id"] == "binary_sensor.guest_room_occupancy")
-    assert occ_g["prob_given_true"] > 0.50 and occ_g["prob_given_true"] > occ_g["prob_given_false"]
-
-    migrated2, dirty2 = migrate_and_backfill_store_payload(
-        mock_hass, migrated, _default_store_data, DEFAULT_GLOBAL_SETTINGS
-    )
-    assert dirty2 is False
-    assert migrated2["rooms"]["guest_id"][CONF_BAYESIAN_OBSERVATIONS] == g_obs
 
 
 @pytest.mark.requirement("BAYES-04", category="BAYESIAN", req_type="FailClosedGuardrail")

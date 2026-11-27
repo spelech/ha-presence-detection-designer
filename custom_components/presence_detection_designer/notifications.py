@@ -1,4 +1,4 @@
-"""Slack Presence Notifications & Diagnostic Attribution Engine."""
+"""Home Assistant Presence Notifications & Diagnostic Attribution Engine."""
 
 from __future__ import annotations
 
@@ -10,11 +10,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-
-from .slack_cards import (
-    build_transition_card_blocks,
-    get_slack_daily_thread_manager,
-)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,45 +60,11 @@ class TransitionAttribution:
 
 
 class NotificationDispatcher:
-    """Handles driver attribution, Slack Block Kit formatting, daily threads, and async dispatch."""
+    """Handles transition driver attribution, message formatting, and HA notify dispatch."""
 
     def __init__(self) -> None:
         """Initialize the dispatcher."""
         self._last_dispatched: dict[tuple[str, str], float] = {}
-        self._verified_channels: set[str] = set()
-
-    def _call_slack_web_api(
-        self,
-        url: str,
-        token: str,
-        payload: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Invoke a Slack Web API endpoint synchronously."""
-        return get_slack_daily_thread_manager().call_slack_web_api(url, token, payload)
-
-    async def async_ensure_slack_channel(
-        self,
-        hass: Any,
-        channel: str,
-    ) -> str:
-        """Ensure target Slack channel exists; share verification across coordinators."""
-        clean_name = channel.lstrip("#").strip().lower()
-        mgr = get_slack_daily_thread_manager(hass)
-        if (
-            not clean_name
-            or clean_name in self._verified_channels
-            or clean_name in mgr._verified_channels
-        ):
-            return channel
-        token = mgr.get_slack_token(hass)
-        if not token:
-            return channel
-        await mgr.async_ensure_slack_channel(
-            hass, channel, token, call_api_fn=self._call_slack_web_api
-        )
-        if clean_name in mgr._verified_channels:
-            self._verified_channels.add(clean_name)
-        return channel
 
     def resolve_transition_driver(
         self,
@@ -150,9 +111,7 @@ class NotificationDispatcher:
                 primary_driver = f"Sensor tripped: {label}"
                 driver_type = "sensor"
             else:
-                primary_driver = (
-                    f"Bayesian probability crossed activation threshold ({confidence_pct}%)"
-                )
+                primary_driver = f"Occupancy probability crossed threshold ({confidence_pct}%)"
                 driver_type = "sensor"
             duration_str = None
         else:
@@ -187,14 +146,12 @@ class NotificationDispatcher:
             timestamp=datetime.now(UTC),
         )
 
-    def format_slack_message(
+    def format_notification_message(
         self,
         attribution: TransitionAttribution,
         verbosity: str = "compact",
-        include_snapshot: bool = False,
-        snapshot_url: str | None = None,
     ) -> dict[str, Any]:
-        """Format a diagnostic card suitable for Slack delivery according to verbosity setting."""
+        """Format a transition notification message according to verbosity setting."""
         v = str(verbosity).lower().strip()
         lines: list[str] = []
 
@@ -204,7 +161,7 @@ class NotificationDispatcher:
                     f", from {attribution.arrival_context}" if attribution.arrival_context else ""
                 )
                 lines.append(
-                    f"🟢 *{attribution.room_name}* occupied ({attribution.confidence_pct:.0f}% via `{attribution.primary_driver}`{context_str})"
+                    f"🟢 {attribution.room_name} occupied ({attribution.confidence_pct:.0f}% via {attribution.primary_driver}{context_str})"
                 )
             else:
                 dur_str = (
@@ -212,14 +169,14 @@ class NotificationDispatcher:
                     if attribution.duration_occupied_str
                     else ""
                 )
-                lines.append(f"⚪ *{attribution.room_name}* cleared{dur_str}")
+                lines.append(f"⚪ {attribution.room_name} cleared{dur_str}")
 
         elif v == "compact":
             if attribution.to_state == "occupied":
                 lines.append(
-                    f"🟢 *{attribution.room_name} → Occupied* ({attribution.confidence_pct:.0f}%)"
+                    f"🟢 {attribution.room_name} → Occupied ({attribution.confidence_pct:.0f}%)"
                 )
-                details: list[str] = [f"Driver: `{attribution.primary_driver}`"]
+                details: list[str] = [f"Driver: {attribution.primary_driver}"]
                 if attribution.inferred_location:
                     details.append(f"Location: {attribution.inferred_location}")
                 if attribution.arrival_context:
@@ -228,51 +185,43 @@ class NotificationDispatcher:
                     details.append(f"Exclusion: {attribution.negative_space_evidence[0]}")
                 lines.append(" • ".join(details))
             else:
-                lines.append(f"⚪ *{attribution.room_name} → Cleared*")
-                details: list[str] = [f"Driver: {attribution.primary_driver}"]
+                lines.append(f"⚪ {attribution.room_name} → Cleared")
+                details = [f"Driver: {attribution.primary_driver}"]
                 if attribution.duration_occupied_str:
                     details.append(f"Duration: {attribution.duration_occupied_str}")
                 lines.append(" • ".join(details))
 
         else:  # "full" / diagnostic
             if attribution.to_state == "occupied":
-                lines.append(f"🟢 *{attribution.room_name} → Occupied*")
-                lines.append(f"• *Primary Driver:* `{attribution.primary_driver}`")
+                lines.append(f"🟢 {attribution.room_name} → Occupied")
+                lines.append(f"• Primary Driver: {attribution.primary_driver}")
                 lines.append(
-                    f"• *Bayesian Probability:* {attribution.confidence_pct:.0f}% *(Threshold: {attribution.threshold_pct:.0f}%)*"
+                    f"• Confidence: {attribution.confidence_pct:.0f}% (Threshold: {attribution.threshold_pct:.0f}%)"
                 )
                 if attribution.inferred_location:
-                    lines.append(f"• *Spatial Localization:* {attribution.inferred_location}")
+                    lines.append(f"• Spatial Localization: {attribution.inferred_location}")
                 if attribution.negative_space_evidence:
                     neg_str = "; ".join(attribution.negative_space_evidence[:3])
-                    lines.append(f"• *Negative-Space Exclusion:* {neg_str}")
+                    lines.append(f"• Negative-Space Exclusion: {neg_str}")
                 if attribution.active_sensors:
-                    active_str = ", ".join(f"`{s}`" for s in attribution.active_sensors[:4])
-                    lines.append(f"• *Active Sensors:* {active_str}")
+                    active_str = ", ".join(attribution.active_sensors[:4])
+                    lines.append(f"• Active Sensors: {active_str}")
                 if attribution.sustaining_conditions:
-                    sust_str = ", ".join(f"`{s}`" for s in attribution.sustaining_conditions[:2])
-                    lines.append(f"• *Sustaining Conditions:* {sust_str}")
+                    sust_str = ", ".join(attribution.sustaining_conditions[:2])
+                    lines.append(f"• Sustaining Conditions: {sust_str}")
                 if attribution.arrival_context:
-                    lines.append(f"• *Arrival Context:* {attribution.arrival_context}")
+                    lines.append(f"• Arrival Context: {attribution.arrival_context}")
             else:
-                lines.append(f"⚪ *{attribution.room_name} → Cleared*")
-                lines.append(f"• *Clearance Driver:* {attribution.primary_driver}")
+                lines.append(f"⚪ {attribution.room_name} → Cleared")
+                lines.append(f"• Clearance Driver: {attribution.primary_driver}")
                 if attribution.duration_occupied_str:
-                    lines.append(f"• *Duration of Occupancy:* {attribution.duration_occupied_str}")
-                lines.append(f"• *Final Probability:* {attribution.confidence_pct:.0f}%")
+                    lines.append(f"• Duration of Occupancy: {attribution.duration_occupied_str}")
+                lines.append(f"• Final Confidence: {attribution.confidence_pct:.0f}%")
 
         full_text = "\n".join(lines)
-        blocks = build_transition_card_blocks(
-            attribution=attribution,
-            verbosity=verbosity,
-            include_snapshot=include_snapshot,
-            snapshot_url=snapshot_url,
-            room_id=None if attribution.room_id == "studio_test" else attribution.room_id,
-        )
         return {
+            "title": f"{attribution.room_name}: {attribution.to_state.title()}",
             "text": full_text,
-            "channel_message": full_text,
-            "blocks": blocks,
         }
 
     async def async_dispatch_notification(
@@ -284,13 +233,13 @@ class NotificationDispatcher:
         *,
         force_test: bool = False,
     ) -> bool:
-        """Dispatch Slack notification if enabled and within rate limits."""
+        """Fire HA transition event and dispatch to configured HA notify.* service."""
         if not force_test:
-            if not global_settings.get("notifications_enabled", True):
+            if not global_settings.get("notifications_enabled", False):
                 _LOGGER.debug("Notifications globally disabled; skipping")
                 return False
 
-            if room_config.get("notify_slack") is False:
+            if room_config.get("notify_enabled") is False:
                 return False
 
             if (
@@ -316,11 +265,15 @@ class NotificationDispatcher:
 
             self._last_dispatched[key] = now
 
-        notify_service_full = str(
-            global_settings.get("slack_notify_service") or "notify.scdbots"
-        ).strip()
-        channel = str(global_settings.get("slack_channel") or "#presence-alerts").strip()
-        await self.async_ensure_slack_channel(hass, channel)
+        if not force_test:
+            try:
+                hass.bus.async_fire(EVENT_PRESENCE_TRANSITION, attribution.to_dict())
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
+
+        notify_service_full = str(global_settings.get("notify_service") or "").strip()
+        if not notify_service_full:
+            return not force_test
 
         if "." in notify_service_full:
             domain, service = notify_service_full.split(".", 1)
@@ -330,142 +283,21 @@ class NotificationDispatcher:
 
         verbosity = (
             str(
-                room_config.get("slack_verbosity")
-                or global_settings.get("slack_verbosity")
+                room_config.get("notify_verbosity")
+                or global_settings.get("notify_verbosity")
                 or "compact"
             )
             .strip()
             .lower()
         )
-
-        mgr = get_slack_daily_thread_manager(hass)
-        token = mgr.get_slack_token(hass)
-        use_threads = bool(global_settings.get("slack_daily_thread", True))
-        thread_ts: str | None = None
-        if use_threads and token:
-            thread_ts = await mgr.async_get_or_create_daily_thread(
-                hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
-            )
-
-        from .slack_files import async_upload_room_snapshot, is_public_snapshot_url
-
-        include_snapshot = bool(
-            room_config.get("include_camera_snapshot")
-            or global_settings.get("include_camera_snapshot")
-            or False
-        )
-        raw_snapshot_url = (
-            str(room_config.get("camera_snapshot_url") or "") if include_snapshot else ""
-        )
-        public_snapshot_url = raw_snapshot_url if is_public_snapshot_url(raw_snapshot_url) else None
-
-        formatted = self.format_slack_message(
-            attribution,
-            verbosity=verbosity,
-            include_snapshot=bool(include_snapshot and public_snapshot_url),
-            snapshot_url=public_snapshot_url,
-        )
-        message_text = formatted["text"]
-        blocks = formatted.get("blocks")
-
-        if not force_test:
-            try:
-                hass.bus.async_fire(EVENT_PRESENCE_TRANSITION, attribution.to_dict())
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("Failed to fire %s event: %s", EVENT_PRESENCE_TRANSITION, err)
-
-        notify_trans = force_test or bool(
-            room_config.get("slack_notify_transitions")
-            if room_config.get("slack_notify_transitions") is not None
-            else global_settings.get("slack_notify_transitions", False)
-        )
-
-        def _schedule_digest_update() -> None:
-            if hasattr(hass, "async_create_task"):
-                coro = mgr.async_update_daily_digest(
-                    hass, channel, token, format_duration, call_api_fn=self._call_slack_web_api
-                )
-                hass.async_create_task(coro)
-                if (
-                    type(hass.async_create_task).__name__ == "MagicMock"
-                    and getattr(hass.async_create_task, "side_effect", None) is None
-                    and hasattr(coro, "close")
-                ):
-                    coro.close()
-
-        # Primary delivery: direct threaded reply via Slack Web API
-        if use_threads and token and thread_ts:
-            if not notify_trans:
-                _LOGGER.info(
-                    "Transition for %s (%s) updating daily Slack card (replies muted)",
-                    attribution.room_name,
-                    attribution.to_state,
-                )
-                _schedule_digest_update()
-                return True
-
-            threaded_ok = await mgr.async_post_thread_reply(
-                hass,
-                channel,
-                thread_ts,
-                token,
-                message_text,
-                blocks=blocks,
-                call_api_fn=self._call_slack_web_api,
-            )
-            if threaded_ok:
-                if (
-                    include_snapshot
-                    and attribution.to_state == "occupied"
-                    and (room_config.get("camera_entity") or raw_snapshot_url)
-                    and hasattr(hass, "async_create_task")
-                ):
-                    snap_coro = async_upload_room_snapshot(
-                        hass,
-                        attribution.room_name,
-                        camera_entity=room_config.get("camera_entity"),
-                        snapshot_url=raw_snapshot_url,
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        initial_comment=f"📸 {attribution.room_name} transition capture",
-                    )
-                    hass.async_create_task(snap_coro)
-                    if (
-                        type(hass.async_create_task).__name__ == "MagicMock"
-                        and getattr(hass.async_create_task, "side_effect", None) is None
-                        and hasattr(snap_coro, "close")
-                    ):
-                        snap_coro.close()
-                _LOGGER.info(
-                    "Threaded presence transition for %s (%s) into %s (thread_ts=%s)",
-                    attribution.room_name,
-                    attribution.to_state,
-                    channel,
-                    thread_ts,
-                )
-                _schedule_digest_update()
-                return True
-
-        explicitly_muted = room_config.get("slack_notify_transitions") is False or (
-            room_config.get("slack_notify_transitions") is None
-            and "slack_notify_transitions" in global_settings
-            and not global_settings.get("slack_notify_transitions")
-        )
-        if not notify_trans and (not use_threads or (explicitly_muted and token)):
-            return not (use_threads and explicitly_muted and token)
-
-        # Fallback delivery: standard HA notify service
+        formatted = self.format_notification_message(attribution, verbosity=verbosity)
         service_data: dict[str, Any] = {
-            "message": message_text,
-            "target": [channel],
+            "title": formatted["title"],
+            "message": formatted["text"],
         }
-        data_payload: dict[str, Any] = {}
-        if blocks:
-            data_payload["blocks"] = blocks
-        if thread_ts:
-            data_payload["thread_ts"] = thread_ts
-        if data_payload:
-            service_data["data"] = data_payload
+        target = str(global_settings.get("notify_target") or "").strip()
+        if target:
+            service_data["target"] = [target]
 
         if not hass.services.has_service(domain, service):
             _LOGGER.warning(
@@ -481,19 +313,15 @@ class NotificationDispatcher:
                 timeout=10.0,
             )
             _LOGGER.info(
-                "Dispatched presence transition notification for %s (%s) to %s via %s (thread_ts=%s)",
+                "Dispatched presence transition notification for %s (%s) via %s",
                 attribution.room_name,
                 attribution.to_state,
-                channel,
                 notify_service_full,
-                thread_ts,
             )
-            if use_threads and token and thread_ts:
-                _schedule_digest_update()
             return True
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
-                "Failed to dispatch Slack notification via %s: %s",
+                "Failed to dispatch notification via %s: %s",
                 notify_service_full,
                 err,
             )

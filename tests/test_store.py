@@ -125,15 +125,15 @@ async def test_store_global_settings_and_remove_room(mock_hass):
     # Verify notification and negative_space_enabled global settings persist
     gs3 = await store.async_update_global_settings(
         {
-            "notifications_enabled": False,
-            "slack_notify_service": "notify.custom_slack",
-            "slack_channel": "#custom-presence",
+            "notifications_enabled": True,
+            "notify_service": "notify.mobile_app_phone",
+            "notify_target": "phone",
             "negative_space_enabled": False,
         }
     )
-    assert gs3["notifications_enabled"] is False
-    assert gs3["slack_notify_service"] == "notify.custom_slack"
-    assert gs3["slack_channel"] == "#custom-presence"
+    assert gs3["notifications_enabled"] is True
+    assert gs3["notify_service"] == "notify.mobile_app_phone"
+    assert gs3["notify_target"] == "phone"
     assert gs3["negative_space_enabled"] is False
     assert gs["ble_decider_enabled"] is False
 

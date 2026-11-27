@@ -31,9 +31,9 @@ from .const import (
     CONF_LLM_PROMPT,
     CONF_LLM_PROVIDER_TYPE,
     CONF_MODE,
+    CONF_NOTIFY_ENABLED,
     CONF_NOTIFY_ON_CLEARED,
     CONF_NOTIFY_ON_OCCUPIED,
-    CONF_NOTIFY_SLACK,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
@@ -97,8 +97,8 @@ def apply_coordinator_config_fields(
         except ValueError:
             coord.mode = Mode.BOUNDED if len(coord.boundary_entities) > 0 else Mode.OPEN
 
-    raw_notify_slack = config.get(CONF_NOTIFY_SLACK)
-    coord.notify_slack = True if raw_notify_slack is None else bool(raw_notify_slack)
+    raw_notify_enabled = config.get(CONF_NOTIFY_ENABLED)
+    coord.notify_enabled = False if raw_notify_enabled is None else bool(raw_notify_enabled)
     raw_notify_occ = config.get(CONF_NOTIFY_ON_OCCUPIED)
     coord.notify_on_occupied = True if raw_notify_occ is None else bool(raw_notify_occ)
     raw_notify_clr = config.get(CONF_NOTIFY_ON_CLEARED)
@@ -178,11 +178,10 @@ def resolve_global_llm_defaults(hass: Any, config: dict[str, Any]) -> dict[str, 
 async def async_send_coordinator_test_notification(
     coord: Any,
     service: str | None = None,
-    channel: str | None = None,
+    target: str | None = None,
     verbosity: str | None = None,
-    daily_thread: bool | None = None,
 ) -> bool:
-    """Send a test diagnostic notification to verify Slack connectivity."""
+    """Send a test diagnostic notification via Home Assistant notify.* service."""
     from .notifications import TransitionAttribution
 
     global_settings: dict[str, Any] = {}
@@ -192,13 +191,11 @@ async def async_send_coordinator_test_notification(
             global_settings = dict(store.global_settings or {})
 
     if service:
-        global_settings["slack_notify_service"] = service
-    if channel:
-        global_settings["slack_channel"] = channel
+        global_settings["notify_service"] = service
+    if target:
+        global_settings["notify_target"] = target
     if verbosity:
-        global_settings["slack_verbosity"] = verbosity
-    if daily_thread is not None:
-        global_settings["slack_daily_thread"] = bool(daily_thread)
+        global_settings["notify_verbosity"] = verbosity
 
     attribution = TransitionAttribution(
         room_id="studio_test",
@@ -218,7 +215,7 @@ async def async_send_coordinator_test_notification(
         coord.hass,
         attribution,
         global_settings,
-        {"notify_slack": True, "notify_on_occupied": True, "slack_notify_transitions": True},
+        {"notify_enabled": True, "notify_on_occupied": True},
         force_test=True,
     )
 

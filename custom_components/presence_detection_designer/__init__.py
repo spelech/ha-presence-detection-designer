@@ -24,11 +24,6 @@ from .const import (
 )
 from .coordinator import RoomPresenceCoordinator
 from .llm_verifier import LLMVerifier
-from .slack_blocks import (
-    async_refresh_slack_daily_digest,
-    cancel_startup_slack_digest_sync,
-    schedule_startup_slack_digest_sync,
-)
 from .store import async_get_store
 from .views import async_apply_and_persist_room_config, async_register_views
 
@@ -83,12 +78,6 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
             domain_data[VIEWS_REGISTERED] = True
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Skipping HTTP view registration: %s", err)
-        try:
-            from .slack_actions import async_setup_slack_webhook
-
-            await async_setup_slack_webhook(hass)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Skipping Slack webhook setup: %s", err)
 
     if domain_data.get(PANEL_REGISTERED) != version:
         try:
@@ -220,7 +209,6 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             ):
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
-        await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_explain_presence(call: Any) -> dict[str, Any] | None:
         """Generate natural-language and YAML explanations for one or all rooms."""
@@ -359,7 +347,6 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             if isinstance(coordinator, RoomPresenceCoordinator):
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
-        await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_clear_manual_intent(call: Any) -> None:
         """Reset manual switch / Google Assistant override state back to 'auto' for one or all rooms."""
@@ -397,17 +384,12 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
                 "guest_mode_enabled": tracker.state.mode == "guest",
             }
         )
-        await async_refresh_slack_daily_digest(hass, force=True)
-
-    async def handle_update_slack_digest(call: Any) -> None:
-        """Manually trigger an immediate update of the main Slack daily presence card."""
-        await async_refresh_slack_daily_digest(hass, force=True, respect_toggles=False)
 
     async def handle_reset_vacancy(call: Any) -> None:
         """Reset house vacancy to 0 (and optionally clear occupied rooms)."""
-        from .slack_actions import async_handle_reset_vacancy_service
+        from .perimeter_helpers import async_reset_house_vacancy
 
-        await async_handle_reset_vacancy_service(hass, call)
+        await async_reset_house_vacancy(hass, clear_rooms=bool(call.data.get("clear_rooms", False)))
 
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)
@@ -415,7 +397,6 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         _register_service(hass, "set_guest_mode", handle_set_guest_mode)
         _register_service(hass, "clear_manual_intent", handle_clear_manual_intent)
         _register_service(hass, "set_house_occupant_count", handle_set_house_occupant_count)
-        _register_service(hass, "update_slack_digest", handle_update_slack_digest)
         _register_service(hass, "reset_vacancy", handle_reset_vacancy)
         _register_service(
             hass, "explain_presence", handle_explain_presence, supports_optional_response=True
@@ -481,7 +462,6 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
             pass
 
     entry.async_on_unload(entry.add_update_listener(async_update_options))
-    schedule_startup_slack_digest_sync(hass)
     return True
 
 
@@ -505,7 +485,6 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
         v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, RoomPresenceCoordinator)
     ]
     if not remaining_coords:
-        cancel_startup_slack_digest_sync(hass)
         if hass.data.get(DOMAIN, {}).get(PANEL_REGISTERED):
             try:
                 from homeassistant.components.frontend import async_remove_panel

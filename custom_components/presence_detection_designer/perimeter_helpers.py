@@ -213,20 +213,51 @@ def has_active_pet_presence(tracker: Any) -> bool:
     return False
 
 
+def schedule_coro_safely(hass: Any, coro: Any) -> None:
+    """Schedule an awaitable onto HA's event loop without leaking unawaited mock coroutines."""
+    if not hass or not hasattr(hass, "async_create_task"):
+        if hasattr(coro, "close"):
+            coro.close()
+        return
+    act = hass.async_create_task
+    if type(act).__name__ == "MagicMock" and getattr(act, "side_effect", None) is None:
+        act(coro)
+        if hasattr(coro, "close"):
+            coro.close()
+        return
+    loop = getattr(hass, "loop", None)
+    try:
+        import asyncio
+
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if (
+        loop is not None
+        and type(loop).__name__ != "MagicMock"
+        and callable(getattr(loop, "is_running", None))
+        and loop.is_running()
+        and loop is not running
+        and callable(getattr(loop, "call_soon_threadsafe", None))
+    ):
+        loop.call_soon_threadsafe(act, coro)
+    else:
+        act(coro)
+
+
 def persist_and_notify_headcount(
     tracker: Any,
     *,
     persist: bool = True,
-    notify_digest: bool = True,
+    notify_digest: bool = False,
     force_digest: bool = False,
     sync_guest_flag: bool = False,
 ) -> None:
-    """Persist updated house occupancy state to global_settings and schedule a Slack digest refresh."""
+    """Persist updated house occupancy state to global_settings."""
     hass = getattr(tracker, "hass", None)
     if not hass or not isinstance(getattr(hass, "data", None), dict):
         return
     from .const import DATA_STORE, DOMAIN
-    from .slack_blocks import schedule_coro_safely, schedule_slack_daily_digest_update
 
     if persist:
         store = hass.data.get(DOMAIN, {}).get(DATA_STORE)
@@ -249,16 +280,37 @@ def persist_and_notify_headcount(
                     if inspect.isawaitable(res):
                         schedule_coro_safely(hass, res)
 
-    if notify_digest:
-        schedule_slack_daily_digest_update(hass, force=force_digest)
+
+async def async_reset_house_vacancy(hass: Any, *, clear_rooms: bool = False) -> None:
+    """Reset house occupancy mode to vacant (0) and optionally force-clear all occupied rooms."""
+    from .const import DOMAIN
+    from .coordinator import RoomPresenceCoordinator
+    from .house_perimeter import get_house_perimeter_tracker
+    from .store import async_get_store
+
+    tracker = get_house_perimeter_tracker(hass)
+    tracker.set_house_mode("vacant", persist=False, notify_digest=False)
+    store = await async_get_store(hass)
+    await store.async_update_global_settings(
+        {
+            "house_occupancy_mode": "vacant",
+            "house_occupant_count": 0,
+            "guest_mode_enabled": False,
+        }
+    )
+    if clear_rooms and hass and isinstance(getattr(hass, "data", None), dict):
+        for coord in hass.data.get(DOMAIN, {}).values():
+            if isinstance(coord, RoomPresenceCoordinator):
+                if getattr(coord, "state_machine", None) is not None and coord.state_machine.is_present:
+                    coord.state_machine.force_clear(reason="House vacancy reset")
+                    coord.async_update_listeners()
 
 
 async def async_apply_global_settings_side_effects(
     hass: Any, body: dict[str, Any], updated_gs: dict[str, Any]
 ) -> None:
-    """Sync runtime perimeter tracking and Slack daily card after global settings changes."""
+    """Sync runtime perimeter tracking after global settings changes."""
     from .house_perimeter import get_house_perimeter_tracker
-    from .slack_blocks import async_refresh_slack_daily_digest
 
     tracker = get_house_perimeter_tracker(hass)
     if "house_occupancy_mode" in body and body["house_occupancy_mode"] is not None:
@@ -280,22 +332,6 @@ async def async_apply_global_settings_side_effects(
             tracker.set_house_mode("occupied", persist=False, notify_digest=False)
     if any(k in body for k in ("perimeter_doors", "exit_corroborators")):
         await tracker.async_setup()
-    if "slack_webhook_id" in body:
-        from .slack_actions import async_setup_slack_webhook
-
-        await async_setup_slack_webhook(hass, updated_gs.get("slack_webhook_id"))
-    digest_keys = (
-        "house_occupant_count",
-        "house_occupancy_mode",
-        "guest_mode_enabled",
-        "slack_notify_transitions",
-        "slack_channel",
-        "slack_daily_thread",
-        "notifications_enabled",
-        "slack_verbosity",
-    )
-    if any(k in body for k in digest_keys):
-        await async_refresh_slack_daily_digest(hass, force=True)
 
 
 def active_ble_resident_count(tracker: Any) -> int:

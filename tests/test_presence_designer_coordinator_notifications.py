@@ -8,9 +8,9 @@ import pytest
 
 from custom_components.presence_detection_designer.const import (
     CONF_INACTIVITY_TIMEOUT,
+    CONF_NOTIFY_ENABLED,
     CONF_NOTIFY_ON_CLEARED,
     CONF_NOTIFY_ON_OCCUPIED,
-    CONF_NOTIFY_SLACK,
     CONF_ROOM_NAME,
     CONF_TRIGGER_ENTITIES,
     DATA_STORE,
@@ -32,8 +32,7 @@ def mock_hass() -> MagicMock:
     store = MagicMock()
     store.global_settings = {
         "notifications_enabled": True,
-        "slack_notify_service": "notify.scdbots",
-        "slack_channel": "#presence-alerts",
+        "notify_service": "notify.mobile_app_phone",
     }
     hass.data = {DOMAIN: {DATA_STORE: store}}
     return hass
@@ -45,7 +44,7 @@ async def test_coordinator_dispatches_notification_on_occupied(mock_hass: MagicM
     config = {
         CONF_ROOM_NAME: "Living Room",
         CONF_TRIGGER_ENTITIES: ["binary_sensor.living_room_motion"],
-        CONF_NOTIFY_SLACK: True,
+        CONF_NOTIFY_ENABLED: True,
         CONF_NOTIFY_ON_OCCUPIED: True,
         CONF_NOTIFY_ON_CLEARED: True,
         CONF_INACTIVITY_TIMEOUT: 180,
@@ -81,7 +80,7 @@ async def test_coordinator_skips_notification_when_disabled(mock_hass: MagicMock
     config = {
         CONF_ROOM_NAME: "Guest Room",
         CONF_TRIGGER_ENTITIES: ["binary_sensor.guest_motion"],
-        CONF_NOTIFY_SLACK: False,  # Disabled for this room
+        CONF_NOTIFY_ENABLED: False,  # Disabled for this room
     }
     coord = RoomPresenceCoordinator(mock_hass, "guest_room", config)
     coord._notification_dispatcher.async_dispatch_notification = AsyncMock()

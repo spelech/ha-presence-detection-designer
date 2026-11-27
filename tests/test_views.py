@@ -425,15 +425,15 @@ async def test_notification_test_view(mock_hass):
     req = _make_request(
         mock_hass,
         {
-            "slack_notify_service": "notify.scdbots",
-            "slack_channel": "#presence-alerts",
+            "notify_service": "notify.mobile_app_phone",
+            "notify_target": "phone",
         },
     )
 
     status, res = _unpack(await view.post(req))
     assert status == 200
     assert res["success"] is True
-    assert "#presence-alerts" in res["message"]
+    assert "notify.mobile_app_phone" in res["message"]
 
 
 async def test_timeline_reconstruction_view(mock_hass):

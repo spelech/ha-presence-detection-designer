@@ -672,14 +672,9 @@ async def test_async_setup_subscribes_perimeter_doors_and_persists_digest(
     mock_hass.states.get = lambda eid: SimpleNamespace(
         state="on" if eid == "binary_sensor.back_door" else "off"
     )
-    digest_calls: list[bool] = []
     monkeypatch.setattr(
         "homeassistant.helpers.event.async_track_state_change_event",
         _fake_track,
-    )
-    monkeypatch.setattr(
-        "custom_components.presence_detection_designer.slack_blocks.schedule_slack_daily_digest_update",
-        lambda _h, force=False: digest_calls.append(force),
     )
 
     await tracker.async_setup()
@@ -724,7 +719,6 @@ async def test_async_setup_subscribes_perimeter_doors_and_persists_digest(
     assert tracker.state.count == 1
     assert tracker.state.mode == "occupied"
     assert mock_hass.data[DOMAIN][DATA_STORE].global_settings["house_occupant_count"] == 1
-    assert len(digest_calls) == 1
 
 
 def test_garage_arrival_when_vacant_ignores_motion_after_door_opens(mock_hass):

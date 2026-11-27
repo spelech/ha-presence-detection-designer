@@ -33,12 +33,12 @@ CONF_CAMERA_ENTITY = "camera_entity"
 CONF_CAMERA_SNAPSHOT_URL = "camera_snapshot_url"
 CONF_LLM_PROMPT = "llm_prompt"
 
-# Slack & Notification configuration
+# Notification configuration (generic HA notify.* services)
 CONF_NOTIFICATIONS_ENABLED = "notifications_enabled"
-CONF_SLACK_NOTIFY_SERVICE = "slack_notify_service"
-CONF_SLACK_CHANNEL = "slack_channel"
-CONF_SLACK_VERBOSITY = "slack_verbosity"
-CONF_NOTIFY_SLACK = "notify_slack"
+CONF_NOTIFY_SERVICE = "notify_service"
+CONF_NOTIFY_TARGET = "notify_target"
+CONF_NOTIFY_VERBOSITY = "notify_verbosity"
+CONF_NOTIFY_ENABLED = "notify_enabled"
 CONF_NOTIFY_ON_OCCUPIED = "notify_on_occupied"
 CONF_NOTIFY_ON_CLEARED = "notify_on_cleared"
 CONF_NEGATIVE_SPACE_ENABLED = "negative_space_enabled"
@@ -48,10 +48,10 @@ CONF_EKF_FLOOR_STABILITY_V2 = "ekf_floor_stability_v2"
 CONF_PIR_VALIDATION_ENABLED = "pir_validation_enabled"
 CONF_PIR_CANDIDATE_WINDOW = "pir_candidate_window"
 
-DEFAULT_SLACK_NOTIFY_SERVICE = "notify.scdbots"
-DEFAULT_SLACK_CHANNEL = "#presence-alerts"
-DEFAULT_SLACK_VERBOSITY = "compact"  # "minimal", "compact", "full"
-DEFAULT_NOTIFY_SLACK = True
+DEFAULT_NOTIFY_SERVICE = ""
+DEFAULT_NOTIFY_TARGET = ""
+DEFAULT_NOTIFY_VERBOSITY = "compact"  # "minimal", "compact", "full"
+DEFAULT_NOTIFY_ENABLED = False
 DEFAULT_NEGATIVE_SPACE_ENABLED = True
 DEFAULT_GUEST_MODE_ENABLED = False
 DEFAULT_BLE_DECIDER_ENABLED = False
@@ -185,8 +185,6 @@ DEFAULT_SETTLING_WINDOW_SEC = 2.0
 CONF_HOUSE_OCCUPANT_COUNT = "house_occupant_count"
 CONF_PERIMETER_DOORS = "perimeter_doors"
 CONF_ENABLE_CONSERVATION_LAW = "enable_conservation_law"
-CONF_SLACK_NOTIFY_TRANSITIONS = "slack_notify_transitions"
-DEFAULT_SLACK_NOTIFY_TRANSITIONS = False
 
 # Head-count safety constraints.
 # Automatic ingress is capped at this value so a stuck/mis-vectored perimeter
@@ -235,7 +233,3 @@ DEFAULT_EXIT_CORROBORATORS: dict[str, list[str]] = {
 # Window in seconds to wait for exterior corroboration after door closure
 CONF_EXIT_CORROBORATION_WINDOW = "exit_corroboration_window"
 DEFAULT_EXIT_CORROBORATION_WINDOW = 30.0
-
-# Slack Interactive Webhook & Signing Secret
-CONF_SLACK_WEBHOOK_ID = "slack_webhook_id"
-CONF_SLACK_SIGNING_SECRET = "slack_signing_secret"
