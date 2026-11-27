@@ -119,7 +119,7 @@ class RoomOccupantSensor(PresenceDesignerEntityMixin, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        """Return current occupant summary string (e.g. 'Steve', 'Dog', 'Steve + Dog', 'Occupant', 'Vacant')."""
+        """Return current occupant summary string (e.g. 'Resident A', 'Dog', 'Resident A + Dog', 'Occupant', 'Vacant')."""
         is_present = bool(self.coordinator.state_machine.is_present)
         attrs = _extract_spatial_and_causal_attrs(self.coordinator, is_present)
         return str(attrs.get("presence_summary") or ("Occupant" if is_present else "Vacant"))

@@ -21,7 +21,7 @@ def test_positive_subzone_localization() -> None:
     compiled = compile_floorplan_topology(fp)
 
     states = {
-        "binary_sensor.steves_desk_person_occupancy": "on",
+        "binary_sensor.office_desk_person_occupancy": "on",
         "binary_sensor.office_person_occupancy": "on",
     }
     frame = evaluate_spatial_frame(
@@ -34,8 +34,8 @@ def test_positive_subzone_localization() -> None:
 
     office_est = frame["room_estimates"]["Office"]
     assert office_est["occupied"] is True
-    assert "Steve's Desk" in (office_est["inferred_subregion"] or "")
-    # Steve's Desk sub-zone is at x=725..835, y=360..455 -> center ~(780, 407.5)
+    assert "Office Desk" in (office_est["inferred_subregion"] or "")
+    # Office Desk sub-zone is at x=725..835, y=360..455 -> center ~(780, 407.5)
     assert 725 <= office_est["inferred_x"] <= 835
     assert 360 <= office_est["inferred_y"] <= 455
 
@@ -48,7 +48,7 @@ def test_negative_space_uncovered_subregion_in_kitchen() -> None:
     # Step 1: Person enters Kitchen via Kitchen Entryway
     states_t1 = {
         "binary_sensor.kitchen_entryway_person_occupancy": "on",
-        "sensor.steve_fold_ble_area": "Kitchen",
+        "sensor.resident_a_tablet_ble_area": "Kitchen",
         "binary_sensor.kitchen_person_occupancy": "on",
         "binary_sensor.kitchen_island_person_occupancy": "off",
     }
@@ -69,7 +69,7 @@ def test_negative_space_uncovered_subregion_in_kitchen() -> None:
         "binary_sensor.kitchen_island_person_occupancy": "off",
         "binary_sensor.family_room_person_occupancy": "off",
         "binary_sensor.living_room_person_occupancy": "off",
-        "sensor.steve_fold_ble_area": "Kitchen",
+        "sensor.resident_a_tablet_ble_area": "Kitchen",
     }
     frame_on = evaluate_spatial_frame(
         floorplan=fp,
@@ -313,9 +313,9 @@ def test_replay_comparison_eliminates_moving_shade_false_positives():
 
 
 def test_ble_decider_disabled_excludes_floor_bleed_while_logging_telemetry() -> None:
-    """Verify phone BLE bouncing to Basement does NOT trigger occupancy or pin Steve when ble_decider_enabled=False."""
+    """Verify phone BLE bouncing to Basement does NOT trigger occupancy or pin Resident A when ble_decider_enabled=False."""
     states_bleed = {
-        "sensor.steve_s_s25_ble_area": "Basement",
+        "sensor.resident_a_phone_ble_area": "Basement",
         "binary_sensor.basement_camera_person_occupancy": "off",
         "binary_sensor.basement_stairs_ring_motion": "off",
         "binary_sensor.basement_ecobee_motion": "off",
@@ -332,18 +332,18 @@ def test_ble_decider_disabled_excludes_floor_bleed_while_logging_telemetry() -> 
     # Basement is NOT occupied and has no negative space probability boost
     assert b_passive["occupied"] is False
     assert b_passive["probability_boost"] == 0.0
-    assert "Basement Play Area" not in frame_passive["steve_pinned_rooms"]
-    assert "sensor.steve_s_s25_ble_area" not in frame_passive["active_positive_sensors"]
+    assert "Basement Play Area" not in frame_passive["resident_a_pinned_rooms"]
+    assert "sensor.resident_a_phone_ble_area" not in frame_passive["active_positive_sensors"]
 
     # BUT BLE telemetry is continuously gathered, logged, and surfaced in estimate
     assert frame_passive["telemetry_ble_by_room"].get("Basement Play Area") == [
-        "sensor.steve_s_s25_ble_area"
+        "sensor.resident_a_phone_ble_area"
     ]
-    assert frame_passive["raw_ble_positions"].get("sensor.steve_s_s25_ble_area") == "Basement"
-    assert frame_passive["prev_ble_states"].get("sensor.steve_s_s25_ble_area") == "Basement"
-    assert "sensor.steve_s_s25_ble_area" in b_passive["ble_telemetry"]
+    assert frame_passive["raw_ble_positions"].get("sensor.resident_a_phone_ble_area") == "Basement"
+    assert frame_passive["prev_ble_states"].get("sensor.resident_a_phone_ble_area") == "Basement"
+    assert "sensor.resident_a_phone_ble_area" in b_passive["ble_telemetry"]
 
-    # 2. When ble_decider_enabled=True: BLE acts as decider, pinning Steve to Basement
+    # 2. When ble_decider_enabled=True: BLE acts as decider, pinning Resident A to Basement
     frame_decider = evaluate_spatial_frame(
         state_getter=lambda eid: states_bleed.get(eid, "off"),
         now_ts=3010.0,
@@ -353,8 +353,8 @@ def test_ble_decider_disabled_excludes_floor_bleed_while_logging_telemetry() -> 
 
     assert b_decider["occupied"] is True
     assert b_decider["probability_boost"] > 0.0
-    assert "Basement Play Area" in frame_decider["steve_pinned_rooms"]
-    assert "sensor.steve_s_s25_ble_area" in frame_decider["active_positive_sensors"]
+    assert "Basement Play Area" in frame_decider["resident_a_pinned_rooms"]
+    assert "sensor.resident_a_phone_ble_area" in frame_decider["active_positive_sensors"]
 
 
 def test_timeline_conservation_prunes_stale_inferred_keeps_confirmed_and_ble_hint() -> None:
@@ -369,7 +369,7 @@ def test_timeline_conservation_prunes_stale_inferred_keeps_confirmed_and_ble_hin
             (1030.0, "on"),
             (1080.0, "on"),
         ],
-        "sensor.steve_s_s25_ble_area": [
+        "sensor.resident_a_phone_ble_area": [
             (1030.0, "Office"),
         ],
     }
@@ -399,7 +399,7 @@ def test_timeline_conservation_prunes_stale_inferred_keeps_confirmed_and_ble_hin
     assert "Master Bathroom" in frame_office["pruned_inferred_rooms"]
     assert len(frame_office["occupant_estimates"]) == 1
     occ = frame_office["occupant_estimates"][0]
-    assert occ["occupant_label"] == "Steve"
+    assert occ["occupant_label"] == "Resident A"
     assert occ["method"] == "positive"
     assert occ["from_room"] == "Master Bathroom"
 
@@ -444,7 +444,7 @@ def test_reconstruct_house_timeline_from_component_logs() -> None:
                 "camera_confirmed": True,
                 "entity_states": {
                     "binary_sensor.kitchen_island_person_occupancy": "on",
-                    "sensor.steve_s_s25_ble_area": "Kitchen",
+                    "sensor.resident_a_phone_ble_area": "Kitchen",
                 },
             },
             {
@@ -461,7 +461,7 @@ def test_reconstruct_house_timeline_from_component_logs() -> None:
                 "is_present": True,
                 "occupancy_state": "occupied_cooling",
                 "probability_pct": 64.0,
-                "entity_states": {"sensor.steve_s_s25_ble_area": "Office"},
+                "entity_states": {"sensor.resident_a_phone_ble_area": "Office"},
             },
         ],
     }
@@ -482,7 +482,7 @@ def test_reconstruct_house_timeline_from_component_logs() -> None:
     assert final_occ["method"] == "negative_space"
     assert final_occ["occupancy_state"] == "occupied_cooling"
     assert final_occ["probability_pct"] == 64.0
-    assert final_occ["occupant_label"] == "Steve"
+    assert final_occ["occupant_label"] == "Resident A"
     assert final_occ["from_room"] == "Kitchen"
 
     # When negative_space_enabled=False, cooling/holding inferred states are filtered while confirmed remain

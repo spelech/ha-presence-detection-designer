@@ -4,11 +4,11 @@ blueprint:
     Monitors Presence Detection Designer (`binary_sensor.<room>_presence`) occupant
     classification attributes (`occupant_type`, `pet_present`, `human_present`,
     `inferred_subregion`, and `presence_summary`) to trigger targeted alerts or
-    automations for untracked humans (e.g., Margot or guests moving without BLE tags),
-    tracked humans (e.g., Steve), or pets (e.g., Riley entering a restricted zone or
+    automations for untracked humans (e.g., Resident B or guests moving without BLE tags),
+    tracked humans (e.g., Resident A), or pets (e.g., Riley entering a restricted zone or
     waiting by an exterior door).
   domain: automation
-  author: Steven T. Pelech
+  author: Resident An T. Pelech
   input:
     presence_sensor:
       name: PDD Room Presence Binary Sensor
@@ -19,16 +19,16 @@ blueprint:
           device_class: occupancy
     target_occupant_category:
       name: Target Occupant Category
-      description: Filter activations by PDD occupant classification (`untracked_human` for Margot/Guest, `tracked_human` for Steve, `pet` for Riley, or `any`).
+      description: Filter activations by PDD occupant classification (`untracked_human` for Resident B/Guest, `tracked_human` for Resident A, `pet` for Riley, or `any`).
       default: "untracked_human"
       selector:
         select:
           options:
-            - label: "Untracked Human (Child / Margot / Guest)"
+            - label: "Untracked Human (Child / Resident B / Guest)"
               value: "untracked_human"
             - label: "Pet (Animal / Riley)"
               value: "pet"
-            - label: "Tracked Human (BLE Tag / Steve)"
+            - label: "Tracked Human (BLE Tag / Resident A)"
               value: "tracked_human"
             - label: "Any Occupant or Animal"
               value: "any"

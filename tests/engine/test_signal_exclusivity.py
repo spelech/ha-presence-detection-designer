@@ -66,7 +66,7 @@ def test_non_exclusive_sensor_classification_and_weight_resolution() -> None:
 
     for human_eid in (
         "binary_sensor.office_person_occupancy",
-        "sensor.steve_s_s25_ble_area",
+        "sensor.resident_a_phone_ble_area",
         "binary_sensor.office_motion_occupancy",
         "__manual_actuation_context__",
         "__spatial_negative_space__",
@@ -80,21 +80,21 @@ def test_non_exclusive_sensor_classification_and_weight_resolution() -> None:
 
 
 @pytest.mark.requirement("SIGNAL-02", category="SIGNAL", req_type="PositiveFeature")
-def test_ups_watts_never_pins_steve_location_in_spatial_frame() -> None:
-    """@requirement SIGNAL-02: High UPS load alone does not pin Steve to Office."""
+def test_ups_watts_never_pins_resident_a_location_in_spatial_frame() -> None:
+    """@requirement SIGNAL-02: High UPS load alone does not pin Resident A to Office."""
     fp = get_default_floorplan()
     states = {
         "sensor.office_ups_used_watts_filtered": "285",
-        "sensor.steve_s_s25_ble_area": "unknown",
-        "sensor.steve_fold_ble_area": "unknown",
-        "sensor.steve_watch_ble_area": "unknown",
+        "sensor.resident_a_phone_ble_area": "unknown",
+        "sensor.resident_a_tablet_ble_area": "unknown",
+        "sensor.resident_a_watch_ble_area": "unknown",
     }
     frame = evaluate_spatial_frame(
         floorplan=fp,
         state_getter=states.get,
         now_ts=100.0,
     )
-    assert "Office" not in frame["steve_pinned_rooms"]
+    assert "Office" not in frame["resident_a_pinned_rooms"]
     assert frame["room_estimates"]["Office"]["definitive_tracker_pinned"] is False
     assert frame["room_estimates"]["Office"]["occupied"] is False
 
@@ -191,7 +191,7 @@ async def test_ble_decider_supporting_only_never_bypasses_configured_triggers(tm
                 },
                 {"entity_id": "binary_sensor.family_room_ecobee_motion", "preset": "supporting"},
                 {
-                    "entity_id": "sensor.steve_s_s25_ble_area",
+                    "entity_id": "sensor.resident_a_phone_ble_area",
                     "operator": "equals",
                     "state": "Family Room",
                     "preset": "moderate",
@@ -204,7 +204,7 @@ async def test_ble_decider_supporting_only_never_bypasses_configured_triggers(tm
         storage_dir=tmp_path,
         global_settings={
             "ble_decider_enabled": True,
-            "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+            "ble_trackers": ["sensor.resident_a_phone_ble_area"],
         },
     ) as harness:
         await harness.async_add_rooms(rooms)
@@ -213,7 +213,7 @@ async def test_ble_decider_supporting_only_never_bypasses_configured_triggers(tm
         harness.set_state("binary_sensor.family_room_couch_person_occupancy", "off")
         harness.set_state("binary_sensor.family_room_floor_person_occupancy", "off")
         harness.set_state("binary_sensor.family_room_ecobee_motion", "on")
-        harness.set_state("sensor.steve_s_s25_ble_area", "Family Room")
+        harness.set_state("sensor.resident_a_phone_ble_area", "Family Room")
         harness.advance(5)
 
         # Neither BLE alone nor BLE + unconfigured Ecobee PIR may initiate occupancy from vacant

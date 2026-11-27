@@ -95,7 +95,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.293,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Family Room",
                 "prob_given_true": 0.78,
@@ -137,7 +137,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.02,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Kitchen",
                 "prob_given_true": 0.78,
@@ -154,7 +154,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "connected_rooms": ["Kitchen", "Living Room"],
         "trigger_entities": [
             "binary_sensor.dining_room_table_person_occupancy",
-            "binary_sensor.rileys_food_person_occupancy",
+            "binary_sensor.pet_feeding_area_person_occupancy",
         ],
         "sustaining_conditions": [],
         "bayesian_enabled": True,
@@ -182,7 +182,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.459,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Dining Room",
                 "prob_given_true": 0.78,
@@ -241,7 +241,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.263,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Living Room",
                 "prob_given_true": 0.78,
@@ -282,7 +282,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.02,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Front Entry",
                 "prob_given_true": 0.78,
@@ -316,7 +316,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.05,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Laundry Room",
                 "prob_given_true": 0.78,
@@ -353,7 +353,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.05,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Garage",
                 "prob_given_true": 0.78,
@@ -415,7 +415,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.281,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Master Bedroom",
                 "prob_given_true": 0.78,
@@ -463,7 +463,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.263,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Master Bathroom",
                 "prob_given_true": 0.78,
@@ -479,7 +479,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "extend_timeout": 600,
         "connected_rooms": ["Upstairs Hallway & Stairs"],
         "trigger_entities": [
-            "binary_sensor.steves_desk_person_occupancy",
+            "binary_sensor.office_desk_person_occupancy",
             "binary_sensor.sim_rig_person_occupancy",
             "binary_sensor.office_floor_person_occupancy",
         ],
@@ -494,7 +494,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.08,
             },
             {
-                "entity_id": "binary_sensor.steves_desk_person_occupancy",
+                "entity_id": "binary_sensor.office_desk_person_occupancy",
                 "prob_given_true": 0.96,
                 "prob_given_false": 0.02,
             },
@@ -519,7 +519,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.459,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Office",
                 "prob_given_true": 0.78,
@@ -528,7 +528,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         ],
     },
     {
-        "room_name": "Margot's Room",
+        "room_name": "Kids Room",
         "mode": "open",
         "inactivity_timeout": 300,
         "grace_timeout": 45,
@@ -536,7 +536,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
         "connected_rooms": ["Upstairs Hallway & Stairs"],
         "trigger_entities": ["binary_sensor.nursery_bed_person_occupancy"],
         "sustaining_conditions": [
-            {"entity_id": "media_player.margot_s_tv", "operator": "equals", "state": "playing"},
+            {"entity_id": "media_player.resident_b_s_tv", "operator": "equals", "state": "playing"},
             {"entity_id": "media_player.nursery_speaker", "operator": "equals", "state": "playing"},
         ],
         "bayesian_enabled": True,
@@ -559,9 +559,9 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.281,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
-                "state": "Margot's Room",
+                "state": "Kids Room",
                 "prob_given_true": 0.78,
                 "prob_given_false": 0.08,
             },
@@ -602,7 +602,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.459,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Guest Room",
                 "prob_given_true": 0.78,
@@ -624,7 +624,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
             "Kitchen",
             "Laundry Room",
             "Living Room",
-            "Margot's Room",
+            "Kids Room",
             "Master Bedroom",
             "Office",
         ],
@@ -651,7 +651,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.05,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Upper Level",
                 "prob_given_true": 0.78,
@@ -726,7 +726,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.459,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Basement Theater",
                 "prob_given_true": 0.78,
@@ -786,7 +786,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.02,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Basement",
                 "prob_given_true": 0.78,
@@ -825,7 +825,7 @@ HOUSE_ROOM_CONFIGS: list[dict[str, Any]] = [
                 "prob_given_false": 0.484,
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
+                "entity_id": "sensor.resident_a_phone_ble_area",
                 "operator": "equals",
                 "state": "Storage Room",
                 "prob_given_true": 0.78,

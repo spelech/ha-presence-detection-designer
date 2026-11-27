@@ -21,12 +21,12 @@ from ..spatial.spatial_catalog import (
     HOUSEHOLD_ANIMAL_PROFILES,
     HOUSEHOLD_PEOPLE_PROFILES,
     PRIMARY_BLE_TRACKER_ENTITIES,
+    PRIMARY_RESIDENT_BLE_ENTITIES,
     ROOM_ACTUATOR_ENTITIES,
     ROOM_DOG_OCCUPANCY_ENTITIES,
     ROOM_SHADE_ENTITIES,
     SECONDARY_BLE_TRACKER_ENTITIES,
     SHADE_SETTLE_WINDOW_SEC,
-    STEVE_DEFINITIVE_BLE_ENTITIES,
     SUNLIT_STATIC_SUBZONES,
     UNCOVERED_SUBREGION_LABELS,
     _normalize_ble_area_to_room,
@@ -58,7 +58,7 @@ __all__ = [
     "ROOM_SHADE_ENTITIES",
     "SECONDARY_BLE_TRACKER_ENTITIES",
     "SHADE_SETTLE_WINDOW_SEC",
-    "STEVE_DEFINITIVE_BLE_ENTITIES",
+    "PRIMARY_RESIDENT_BLE_ENTITIES",
     "SUNLIT_STATIC_SUBZONES",
     "UNCOVERED_SUBREGION_LABELS",
     "_compute_uncovered_room_centroid",
@@ -161,7 +161,7 @@ def evaluate_spatial_frame(
     telemetry_ble_by_room: dict[str, list[str]] = {}
     raw_ble_positions: dict[str, str] = {}
     prev_ble_states = dict(prev_frame.get("prev_ble_states", {})) if prev_frame else {}
-    steve_pinned_rooms: set[str] = set()
+    resident_a_pinned_rooms: set[str] = set()
 
     for ble_eid in BLE_TRACKER_ENTITIES:
         raw_area = get_state(ble_eid)
@@ -172,8 +172,8 @@ def evaluate_spatial_frame(
             telemetry_ble_by_room.setdefault(mapped_room, []).append(ble_eid)
             if ble_decider_enabled:
                 active_ble_by_room.setdefault(mapped_room, []).append(ble_eid)
-                if ble_eid in STEVE_DEFINITIVE_BLE_ENTITIES:
-                    steve_pinned_rooms.add(mapped_room)
+                if ble_eid in PRIMARY_RESIDENT_BLE_ENTITIES:
+                    resident_a_pinned_rooms.add(mapped_room)
                 if ble_eid not in active_positive_sensors:
                     active_positive_sensors.append(ble_eid)
 
@@ -386,7 +386,7 @@ def evaluate_spatial_frame(
         clear_cameras_by_floor=clear_cameras_by_floor,
         clear_pirs_by_floor=clear_pirs_by_floor,
         clear_camera_ids=clear_camera_ids,
-        steve_pinned_rooms=steve_pinned_rooms,
+        resident_a_pinned_rooms=resident_a_pinned_rooms,
         recent_activity_ts=recent_activity_ts,
         recent_positive_ts=recent_positive_ts,
         recent_entity_on_ts=recent_entity_on_ts,
@@ -402,7 +402,7 @@ def evaluate_spatial_frame(
             "x": est["inferred_x"],
             "y": est["inferred_y"],
             "occupant_type": "pet",
-            "occupant_label": "Riley (Dog)",
+            "occupant_label": "Household Pet (Dog)",
             "detected_animals": est["detected_animals"],
             "human_present": est["human_present"],
             "pet_present": True,
@@ -447,7 +447,7 @@ def evaluate_spatial_frame(
         "negative_space_enabled": effective_neg_space,
         "guest_mode_enabled": guest_mode_enabled,
         "ble_decider_enabled": ble_decider_enabled,
-        "steve_pinned_rooms": sorted(steve_pinned_rooms),
+        "resident_a_pinned_rooms": sorted(resident_a_pinned_rooms),
         "room_estimates": room_estimates,
         "occupant_estimates": occupant_estimates,
         "pet_estimates": pet_estimates,

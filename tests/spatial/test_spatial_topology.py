@@ -513,7 +513,7 @@ def test_calibrated_v4_floorplan_and_device_model_presets():
     # Verify stepped polygons on interlocking rooms
     assert rooms_by_name["Upstairs Bathroom"].get("svg_path", "").startswith("M ")
     assert rooms_by_name["Master Bathroom"].get("svg_path", "").startswith("M ")
-    assert rooms_by_name["Margot's Room"].get("svg_path", "").startswith("M ")
+    assert rooms_by_name["Kids Room"].get("svg_path", "").startswith("M ")
     assert rooms_by_name["Guest Room"].get("svg_path", "").startswith("M ")
 
     # Verify uniform Tapo C110 camera presets (9 corner @ 110 deg + 1 high overhead garage @ 164 deg)

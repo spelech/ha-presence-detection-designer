@@ -69,9 +69,9 @@ def test_condition_in_and_attribute_matching():
     assert "Shield Active" in format_condition_description(cond_in_str)
 
     cond_in_list = {
-        "entity_id": "sensor.steve_ble_area",
+        "entity_id": "sensor.resident_a_ble_area",
         "operator": ConditionOperator.IN,
-        "state": ["Office", "Steve's Office"],
+        "state": ["Office", "Resident A's Office"],
     }
     assert evaluate_condition(cond_in_list, "Office") is True
     assert evaluate_condition(cond_in_list, "Kitchen") is False
@@ -101,13 +101,13 @@ def test_bayesian_presets_and_corroboration_math():
 
     observations = [
         {
-            "entity_id": "binary_sensor.steves_desk_person_occupancy",
-            "label": "Person at Steve's Desk",
+            "entity_id": "binary_sensor.office_desk_person_occupancy",
+            "label": "Person at Office Desk",
             "preset": "decisive",
         },
         {
-            "entity_id": "sensor.steve_s_s25_ble_area",
-            "label": "Steve's Phone in Office",
+            "entity_id": "sensor.resident_a_phone_ble_area",
+            "label": "Resident A's Phone in Office",
             "preset": "moderate",
             "operator": "equals",
             "state": "Office",
@@ -121,8 +121,8 @@ def test_bayesian_presets_and_corroboration_math():
     ]
 
     states: dict[str, MagicMock] = {
-        "binary_sensor.steves_desk_person_occupancy": MagicMock(state="off", attributes={}),
-        "sensor.steve_s_s25_ble_area": MagicMock(state="Kitchen", attributes={}),
+        "binary_sensor.office_desk_person_occupancy": MagicMock(state="off", attributes={}),
+        "sensor.resident_a_phone_ble_area": MagicMock(state="Kitchen", attributes={}),
         "binary_sensor.office_occupancy": MagicMock(state="off", attributes={}),
     }
 
@@ -143,19 +143,19 @@ def test_bayesian_presets_and_corroboration_math():
     assert eval_supp.probability_pct == 40.7
 
     # 3. Moderate BLE sensor ALSO turns ON -> 80.5% (crosses 75% threshold via corroboration!)
-    states["sensor.steve_s_s25_ble_area"].state = "Office"
+    states["sensor.resident_a_phone_ble_area"].state = "Office"
     eval_combo = evaluate_bayesian(
         observations, lambda eid: states.get(eid), prior=0.20, threshold=0.75
     )
     assert eval_combo.is_occupied is True
     assert eval_combo.probability_pct == 80.5
-    assert "Steve's Phone in Office" in eval_combo.natural_language_summary
+    assert "Resident A's Phone in Office" in eval_combo.natural_language_summary
     assert "Office Ecobee Occupancy" in eval_combo.natural_language_summary
 
     # 4. Decisive Frigate desk zone turns ON solo -> 92.2%
     states["binary_sensor.office_occupancy"].state = "off"
-    states["sensor.steve_s_s25_ble_area"].state = "Kitchen"
-    states["binary_sensor.steves_desk_person_occupancy"].state = "on"
+    states["sensor.resident_a_phone_ble_area"].state = "Kitchen"
+    states["binary_sensor.office_desk_person_occupancy"].state = "on"
     eval_decisive = evaluate_bayesian(
         observations, lambda eid: states.get(eid), prior=0.20, threshold=0.75
     )
@@ -173,7 +173,7 @@ def test_yaml_and_natural_language_roundtrip():
   probability_threshold: 0.75
   observations:
     - platform: state
-      entity_id: binary_sensor.steves_desk_person_occupancy
+      entity_id: binary_sensor.office_desk_person_occupancy
       prob_given_true: 0.95
       prob_given_false: 0.02
       to_state: "on"
@@ -192,7 +192,7 @@ def test_yaml_and_natural_language_roundtrip():
     assert parsed_cfg[CONF_ROOM_NAME] == "Office"
     assert parsed_cfg[CONF_BAYESIAN_PRIOR] == 0.20
     assert parsed_cfg[CONF_BAYESIAN_THRESHOLD] == 0.75
-    assert "binary_sensor.steves_desk_person_occupancy" in parsed_cfg[CONF_TRIGGER_ENTITIES]
+    assert "binary_sensor.office_desk_person_occupancy" in parsed_cfg[CONF_TRIGGER_ENTITIES]
     assert len(parsed_cfg[CONF_BAYESIAN_OBSERVATIONS]) == 3
 
     guide = explain_config_in_natural_language(parsed_cfg)
@@ -215,7 +215,7 @@ async def test_probability_sensor_and_services(mock_hass):
         CONF_AREA_ID: "office",
         CONF_MODE: Mode.BOUNDED,
         CONF_BOUNDARY_ENTITIES: ["binary_sensor.office_door"],
-        CONF_TRIGGER_ENTITIES: ["binary_sensor.steves_desk_person_occupancy"],
+        CONF_TRIGGER_ENTITIES: ["binary_sensor.office_desk_person_occupancy"],
         CONF_SUSTAINING_CONDITIONS: [
             {
                 "entity_id": "sensor.office_ups_used_watts_filtered",
@@ -228,13 +228,13 @@ async def test_probability_sensor_and_services(mock_hass):
         CONF_BAYESIAN_THRESHOLD: 0.75,
         CONF_BAYESIAN_OBSERVATIONS: [
             {
-                "entity_id": "binary_sensor.steves_desk_person_occupancy",
-                "label": "Person at Steve's Desk",
+                "entity_id": "binary_sensor.office_desk_person_occupancy",
+                "label": "Person at Office Desk",
                 "preset": "decisive",
             },
             {
-                "entity_id": "sensor.steve_s_s25_ble_area",
-                "label": "Steve's S25+ in Office",
+                "entity_id": "sensor.resident_a_phone_ble_area",
+                "label": "Resident A Phone in Office",
                 "preset": "moderate",
                 "operator": "equals",
                 "state": "Office",
@@ -256,20 +256,20 @@ async def test_probability_sensor_and_services(mock_hass):
             state="off",
             attributes={"friendly_name": "Office Door"},
         ),
-        "binary_sensor.steves_desk_person_occupancy": MagicMock(
-            entity_id="binary_sensor.steves_desk_person_occupancy",
+        "binary_sensor.office_desk_person_occupancy": MagicMock(
+            entity_id="binary_sensor.office_desk_person_occupancy",
             state="off",
-            attributes={"friendly_name": "Steve's Desk Person"},
+            attributes={"friendly_name": "Office Desk Person"},
         ),
         "sensor.office_ups_used_watts_filtered": MagicMock(
             entity_id="sensor.office_ups_used_watts_filtered",
             state="90",
             attributes={"friendly_name": "Office UPS Watts"},
         ),
-        "sensor.steve_s_s25_ble_area": MagicMock(
-            entity_id="sensor.steve_s_s25_ble_area",
+        "sensor.resident_a_phone_ble_area": MagicMock(
+            entity_id="sensor.resident_a_phone_ble_area",
             state="Office",
-            attributes={"friendly_name": "Steve's S25+ BLE Area"},
+            attributes={"friendly_name": "Resident A Phone BLE Area"},
         ),
         "binary_sensor.office_occupancy": MagicMock(
             entity_id="binary_sensor.office_occupancy",
@@ -337,7 +337,7 @@ async def test_probability_sensor_and_services(mock_hass):
             "direction": "to_yaml",
             "room_name": "Office",
             "description": (
-                "Detect presence in the Office using binary_sensor.steves_desk_person_occupancy "
+                "Detect presence in the Office using binary_sensor.office_desk_person_occupancy "
                 "and binary_sensor.office_door with camera.office."
             ),
             "use_llm": False,

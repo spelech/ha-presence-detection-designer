@@ -143,9 +143,9 @@ def _build_spatial_ambiguities(
         "Guest Room": (
             "low",
             "Guest Room (between Nursery & Office) relies on IKEA VALLHORN PIR (no camera)",
-            ["Guest Room", "Margot's Room", "Office"],
+            ["Guest Room", "Kids Room", "Office"],
             None,
-            "Guest Room sits between Margot's Room and Office off the Upstairs Hallway with no camera view cone; covered by `binary_sensor.guest_room_motion_occupancy` (IKEA VALLHORN dual-lobe PIR).",
+            "Guest Room sits between Kids Room and Office off the Upstairs Hallway with no camera view cone; covered by `binary_sensor.guest_room_motion_occupancy` (IKEA VALLHORN dual-lobe PIR).",
             "Use `binary_sensor.guest_room_motion_occupancy` (strong, 60s reset) as primary trigger + `guest_room_motion` / `guest_room_occupancy` (supporting Ecobee sustainers) + BLE corroboration.",
         ),
         "Basement Bathroom": (

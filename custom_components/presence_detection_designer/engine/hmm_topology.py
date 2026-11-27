@@ -37,7 +37,7 @@ TRANSIT_ROOMS: frozenset[str] = frozenset(
     {"Front Entry", "Upstairs Hallway & Stairs", "Laundry Room"}
 )
 SLEEP_BATH_ROOMS: frozenset[str] = frozenset(
-    {"Master Bedroom", "Master Bathroom", "Margot's Room", "Guest Room"}
+    {"Master Bedroom", "Master Bathroom", "Kids Room", "Guest Room"}
 )
 EXTERIOR_BIRTH_ROOMS: frozenset[str] = frozenset({"Garage", "Front Entry", "Kitchen"})
 OPEN_PLAN_MAIN_ROOMS: frozenset[str] = frozenset(

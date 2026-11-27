@@ -9,7 +9,7 @@ CAMERA_WHOLE_FRAME_ENTITY: dict[str, str] = {
     "camera.office": "binary_sensor.office_person_occupancy",
     "camera.master_bedroom": "binary_sensor.master_bedroom_person_occupancy",
     "camera.nursery": "binary_sensor.nursery_person_occupancy",
-    "camera.margots_room": "binary_sensor.margots_room_person_occupancy",
+    "camera.kids_room": "binary_sensor.kids_room_person_occupancy",
     "camera.living_room": "binary_sensor.living_room_person_occupancy",
     "camera.dining_room": "binary_sensor.dining_room_person_occupancy",
     "camera.kitchen": "binary_sensor.kitchen_person_occupancy",
@@ -22,22 +22,22 @@ CAMERA_WHOLE_FRAME_ENTITY: dict[str, str] = {
 }
 
 PRIMARY_BLE_TRACKER_ENTITIES: tuple[str, ...] = (
-    "sensor.steve_s_s25_ble_area",
-    "sensor.steve_fold_ble_area",
-    "sensor.steve_watch_ble_area",
+    "sensor.resident_a_phone_ble_area",
+    "sensor.resident_a_tablet_ble_area",
+    "sensor.resident_a_watch_ble_area",
 )
 
-STEVE_DEFINITIVE_BLE_ENTITIES: tuple[str, ...] = (
-    "sensor.steve_s_s25_ble_area",
-    "sensor.steve_fold_ble_area",
-    "sensor.steve_watch_ble_area",
+PRIMARY_RESIDENT_BLE_ENTITIES: tuple[str, ...] = (
+    "sensor.resident_a_phone_ble_area",
+    "sensor.resident_a_tablet_ble_area",
+    "sensor.resident_a_watch_ble_area",
 )
 
-# Frigate dog detection entities by room for attributing/suppressing Riley (dog) PIR triggers
+# Frigate dog detection entities by room for attributing/suppressing Household Pet (dog) PIR triggers
 ROOM_DOG_OCCUPANCY_ENTITIES: dict[str, tuple[str, ...]] = {
     "Dining Room": (
         "binary_sensor.dining_room_dog_occupancy",
-        "binary_sensor.rileys_food_dog_occupancy",
+        "binary_sensor.pet_feeding_area_dog_occupancy",
         "binary_sensor.dining_room_table_dog_occupancy",
     ),
     "Living Room": (
@@ -60,7 +60,7 @@ ROOM_DOG_OCCUPANCY_ENTITIES: dict[str, tuple[str, ...]] = {
     "Basement Play Area": ("binary_sensor.basement_play_area_dog_occupancy",),
 }
 
-SECONDARY_BLE_TRACKER_ENTITIES: tuple[str, ...] = ("sensor.tab_s10_lite_ble_area",)
+SECONDARY_BLE_TRACKER_ENTITIES: tuple[str, ...] = ("sensor.resident_b_tablet_ble_area",)
 
 BLE_TRACKER_ENTITIES: tuple[str, ...] = (
     *PRIMARY_BLE_TRACKER_ENTITIES,
@@ -68,17 +68,17 @@ BLE_TRACKER_ENTITIES: tuple[str, ...] = (
 )
 
 HOUSEHOLD_PEOPLE_PROFILES: dict[str, dict[str, Any]] = {
-    "steve": {
-        "label": "Steve",
+    "resident_a": {
+        "label": "Resident A",
         "type": "tracked_human",
-        "ble_entities": STEVE_DEFINITIVE_BLE_ENTITIES,
+        "ble_entities": PRIMARY_RESIDENT_BLE_ENTITIES,
         "power_entities": ("sensor.office_ups_used_watts_filtered",),
     },
-    "margot": {
-        "label": "Margot",
+    "resident_b": {
+        "label": "Resident B",
         "type": "untracked_human",
-        "primary_rooms": ("Margot's Room", "Nursery"),
-        "secondary_ble_entities": ("sensor.tab_s10_lite_ble_area",),
+        "primary_rooms": ("Kids Room", "Nursery"),
+        "secondary_ble_entities": ("sensor.resident_b_tablet_ble_area",),
     },
     "guest": {
         "label": "Guest",
@@ -87,8 +87,8 @@ HOUSEHOLD_PEOPLE_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 HOUSEHOLD_ANIMAL_PROFILES: dict[str, dict[str, Any]] = {
-    "riley": {
-        "label": "Riley (Dog)",
+    "pet": {
+        "label": "Household Pet (Dog)",
         "type": "pet",
         "species": "dog",
         "room_entities": ROOM_DOG_OCCUPANCY_ENTITIES,
@@ -107,7 +107,7 @@ ROOM_ACTUATOR_ENTITIES: dict[str, tuple[str, ...]] = {
         "light.master_closet_lights",
         "switch.master_bathroom_fan_switch",
     ),
-    "Margot's Room": (
+    "Kids Room": (
         "light.nursery_ceiling_fan_light",
         "light.nursery_dresser_lights",
         "light.nursery_rocker_lights",
@@ -174,7 +174,7 @@ BLIND_POCKET_DEFINITIONS: dict[str, dict[str, Any]] = {
             "binary_sensor.nursery_person_occupancy",
             "binary_sensor.upstairs_hallway_motion_occupancy",
         ],
-        "parent_rooms": ["Upstairs Hallway", "Margot's Room", "Office"],
+        "parent_rooms": ["Upstairs Hallway", "Kids Room", "Office"],
         "excluding_cameras": ["camera.nursery", "camera.office", "camera.master_bedroom"],
         "excluding_sensors": ["binary_sensor.upstairs_hallway_motion_occupancy"],
         "label": "Guest Room (Blind Pocket — excluded from Nursery, Office & Master Bedroom cameras)",
@@ -214,9 +214,9 @@ ROOM_SHADE_ENTITIES: dict[str, tuple[str, ...]] = {
         "cover.family_room_left_shade",
         "cover.family_room_right_shade",
     ),
-    "Margot's Room": (
-        "cover.margot_s_window_shade",
-        "cover.margot_s_window_shade_motor",
+    "Kids Room": (
+        "cover.resident_b_s_window_shade",
+        "cover.resident_b_s_window_shade_motor",
     ),
     "Guest Room": (
         "cover.guest_room_shades",
@@ -315,9 +315,9 @@ def _normalize_ble_area_to_room(raw_state: str | None) -> str | None:
         "master bathroom": "Master Bathroom",
         "office": "Office",
         "guest room": "Guest Room",
-        "margot's room": "Margot's Room",
-        "margots room": "Margot's Room",
-        "nursery": "Margot's Room",
+        "resident_b's room": "Kids Room",
+        "resident_bs room": "Kids Room",
+        "nursery": "Kids Room",
         "living room": "Living Room",
         "dining room": "Dining Room",
         "kitchen": "Kitchen",

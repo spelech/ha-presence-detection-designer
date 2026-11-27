@@ -270,7 +270,7 @@ def apply_compiled_topology_to_config(
             item["preset"] = str(BayesianWeightPreset.SUPPORTING)
             item["prob_given_true"] = 0.55
             item["prob_given_false"] = 0.20
-        elif eid == "sensor.tab_s10_lite_ble_area" and room_name != "Master Bedroom":
+        elif eid == "sensor.resident_b_tablet_ble_area" and room_name != "Master Bedroom":
             item["preset"] = str(BayesianWeightPreset.SUPPORTING)
             item["prob_given_true"] = 0.55
             item["prob_given_false"] = 0.25

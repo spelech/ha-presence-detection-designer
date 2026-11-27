@@ -932,7 +932,7 @@
       "notes": "Upper-right corner of Dining Room looking SW across dining table and through wide opening into Living Room.",
       "zones": [
         "dining_room_table",
-        "rileys_food"
+        "pet_feeding_area"
       ],
       "sub_zones": [
         {
@@ -946,9 +946,9 @@
           "height": 110
         },
         {
-          "id": "rileys_food",
-          "entity_id": "binary_sensor.rileys_food_person_occupancy",
-          "label": "Riley's Food Corner",
+          "id": "pet_feeding_area",
+          "entity_id": "binary_sensor.pet_feeding_area_person_occupancy",
+          "label": "Household Pet's Food Corner",
           "room": "Dining Room",
           "x": 170,
           "y": 96,
@@ -1131,7 +1131,7 @@
       "id": "camera.nursery",
       "name": "Nursery Camera",
       "floor": "upstairs",
-      "host_room": "Margot's Room",
+      "host_room": "Kids Room",
       "model_preset": "tapo_c110_corner",
       "x": 358,
       "y": 246,
@@ -1148,7 +1148,7 @@
           "id": "nursery_bed",
           "entity_id": "binary_sensor.nursery_bed_person_occupancy",
           "label": "Nursery Bed",
-          "room": "Margot's Room",
+          "room": "Kids Room",
           "x": 370,
           "y": 95,
           "width": 125,
@@ -1170,18 +1170,18 @@
       "spills_into": [
         "Upstairs Hallway & Stairs"
       ],
-      "notes": "Lower-left corner of Office looking NE; sees West wall and Office door, open North closet, Steve's desk, and sim rig.",
+      "notes": "Lower-left corner of Office looking NE; sees West wall and Office door, open North closet, Resident A's desk, and sim rig.",
       "zones": [
-        "steves_desk",
+        "office_desk",
         "sim_rig",
         "office_floor",
         "office_entryway"
       ],
       "sub_zones": [
         {
-          "id": "steves_desk",
-          "entity_id": "binary_sensor.steves_desk_person_occupancy",
-          "label": "Steve's Desk",
+          "id": "office_desk",
+          "entity_id": "binary_sensor.office_desk_person_occupancy",
+          "label": "Office Desk",
           "room": "Office",
           "x": 745,
           "y": 360,
@@ -1467,7 +1467,7 @@
       "sensor_type": "pir_motion",
       "model_preset": "ecobee_smart_sensor",
       "floor": "upstairs",
-      "host_room": "Margot's Room",
+      "host_room": "Kids Room",
       "x": 370,
       "y": 235,
       "heading_deg": 315,
@@ -1836,7 +1836,7 @@
       "name": "Nursery Speaker BLE Proxy",
       "model_preset": "google_home_speaker_ble",
       "floor": "upstairs",
-      "host_room": "Margot's Room",
+      "host_room": "Kids Room",
       "x": 465,
       "y": 140,
       "radius_px": 210
@@ -1932,10 +1932,10 @@
     {
       "id": "nfc_bedroom",
       "entity_id": "esphome.nfc_bedroom",
-      "name": "Bedroom NFC Reader (Margot's Room BLE Proxy)",
+      "name": "Bedroom NFC Reader (Kids Room BLE Proxy)",
       "model_preset": "esphome_ble_proxy",
       "floor": "upstairs",
-      "host_room": "Margot's Room",
+      "host_room": "Kids Room",
       "x": 420,
       "y": 180,
       "radius_px": 210
@@ -2075,7 +2075,7 @@
       "from_room": "Upstairs Hallway & Stairs",
       "id": "conn_hall_nursery",
       "label": "Nursery Doorway (Seen Partially by Cam)",
-      "to_room": "Margot's Room",
+      "to_room": "Kids Room",
       "type": "unmonitored_door"
     },
     {
@@ -2281,8 +2281,8 @@
       ]
     },
     {
-      "id": "margots_room",
-      "name": "Margot's Room",
+      "id": "kids_room",
+      "name": "Kids Room",
       "floor": "upstairs",
       "room_type": "room",
       "x": 353,
@@ -2293,7 +2293,7 @@
       "notes": "Top-center Nursery (10'6\" x 11'5\") including lower-right reach-in closet (Y=143..254).",
       "entryways": [
         {
-          "id": "door_margot_hallway",
+          "id": "door_resident_b_hallway",
           "wall": "bottom",
           "offset": 155,
           "width": 50,
@@ -2366,12 +2366,12 @@
           "target_room": "Master Bedroom"
         },
         {
-          "id": "door_hall_margot",
+          "id": "door_hall_resident_b",
           "wall": "top",
           "offset": 155,
           "width": 50,
           "type": "door",
-          "target_room": "Margot's Room"
+          "target_room": "Kids Room"
         },
         {
           "id": "door_hall_guest",

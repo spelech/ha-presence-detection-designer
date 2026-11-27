@@ -184,8 +184,8 @@ def _reconstruct_from_component_logs(
                         "x": rx,
                         "y": ry,
                         "occupant_type": "pet",
-                        "occupant_label": "Riley (Dog)",
-                        "detected_animals": ["Riley (Dog)"],
+                        "occupant_label": "Household Pet (Dog)",
+                        "detected_animals": ["Household Pet (Dog)"],
                         "human_present": bool(ev.get("is_present", False)),
                         "pet_present": True,
                         "dog_entities": [
@@ -224,8 +224,8 @@ def _reconstruct_from_component_logs(
             occ_label = ident or "Occupant"
             occ_type = (
                 "tracked_human"
-                if occ_label == "Steve"
-                else ("untracked_human" if occ_label == "Margot" else "human")
+                if occ_label == "Resident A"
+                else ("untracked_human" if occ_label == "Resident B" else "human")
             )
             reason = str(ev.get("reason") or "").strip()
             subregion = str(ev.get("inferred_subregion") or r_name)
@@ -241,7 +241,7 @@ def _reconstruct_from_component_logs(
                     "human_present": True,
                     "pet_present": bool(ev.get("pet_present") or pet_on),
                     "detected_people": [occ_label],
-                    "detected_animals": ["Riley (Dog)"]
+                    "detected_animals": ["Household Pet (Dog)"]
                     if (ev.get("pet_present") or pet_on)
                     else [],
                     "occupant_type": occ_type,
@@ -365,7 +365,7 @@ def _reconstruct_from_component_logs(
                 occ["from_floor"] = leg_floor
 
         for pet in pet_list:
-            pet_label = str(pet.get("occupant_label") or "Riley (Dog)")
+            pet_label = str(pet.get("occupant_label") or "Household Pet (Dog)")
             pet_room = str(pet.get("room") or "")
             if not pet_room:
                 continue

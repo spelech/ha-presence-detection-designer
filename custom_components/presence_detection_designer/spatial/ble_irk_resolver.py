@@ -164,7 +164,7 @@ class BLEIrkResolver:
             return None
         if norm in self._aliases:
             return self._aliases[norm]
-        # Substring fallback for legacy names (e.g. sensor.steve_s_s25_ble_area -> steve_s_s25)
+        # Substring fallback for legacy names (e.g. sensor.resident_a_phone_ble_area -> resident_a_phone)
         for alias_key, tid in self._aliases.items():
             if len(alias_key) >= 4 and (norm in alias_key or alias_key in norm):
                 return tid

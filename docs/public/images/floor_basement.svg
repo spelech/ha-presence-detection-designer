@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" width="1000" height="580">
+  <defs>
+    <pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse">
+      <path d="M 25 0 L 0 0 0 25" fill="none" stroke="#1e293b" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1000" height="580" fill="#0b1120"/>
+  <rect width="1000" height="580" fill="url(#grid)"/>
+  <rect x="40" y="55" width="920" height="485" rx="8" fill="none" stroke="#64748b" stroke-width="3"/>
+  <text x="50" y="34" fill="#e2e8f0" font-family="Inter,system-ui,sans-serif" font-size="18" font-weight="700">Basement Level — Generic Demo Layout</text>
+  <text x="950" y="34" text-anchor="end" fill="#94a3b8" font-family="Inter,system-ui,sans-serif" font-size="12">Example 3-Level Smart Home Floorplan</text>
+  <rect x="50" y="65" width="420" height="260" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="260" y="195" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Basement Theater</text>
+  <rect x="470" y="65" width="480" height="260" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="710" y="195" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Basement Play Area</text>
+  <rect x="50" y="325" width="230" height="205" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="165" y="427" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Basement Bathroom</text>
+  <rect x="280" y="325" width="670" height="205" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="615" y="427" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Storage Room</text>
+  <line x1="820" y1="560" x2="945" y2="560" stroke="#94a3b8" stroke-width="2"/>
+  <text x="882" y="554" text-anchor="middle" fill="#94a3b8" font-family="Inter,system-ui,sans-serif" font-size="11">10 ft (Generic Demo)</text>
+</svg>

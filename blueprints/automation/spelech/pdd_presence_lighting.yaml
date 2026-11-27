@@ -10,7 +10,7 @@ blueprint:
     as a pre-vacant warning when `occupancy_state` transitions to `occupied_cooling` before
     turning off on room vacation.
   domain: automation
-  author: Steven T. Pelech
+  author: Resident An T. Pelech
   input:
     presence_sensor:
       name: PDD Room Presence Binary Sensor

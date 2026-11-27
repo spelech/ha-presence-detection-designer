@@ -91,7 +91,6 @@ flowchart TB
 ```
 
 - **Interactive Studio (LAN):** http://preview.lan/m-pdd-arch/
-- **Interactive Studio (Remote):** https://preview.wileyriley.com/m-pdd-arch/
 - **Mermaid Live Editor:** [Open Architecture Diagram in mermaid.live](https://mermaid.live/edit#pako:eNp9VW1v2joU_itHSHdiWtMBXe9LdTUpTQJUDQQRSu_uOlUmMWAtsSPbAbJ1_33HDgWCpvElzsHPc57zmu-tRKS0dQOtZSa2yZpIDbPbJw74U-ViJUmxhrDz-akVkopK6NzAZF0plpAMhiKn4CrFlCZcQ0y5ElI9tb7UcPPz3BFC-5KtiKbQuweP5FQSBW8gLhfO_4LTJmByNzUAorQ5KmjH0Tjq9-E9zN0wHEbTMR4fq28UH1PGV28b6MCLEB1jJDBbU5mjyL0qaAeJWFAKV52OQmz3b3w2wbdhgODun-YAEyl2jCrYMAK3yFSmBGTJNcvpc0o0gXYXht-aBF409o37EvPBOIoDT_CUaSY4-p_N0W28FlvMYjosc4b_VGfyx3PEI0jTnT4q98UKoiQpC8KTypKQlJogfIH_HykoT5_4eem6h9J1T0oXsxXHx0Efim0omQahVSKyVGw5-DQhFTxStlprE9e2nbzFEoZi5URpqmBG84LKc5L_Zm54b6qZoc4iIxympEr2pQVPCqWcGcm-wohoyXYQt5nzUTZTMnJjQzGhGv2NxAZ9ODb-YyzBLslKhUH8PhG9QyJ6NxBrorFt61xo05sBvuXE5AIdBRuWUp5Q6DeJbZHu-8jU89_ZsNC7Rnc0hXuS5Rhin2UafbR3F1BdwAYfG3xOLmBprjeDG7gPcYxkLtaiQjHQ82FASpwokyshcrjDVkD9GRTP0vYilctm07qfAkPxwNmSoYpbjNDCD7WpQ8BBKotCSFM-J-JZZbq8qSYMzazOmbnu4AvOAHXmJDHZeQ9jwRQFnymSL9iqJFrI3-f76pDvq5s6GORTNqt1xkckWTNOMd1RqYtSm27UUmQNUf3YiBoyXBoSrx_r9Ypu49T176ajwEeRwyj078YDPHlRFNaneTC963_an13PHc-aYfuPQWiavXd5rWCEc5uXueNvaYYLjvBULJcwKIlMG6DoYWZkuRDgStBmUbQXjBNZPSs7tfAOEsGX-y76A1-PQ4ANBNGGyoxUv5xd3JngOB9t69cW3AtnFjNAxoJz2jTYmdujvKh5x-w1Y0ABtcHwGcvLU2uAOU332xk8agrBUlzNL8fblrpx3Y7xL--aGI0r2-G1yR738FtR2pk59iSEU_jcufxwfQH_XP51_cWw2d6uwRiD5TsxncpxNQ5hedBULyp1xvEa7anNrOxzmz3uiSdC4TQzLKh3LOfJfog5KdRaaOMKW7UmsB1lWQ8mPMC_NeUrBOZIvKwMEofteM3gsL0aeURY11FslRNs4t7-FGQZK5SRM6Qktcv3xSBbF9DKzcePpfhd_97Sa5rbL3xK5NfWD_yXlFrEFU_QqGVJ0VIW-FGjPiM4vPne_OMnnAJ09A)
 
 ### Module Map
@@ -159,7 +158,7 @@ Furthermore, if $s_i \ge 0.08$ while the room is vacant and the attenuated Bayes
 ### 2.3 Physical Pet Exclusion & Moving-Shade Suppression
 
 Implemented in `spatial_inference.py`:
-- **Pet Exclusion:** When a room's Frigate `dog_occupancy` sensor is active with no human camera detection in that room, uncorroborated PIR triggers in that room are placed in `pet_excluded_entities`, preventing a patrolling dog from occupying rooms (`0s` FP on `riley_dog_patrol_main_floor`).
+- **Pet Exclusion:** When a room's Frigate `dog_occupancy` sensor is active with no human camera detection in that room, uncorroborated PIR triggers in that room are placed in `pet_excluded_entities`, preventing a patrolling dog from occupying rooms (`0s` FP on `household_pet_patrol_main_floor`).
 - **Moving-Shade Sunlight Transient Suppression:** Motorized window shades entering `opening`/`closing`/`moving` arm a settling window (`SHADE_SETTLE_WINDOW_SEC`). Static sunlit Frigate sub-zones flickering during shade travel without corroborating thermal PIR or entry motion are placed in `shade_sunlight_excluded_entities` (`0s` FP on `sunlit_shade_movement_false_camera_flicker`).
 
 ---
@@ -194,19 +193,18 @@ flowchart LR
     GATE1 -->|"Multipath Spike Rejected"| ASSOC
     JOS --> ASSOC
     ASSOC -->|"Matches Track"| POSU
-    ASSOC -->|"Other Occupant (Margot/Guest)"| ERF
+    ASSOC -->|"Other Occupant (Resident B/Guest)"| ERF
     POSU --> JOS
     JOS --> ERF
     ERF -->|"Next 1Hz Tick"| PRED
 ```
 
 - **Interactive Studio (LAN):** http://preview.lan/m-pdd-ekf/
-- **Interactive Studio (Remote):** https://preview.wileyriley.com/m-pdd-ekf/
 - **Mermaid Live Editor:** [Open EKF Pipeline Diagram in mermaid.live](https://mermaid.live/edit#pako:eNplk9ty2jAQhl9lx1emjUmgUy4ypTOUQ04kuDbpTWmYraxgFVtyZDmFxnn3rgQxzMQ30qykb3f_f_3iMZVw7xy8x0z9ZSlqA9NoIYG-MBqPfi68UPNEMAOx4cU5bJbreh10oA8TPzEt2MBH-O52_gjzgicw_NFaeL92iMk0IsLltjRccyMYTDKlNEzVKpiKNc9EqlQC_lwVQRdCrTaClwS8Rb0SEjrt3gH1bTq-J1bMnyoujcAM7pTMhOSo7RlEKFcc7osEDYfU37SoxLouIIBiKeq64VwM5uMOgTrBaDaBYSqC-KlC6hEu7Ev_-aELpxDDlz702r1PJxABf8asosME0ECyTNEcyhrE8WxIuNsqMyKYMVYVKA10Hf0WU8xQqt-i3NMTohO5c9bunZ24Xe_xiBbOYtvkdNdWqEphhJJvXflDzLlGKMUqx363_fnRUKnhVbSP9Npnx7DrWUysa1XyIg0mSucwVM-oBUrGISR5_Kvg5rIV7paHOQl_E908zBvAOJoQYCAx21rvIqVyuJKGrzSpXyw1IcJULDfwwa1b9_AwOxAEX-0ENKPgAtbHg6Mu5Cw5cscGybABY7wg1RdebXt5f8FpXqBJIS5omiDifzjbP3C-NDq4NEcht32joGEpjd1cI1vbp9aE99dmJuUaGoN9O6PKnF5UvLSa11atg4kuYVP0WwXNFdrssXd8Y6Bz-Q_mYp-dlPNOwCOncxQJ_ZovHqXO3U-aoF57r3SKlVHxVjIKGl1xilRuRkYCyZ18H379D1aQKBU)
 
 ### 3.1 State Vector & Damped Constant-Velocity Dynamics
 
-For each tracked BLE resident (e.g., `sensor.steve_s_s25_ble_area`), the filter maintains a continuous 4-state vector in floorplan coordinates (scale $s_{\text{px}} = 12.5\text{ px/ft}$), its $4 \times 4$ covariance $P_k$, and a discrete floor state $f_k \in \{\text{basement}, \text{main}, \text{upstairs}\}$:
+For each tracked BLE resident (e.g., `sensor.resident_a_phone_ble_area`), the filter maintains a continuous 4-state vector in floorplan coordinates (scale $s_{\text{px}} = 12.5\text{ px/ft}$), its $4 \times 4$ covariance $P_k$, and a discrete floor state $f_k \in \{\text{basement}, \text{main}, \text{upstairs}\}$:
 
 $$\mathbf{x}_k = \begin{bmatrix} x_k \\ y_k \\ v_{x,k} \\ v_{y,k} \end{bmatrix}, \qquad P_k \in \mathbb{R}^{4 \times 4}$$
 
@@ -269,7 +267,7 @@ $$P \leftarrow (I - K_i H_i)\,P\,(I - K_i H_i)^T + K_i R_i K_i^T$$
 
 ### 3.4 Multi-Occupant Data Association (Mahalanobis Gating)
 
-In a multi-occupant household (e.g., Steve tracked via BLE while Margot or guests are untracked), blindly fusing every active Frigate camera or PIR hit into Steve's EKF would pull Steve's estimated location into Margot's room!
+In a multi-occupant household (e.g., Resident A tracked via BLE while Resident B or guests are untracked), blindly fusing every active Frigate camera or PIR hit into Resident A's EKF would pull Resident A's estimated location into Resident B's room!
 
 `update_position_gated()` implements classic radar **nearest-neighbor Mahalanobis data association**:
 - When BLE proxies are actively tracking the resident (`active_proxy_count > 0`), a camera ($\sigma_{\text{cam}} = 2.5\text{ ft}$) or fast PIR ($\sigma_{\text{pir}} = 6.0\text{ ft}$) observation at $(z_x, z_y)$ on floor $f_z$ is fused **only if**:
@@ -277,7 +275,7 @@ In a multi-occupant household (e.g., Steve tracked via BLE while Margot or guest
   2. Euclidean distance $\le 16.0\text{ ft}$, **and**
   3. 2-DOF Mahalanobis distance satisfies the 99.5% gate:
      $$d_M^2 = \frac{(z_x - \hat{x})^2}{P_{xx} + R_{\text{obs}}} + \frac{(z_y - \hat{y})^2}{P_{yy} + R_{\text{obs}}} \le \chi^2_{2,\,0.995} = 10.60$$
-- Observations failing the gate are cleanly attributed to **another occupant** and ignored by Steve's EKF.
+- Observations failing the gate are cleanly attributed to **another occupant** and ignored by Resident A's EKF.
 - When BLE coverage is absent (`active_proxy_count == 0`, e.g., inside the Garage), the gate relaxes so camera/PIR detections seamlessly bridge the RF dead zone.
 
 ---
@@ -325,8 +323,8 @@ When multi-proxy EKF tracks are active and `ble_decider_enabled` is enabled, `ap
 | **Empty room, solo EKF lock** | $p_r = 1.0,\; \sigma = 2.5\text{ ft}$ | $9.75$ | **`63.2%`** (`< 75%`) | **Never solo-triggers** (also hard-blocked by GUARD-02) |
 | **Stationary desk work (EKF + Ecobee)** | $p_r = 0.99$ + Ecobee ($2.42\times$) | $9.5\times$ | **`80.3%`** (`> 75%`) | **Smoothly holds** stationary occupant without UPS power hack |
 | **Straddling open-plan border** | $p_r = 0.50$ | $1.00$ | **`15.0%`** (neutral) | **Zero border chatter** |
-| **Steve elsewhere vs. Margot camera** | $p_r = 0.0$ + Camera ($48\times$) | $0.45$ | **`79.2%`** (`> 75%`) | **Multi-occupant safe** — never overpowers another person's camera |
-| **Steve elsewhere vs. stale Ecobee** | $p_r = 0.0$ + Ecobee ($2.42\times$) | $0.45$ | **`16.1%`** (`< 75%`) | **Immediately releases** stale thermal hold on exit |
+| **Resident A elsewhere vs. Resident B camera** | $p_r = 0.0$ + Camera ($48\times$) | $0.45$ | **`79.2%`** (`> 75%`) | **Multi-occupant safe** — never overpowers another person's camera |
+| **Resident A elsewhere vs. stale Ecobee** | $p_r = 0.0$ + Ecobee ($2.42\times$) | $0.45$ | **`16.1%`** (`< 75%`) | **Immediately releases** stale thermal hold on exit |
 
 ---
 
@@ -382,7 +380,6 @@ stateDiagram-v2
 ```
 
 - **Interactive Studio (LAN):** http://preview.lan/m-pdd-fsm/
-- **Interactive Studio (Remote):** https://preview.wileyriley.com/m-pdd-fsm/
 - **Mermaid Live Editor:** [Open State Machine Diagram in mermaid.live](https://mermaid.live/edit#pako:eNqtlE1r4zAQhv_KRIc9LM12Ceyl0MJCofcue0qKmUrjRFtJY2TJTSj975Vlx0nafML6JI-kx-_MO543IVmRuAFRBwx0r3Hu0Y6bycxBeqbfn2A8voMGJbrQxbp1DrOUsdKkCsmu1N6SuoGZoEYrcpIKRYFkIAXTh7-_H-_HPyewiBYd0FKaWOuGnmaig34l7X5gwUZpN9_BS0PoW3q7CeswoAyXkCWzOUh2DDvwr9Re2GXlUNqnVV-M4PV8Tv5s9CC33R-kXmehRdCWOIY9yedrl8n0dFDbXt4-k3L5pqljwFMdLWWZZ_Ia8rpc9UTJ0QXFr66gZaWzO8bYghw-GzpB7Fr2AGV0FDNo-G-lO0gcjG0FVeRrdltEWgZyg8GnsJuMW5hnTinaKqxSn3QHj3TK9m-y4aD6h5JcKBboFJdl6uJXMgbubmHy41cN7EGiJY_HG_kYcNQB4BuMkgqlg2ZXn-vsZ9z62va4Sqn7ZFX2LBterEOnpsUZN_v3T7KUrneOJwNK9usZMxMgrkCkrC1qlcbwmwgLsnkgK_Qv4j3tYgz8Z-VkCgYfKUVipTbDug-_fwB0ZAl1)
 
 | State | `is_present` | Purpose & Active Timer |
@@ -401,7 +398,7 @@ stateDiagram-v2
 Implemented in `coordinator_dispatch.py` (`notify_connected_rooms_if_active`) and `state_machine.py` (`_guard_can_handoff_clear`):
 1. **Confirmed-Only Emission:** Only rooms in `OCCUPIED_CONFIRMED` emit `notify_adjacent_occupancy()` to connected neighbors. Rooms in `OCCUPIED_HOLDING` never reverse-evict an adjacent room (preventing a Master Bedroom BLE hold from wiping out Master Bathroom 3s into a shower).
 2. **2.5s Minimum-Dwell Safety Belt:** Inspired by switched-systems control theory, a PIR-only arrival in Room B cannot evict an adjacent `OCCUPIED_CONFIRMED` Room A if Room A entered `< 2.5s` ago—preventing same-second spillover wipeouts while allowing decisive Frigate camera sub-zones to preempt immediately.
-3. **Hold Preservation:** `_guard_can_handoff_clear` refuses to clear an adjacent room that still has an active camera confirmation or sustaining condition (e.g., Margot watching TV in Family Room while Steve walks into Kitchen).
+3. **Hold Preservation:** `_guard_can_handoff_clear` refuses to clear an adjacent room that still has an active camera confirmation or sustaining condition (e.g., Resident B watching TV in Family Room while Resident A walks into Kitchen).
 4. **Unmonitored Pass-Through Bridges:** Pure transition hubs with no controllable loads (e.g., the main-floor stair landing) are bridged via direct `connected_rooms` links so handoffs propagate seamlessly across floors without requiring redundant keypad proximity PIRs.
 
 ---
@@ -417,7 +414,7 @@ Implemented in `coordinator_dispatch.py` (`notify_connected_rooms_if_active`) an
 ## 6. Golden Benchmark Validation & Quantitative Results
 
 PDD is continuously validated against a **16-scenario, 4-layer synthetic trajectory & fuzzed benchmark suite** (`tests/golden/`):
-- **Layer 0:** Ground-truth 1 Hz multi-actor trajectories (Steve, Margot, Riley the dog) covering 12 edge-case scenarios plus 4 realistic multi-floor daily routines (morning wake-to-work, evening return with Margot & Riley, bedtime snack runs, Office -> Storage Room 3-floor transit).
+- **Layer 0:** Ground-truth 1 Hz multi-actor trajectories (Resident A, Resident B, Household Pet the dog) covering 12 edge-case scenarios plus 4 realistic multi-floor daily routines (morning wake-to-work, evening return with Resident B & Household Pet, bedtime snack runs, Office -> Storage Room 3-floor transit).
 - **Layer 1:** Raycast FOV projection against calibrated floorplan geometry (`live_floorplan_snapshot.json`) with solid-wall occlusion.
 - **Layer 2:** Hardware dynamics (15s fast PIR, 300s/1800s Ecobee tails, 25s camera stillness dropout, 10s Bermuda area cadence, 1 Hz multi-proxy range stream).
 - **Layer 3:** Seeded stochastic fuzzing (Gaussian BLE noise, 8% `+15–25 ft` multipath spikes, 10–15% camera frame drops, vertical bleed, causal event jitter).
@@ -426,14 +423,14 @@ PDD is continuously validated against a **16-scenario, 4-layer synthetic traject
 
 | Scenario | Median 2D Error | Floor Accuracy | Room Accuracy | Notes |
 | :--- | :---: | :---: | :---: | :--- |
-| `multi_occupant_steve_and_margot_split_rooms` | **`3.2 ft`** | **`100.0%`** | **`100.0%`** | Mahalanobis gate completely isolates Margot's sensors |
+| `multi_occupant_resident_a_and_resident_b_split_rooms` | **`3.2 ft`** | **`100.0%`** | **`100.0%`** | Mahalanobis gate completely isolates Resident B's sensors |
 | `living_dining_archway_spillover` | **`2.4 ft`** | **`100.0%`** | **`98.0%`** | Clean open-plan archway disambiguation |
 | `ble_vertical_floor_bleed_no_false_trigger` | **`4.4 ft`** | **`100.0%`** | **`99.0%`** | Hysteretic floor lock resists vertical bleed |
 | `basement_theater_play_area_handoff_and_zone` | **`4.5 ft`** | **`100.0%`** | **`98.0%`** | Smooth open-basement continuity |
 | `storage_room_doorway_bleed_from_play_area` | **`6.5 ft`** | **`100.0%`** | **`100.0%`** | Zero doorway leakage |
-| `evening_return_home_with_margot_and_riley` | **`3.2 ft`** | **`98.5%`** | **`84.2%`** | Multi-occupant 3-actor routine |
+| `evening_return_home_with_resident_b_and_pet` | **`3.2 ft`** | **`98.5%`** | **`84.2%`** | Multi-occupant 3-actor routine |
 | `morning_routine_wake_to_work_departure` | **`3.2 ft`** | **`98.7%`** | **`81.0%`** | Full 18-minute multi-floor wake-to-work routine |
-| `bedtime_margot_room_kitchen_snack_runs` | **`2.0 ft`** | **`96.2%`** | **`79.4%`** | Repeated multi-floor trips while Margot stays upstairs |
+| `bedtime_resident_b_room_kitchen_snack_runs` | **`2.0 ft`** | **`96.2%`** | **`79.4%`** | Repeated multi-floor trips while Resident B stays upstairs |
 | `office_to_storage_room_direct_route` | **`2.4 ft`** | **`91.9%`** | **`83.9%`** | Direct 3-floor transit |
 | **Overall Median Across All Scenarios** | **`3.21 ft`** | — | — | **19–123 multipath outliers gated per scenario** |
 

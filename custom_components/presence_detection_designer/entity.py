@@ -60,7 +60,7 @@ class PresenceDesignerEntityMixin:
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry_id)},
             name=coordinator.room_name,
-            manufacturer="Steven T. Pelech",
+            manufacturer="Resident An T. Pelech",
             model="Presence Detection Designer",
         )
 

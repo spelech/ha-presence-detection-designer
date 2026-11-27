@@ -3,7 +3,7 @@
 Layer 0: Ground-truth actor trajectories (t, actor, floor, x, y, activity) -> expected_occupied_rooms(t)
 Layer 1: Geometric raycast projection against actual placed cameras, sub-zones, PIRs, Ecobee, doors, BLE proxies
 Layer 2: Hardware timing & physics (PIR cooldowns, Ecobee 300s/1800s tails, Bermuda 10s update lag, stillness dropouts)
-Layer 3: Seeded fuzzing (BLE bounce/vertical bleed, PIR spillover, Riley pet trips, shade flickers, remote UPS, jitter)
+Layer 3: Seeded fuzzing (BLE bounce/vertical bleed, PIR spillover, Household Pet pet trips, shade flickers, remote UPS, jitter)
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from custom_components.presence_detection_designer.spatial.spatial_geometry impo
     point_in_cone,
 )
 
-# Map floorplan BLE proxy host_room -> Bermuda area string reported by sensor.steve_s_s25_ble_area
+# Map floorplan BLE proxy host_room -> Bermuda area string reported by sensor.resident_a_phone_ble_area
 PROXY_ROOM_TO_BERMUDA_AREA: dict[str, str] = {
     "Basement Play Area": "Basement",
     "Basement Theater": "Basement Theater",
@@ -45,7 +45,7 @@ PROXY_ROOM_TO_BERMUDA_AREA: dict[str, str] = {
     "Garage": "Garage",
     "Master Bedroom": "Master Bedroom",
     "Master Bathroom": "Master Bathroom",
-    "Margot's Room": "Margot's Room",
+    "Kids Room": "Kids Room",
     "Guest Room": "Guest Room",
     "Office": "Office",
     "Upstairs Hallway & Stairs": "Upper Level",
@@ -56,7 +56,7 @@ VERTICAL_BLE_PAIRS: tuple[tuple[str, str], ...] = (
     ("Master Bedroom", "Living Room"),
     ("Master Bedroom", "Dining Room"),
     ("Master Bedroom", "Kitchen"),
-    ("Margot's Room", "Kitchen"),
+    ("Kids Room", "Kitchen"),
     ("Guest Room", "Family Room"),
     ("Office", "Garage"),
     ("Family Room", "Basement Play Area"),
@@ -81,13 +81,13 @@ class ActorTrack:
     """Named household occupant or pet with a piecewise-linear trajectory."""
 
     actor_id: str
-    actor_type: str  # "steve" | "margot" | "guest" | "riley_dog"
+    actor_type: str  # "resident_a" | "resident_b" | "guest" | "household_pet"
     has_ble_tracker: bool = False
     waypoints: tuple[ActorWaypoint, ...] = ()
 
     @property
     def is_human(self) -> bool:
-        return self.actor_type != "riley_dog"
+        return self.actor_type != "household_pet"
 
 
 @dataclass(frozen=True)
@@ -357,7 +357,7 @@ class LayeredSignalGenerator:
                             wf_human = True
                     state_map[wf_eid] = "on" if wf_human else "off"
 
-            # --- Dog occupancy sensors (Riley) ---
+            # --- Dog occupancy sensors (Household Pet) ---
             for dog_room, dog_eids in ROOM_DOG_OCCUPANCY_ENTITIES.items():
                 dog_here = any(
                     not tr.is_human and poses[tr.actor_id].room == dog_room for tr in tracks
@@ -435,14 +435,14 @@ class LayeredSignalGenerator:
                     occ_eid = eid.replace("_motion", "_occupancy")
                     state_map[occ_eid] = "on" if t <= ecobee_occ_until.get(occ_eid, -1) else "off"
 
-            # --- Layer 1 + 2 + 3: Calibrated BLE (sensor.steve_s_s25_ble_area) ---
-            steve_track = next((tr for tr in tracks if tr.has_ble_tracker), None)
-            if steve_track is not None and (t % self.timing.bermuda_update_interval_sec == 0):
-                spose = poses[steve_track.actor_id]
+            # --- Layer 1 + 2 + 3: Calibrated BLE (sensor.resident_a_phone_ble_area) ---
+            resident_a_track = next((tr for tr in tracks if tr.has_ble_tracker), None)
+            if resident_a_track is not None and (t % self.timing.bermuda_update_interval_sec == 0):
+                spose = poses[resident_a_track.actor_id]
                 if spose.room is None or spose.activity == "away":
                     last_ble_area = "Away"
                 else:
-                    # Nearest proxy on Steve's floor
+                    # Nearest proxy on Resident A's floor
                     fl_proxies = [
                         p
                         for p in self.floorplan.get("ble_proxies", [])
@@ -484,12 +484,12 @@ class LayeredSignalGenerator:
                         last_ble_area = PROXY_ROOM_TO_BERMUDA_AREA.get(bounced, bounced)
                     else:
                         last_ble_area = PROXY_ROOM_TO_BERMUDA_AREA.get(host_room, host_room)
-            state_map["sensor.steve_s_s25_ble_area"] = last_ble_area
+            state_map["sensor.resident_a_phone_ble_area"] = last_ble_area
 
             # --- Layer 4B: Multi-proxy BLE calibrated range readings (1Hz for EKF trilateration) ---
             t_ranges: list[BLERangeMeasurement] = []
-            if steve_track is not None:
-                spose_r = poses[steve_track.actor_id]
+            if resident_a_track is not None:
+                spose_r = poses[resident_a_track.actor_id]
                 if spose_r.room is not None and spose_r.activity != "away":
                     is_fuzzed_ble = (
                         fz.ble_adjacent_bounce_prob > 0
@@ -540,7 +540,7 @@ class LayeredSignalGenerator:
                 "media_player.family_room_tv",
                 "media_player.living_room_display_webos",
                 "media_player.master_bedroom_tv_androidtv",
-                "media_player.margot_s_tv",
+                "media_player.resident_b_s_tv",
                 "media_player.basement_display_webos",
             ):
                 playing = any(

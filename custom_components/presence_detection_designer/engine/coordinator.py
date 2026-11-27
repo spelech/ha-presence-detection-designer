@@ -284,7 +284,7 @@ class RoomPresenceCoordinator:
         return False
 
     def _is_definitive_tracker_pinned(self) -> bool:
-        """Return True if Steve's definitive BLE tracker or workstation load pins him to this room."""
+        """Return True if Resident A's definitive BLE tracker or workstation load pins him to this room."""
         return bool(
             isinstance(self.last_spatial_estimate, dict)
             and self.last_spatial_estimate.get("definitive_tracker_pinned")

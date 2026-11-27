@@ -8,12 +8,8 @@ PDD includes two analytics views for tuning parameters safely and monitoring lon
 
 Test "what-if" configuration changes against your real recorded Home Assistant history **before** touching live automations:
 
-![Replay & Tuning Simulator](../images/replay_tuning_simulator.png)
-
 - **Side-by-Side Comparison:** Compare your current live configuration (**Baseline**) against a modified **Candidate** configuration (different thresholds, timeouts, negative-space toggle, or sustaining rules).
 - **Negative-Space A/B Toggle:** Quickly compare how enabling or disabling clear-camera negative space affects false holds vs. premature drops on real past events.
-
-![Replay Negative-Space Toggle](../screenshots/replay_negative_space_toggle.png)
 
 - **Delta Metrics:** Review total occupied minutes, flap count, and transition diffs before applying any change live.
 
@@ -22,8 +18,6 @@ Test "what-if" configuration changes against your real recorded Home Assistant h
 ## 2. Statistics & Timeline Analytics
 
 Monitor each room's historical occupancy patterns and sensor performance:
-
-![Statistics & Timeline Analytics](../images/statistics_timeline_analytics.png)
 
 - **Occupancy Breakdown:** Daily/weekly occupied time per room and transition counts.
 - **Sensor Trigger Attribution:** See which sensors most frequently initiate vs. sustain occupancy — helpful for spotting noisy PIRs, dead batteries, or camera zones that need masking.

@@ -2,8 +2,6 @@
 
 Click the **Settings (⚙)** icon in the PDD Studio header to open the **Global Settings Modal**. Changes here apply house-wide and persist natively in Home Assistant's `.storage/presence_detection_designer`.
 
-![Global Settings Modal](../screenshots/global_settings_negative_space.png)
-
 ---
 
 ## 1. Inference Engine & Feature Toggles
@@ -31,4 +29,3 @@ Click the **Settings (⚙)** icon in the PDD Studio header to open the **Global 
 - **Vision LLM:** Choose your Home Assistant conversation/AI agent ID and model for pre-vacate snapshot verification and NL ↔ YAML translation.
 - **Global Slack Alerts:** Configure your notify service, target channel, verbosity (`minimal`, `compact`, `full`), optional camera snapshot attachments, and daily summary threads.
 
-![Global Slack Notification Settings](../screenshots/slack_notifications_global_modal.png)

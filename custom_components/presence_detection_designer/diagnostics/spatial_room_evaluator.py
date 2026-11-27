@@ -94,7 +94,7 @@ def evaluate_room_spatial_estimates(
     clear_cameras_by_floor: dict[str, list[dict[str, Any]]],
     clear_pirs_by_floor: dict[str, list[dict[str, Any]]],
     clear_camera_ids: set[str],
-    steve_pinned_rooms: set[str],
+    resident_a_pinned_rooms: set[str],
     recent_activity_ts: dict[str, float],
     recent_positive_ts: dict[str, float],
     recent_entity_on_ts: dict[str, float],
@@ -328,26 +328,26 @@ def evaluate_room_spatial_estimates(
         human_present = bool(occupied)
         pet_present = bool(dog_sensors or pet_excl)
         detected_people: list[str] = []
-        detected_animals: list[str] = ["Riley (Dog)"] if pet_present else []
-        definitive_tracker_pinned = bool(r_name in steve_pinned_rooms)
+        detected_animals: list[str] = ["Household Pet (Dog)"] if pet_present else []
+        definitive_tracker_pinned = bool(r_name in resident_a_pinned_rooms)
 
         if occupied:
-            if r_name in steve_pinned_rooms:
+            if r_name in resident_a_pinned_rooms:
                 occupant_type = "tracked_human"
-                occupant_label = "Steve"
-                detected_people = ["Steve"]
-            elif r_name == "Margot's Room" or "sensor.tab_s10_lite_ble_area" in bles:
+                occupant_label = "Resident A"
+                detected_people = ["Resident A"]
+            elif r_name == "Kids Room" or "sensor.resident_b_tablet_ble_area" in bles:
                 occupant_type = "untracked_human"
-                occupant_label = "Margot"
-                detected_people = ["Margot"]
+                occupant_label = "Resident B"
+                detected_people = ["Resident B"]
             elif guest_mode_enabled:
                 occupant_type = "untracked_human"
                 occupant_label = "Guest / Untracked Occupant"
                 detected_people = ["Guest / Untracked Occupant"]
-            elif steve_pinned_rooms:
+            elif resident_a_pinned_rooms:
                 occupant_type = "untracked_human"
-                occupant_label = "Margot / Untracked Occupant"
-                detected_people = ["Margot / Untracked Occupant"]
+                occupant_label = "Resident B / Secondary Occupant"
+                detected_people = ["Resident B / Secondary Occupant"]
             else:
                 occupant_type = "human"
                 occupant_label = "Occupant"
@@ -355,7 +355,7 @@ def evaluate_room_spatial_estimates(
         else:
             if pet_present:
                 occupant_type = "pet"
-                occupant_label = "Riley (Dog)"
+                occupant_label = "Household Pet (Dog)"
             else:
                 occupant_type = "none"
                 occupant_label = ""
@@ -374,7 +374,7 @@ def evaluate_room_spatial_estimates(
         if not occupied and pet_excl:
             explanation = (
                 f"Suppressed pet PIR trigger ({', '.join(pet_excl)}) \u2014 "
-                f"Frigate detected Riley ({', '.join(dog_sensors)}) with no person present."
+                f"Frigate detected Household Pet ({', '.join(dog_sensors)}) with no person present."
             )
         elif not occupied and room_shade_excl:
             explanation = (

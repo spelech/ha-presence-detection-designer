@@ -8,7 +8,7 @@ blueprint:
     suppression (`manual_off_suppressed`), and applies configurable hold delays for
     both activation and room vacation.
   domain: automation
-  author: Steven T. Pelech
+  author: Resident An T. Pelech
   input:
     presence_sensor:
       name: PDD Room Presence Binary Sensor

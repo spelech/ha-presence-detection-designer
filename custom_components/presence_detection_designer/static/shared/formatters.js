@@ -180,7 +180,7 @@ export function formatTransitionSte100(panel, tr, entityNameMap) {
   const whoRaw = String(tr.occupant_label || (tr.detected_people && tr.detected_people[0]) || "").trim();
   const who =
     String(tr.occupant_type || "") === "pet"
-      ? whoRaw || "Riley (Dog)"
+      ? whoRaw || "Household Pet (Dog)"
       : whoRaw || "Person";
   const fromRoom = tr.from_room ? String(tr.from_room).trim() : "";
   const toRoom = String(tr.to_room || tr.room || "").trim();

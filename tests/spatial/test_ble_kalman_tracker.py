@@ -169,11 +169,11 @@ def test_ekf_floor_hysteresis_resists_single_tick_vertical_bleed():
 
 
 def test_ekf_multi_occupant_gating_ignores_distant_person():
-    """Margot triggering upstairs or in Family Room must not pull Steve's Kitchen EKF track."""
+    """Resident B triggering upstairs or in Family Room must not pull Resident A's Kitchen EKF track."""
     fp = get_default_floorplan()
     mgr = HouseEKFManager()
 
-    # Steve is cleanly tracked in Kitchen on main floor via BLE proxies
+    # Resident A is cleanly tracked in Kitchen on main floor via BLE proxies
     kitchen_x, kitchen_y = 390.0, 180.0
     main_proxies = [p for p in fp["ble_proxies"] if p["floor"] == "main"]
     for t in range(1, 12):
@@ -187,9 +187,9 @@ def test_ekf_multi_occupant_gating_ignores_distant_person():
             )
             for p in main_proxies
         ]
-        # Simultaneously, Margot sits in Margot's Room (upstairs) and triggers a distant Family Room camera
+        # Simultaneously, Resident B sits in Kids Room (upstairs) and triggers a distant Family Room camera
         est = mgr.update_from_observations(
-            tracker_entity_id="sensor.steve_s_s25_ble_area",
+            tracker_entity_id="sensor.resident_a_phone_ble_area",
             ble_ranges=meas,
             floorplan=fp,
             now_ts=float(t),
@@ -254,7 +254,7 @@ def test_ekf_floor_stability_v2_no_area_hint_double_count_and_camera_hold():
     """With v2 enabled, area-floor bounce is not double-counted and incumbent camera holds floor."""
     fp = get_default_floorplan()
     mgr = HouseEKFManager(KalmanConfig(ekf_floor_stability_v2=True))
-    tid = "device_tracker.steve_s_s25"
+    tid = "device_tracker.resident_a_phone"
 
     # Establish track on main floor in Living Room (near x=210, y=410)
     main_ble = [BLERangeMeasurement("lr_spk", "main", 210.0, 410.0, 4.0)]
