@@ -171,14 +171,9 @@ set_house_occupant_count:
           max: 2
           mode: box
 
-update_slack_digest:
-  name: Update Slack Daily Presence Dashboard
-  description: Immediately update the main Slack daily presence card with current room occupancy, durations, drivers, and house headcount.
-  fields: {}
-
 reset_vacancy:
   name: Reset House Vacancy
-  description: Reset house occupant headcount to 0 (vacant) and optionally force-clear all occupied rooms, then refresh the Slack daily dashboard.
+  description: Reset house occupant headcount to 0 (vacant) and optionally force-clear all occupied rooms.
   fields:
     clear_rooms:
       name: Clear Occupied Rooms

@@ -14,3 +14,6 @@ build/
 .superpowers/
 tests/golden/optimization/results/
 
+
+# Stray mock dirs from tests
+MagicMock/

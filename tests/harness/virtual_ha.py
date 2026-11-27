@@ -16,7 +16,7 @@ from custom_components.presence_detection_designer.const import (
     DATA_STORE,
     DOMAIN,
 )
-from custom_components.presence_detection_designer.coordinator import RoomPresenceCoordinator
+from custom_components.presence_detection_designer.engine.coordinator import RoomPresenceCoordinator
 from custom_components.presence_detection_designer.sensor import OccupancyProbabilitySensor
 from custom_components.presence_detection_designer.store import PDDStore
 
@@ -371,7 +371,7 @@ class VirtualHAHarness:
 
         self.clock._now = target
         # Advance 1 Hz Coupled HMM ticks across elapsed virtual seconds
-        from custom_components.presence_detection_designer.coordinator_dispatch import (
+        from custom_components.presence_detection_designer.engine.coordinator_dispatch import (
             evaluate_coordinator_hmm,
             is_coupled_hmm_active,
         )

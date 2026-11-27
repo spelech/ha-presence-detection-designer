@@ -33,7 +33,7 @@ except Exception:  # noqa: BLE001
 from .const import DOMAIN
 
 if TYPE_CHECKING:
-    from .coordinator import RoomPresenceCoordinator
+    from .engine.coordinator import RoomPresenceCoordinator
 
 
 class PresenceDesignerEntityMixin:

@@ -13,19 +13,19 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-from custom_components.presence_detection_designer.ble_kalman_tracker import (
+from custom_components.presence_detection_designer.engine.sensor_reliability import (
+    ECOBEE_MOTION_ENTITIES,
+)
+from custom_components.presence_detection_designer.spatial.ble_kalman_tracker import (
     DEFAULT_PX_PER_FOOT,
     BLERangeMeasurement,
 )
-from custom_components.presence_detection_designer.sensor_reliability import (
-    ECOBEE_MOTION_ENTITIES,
-)
-from custom_components.presence_detection_designer.spatial_catalog import (
+from custom_components.presence_detection_designer.spatial.spatial_catalog import (
     CAMERA_WHOLE_FRAME_ENTITY,
     ROOM_DOG_OCCUPANCY_ENTITIES,
     ROOM_SHADE_ENTITIES,
 )
-from custom_components.presence_detection_designer.spatial_geometry import (
+from custom_components.presence_detection_designer.spatial.spatial_geometry import (
     extract_floor_wall_segments,
     line_segment_intersects_solid_wall,
     point_in_cone,
