@@ -48,6 +48,9 @@ class KalmanConfig:
     # min_lr=0.45 -> decays stale holds without overpowering another occupant's decisive camera
     ekf_max_lr: float = 9.75
     ekf_min_lr: float = 0.45
+    # Feature toggle: v2 floor scoring removes 2-proxy count bias, avoids double-counting
+    # Bermuda area floor when live per-proxy ranges exist, and allows incumbent-floor camera hold.
+    ekf_floor_stability_v2: bool = True
 
 
 def ekf_room_probability_to_likelihood(
@@ -250,8 +253,14 @@ class BLEKalmanTracker:
         ble_ranges: list[BLERangeMeasurement],
         *,
         floor_hints: dict[str, float] | None = None,
+        floor_stability_v2: bool | None = None,
     ) -> str:
         """Update discrete floor estimate using hysteretic multi-proxy + PIR/camera log-likelihood."""
+        use_v2 = (
+            self.cfg.ekf_floor_stability_v2
+            if floor_stability_v2 is None
+            else bool(floor_stability_v2)
+        )
         by_floor: dict[str, list[BLERangeMeasurement]] = {}
         for m in ble_ranges:
             if (
@@ -262,9 +271,18 @@ class BLEKalmanTracker:
 
         scores: dict[str, float] = {}
         for fl, ms in by_floor.items():
-            # Score floor by the inverse-distance evidence of its top-2 closest proxies
             ms_sorted = sorted(ms, key=lambda r: r.distance_ft)[:2]
-            ble_score = sum(1.0 / max(1.5, r.distance_ft) for r in ms_sorted) * 6.0
+            if use_v2:
+                # Score floor by its closest proxy plus a small secondary tiebreaker so a
+                # 2-proxy floor does not get a 2x count advantage over a 1-proxy floor.
+                best_inv = 1.0 / max(1.5, ms_sorted[0].distance_ft)
+                second_inv = (
+                    (1.0 / max(1.5, ms_sorted[1].distance_ft)) if len(ms_sorted) > 1 else 0.0
+                )
+                ble_score = (best_inv + 0.15 * second_inv) * 6.0
+            else:
+                # Legacy v1: unnormalized sum of top-2 closest proxies
+                ble_score = sum(1.0 / max(1.5, r.distance_ft) for r in ms_sorted) * 6.0
             scores[fl] = ble_score
 
         for fl, hint_w in (floor_hints or {}).items():
@@ -341,6 +359,7 @@ class BLEKalmanTracker:
         now_ts: float,
         *,
         floor_hints: dict[str, float] | None = None,
+        floor_stability_v2: bool | None = None,
     ) -> None:
         """Fuse multi-proxy BLE range measurements via sequential nonlinear EKF updates."""
         valid = [
@@ -349,7 +368,7 @@ class BLEKalmanTracker:
             if m.age_sec <= self.cfg.max_ble_age_sec
             and 0.0 <= m.distance_ft <= self.cfg.max_ble_range_ft
         ]
-        self.update_floor(valid, floor_hints=floor_hints)
+        self.update_floor(valid, floor_hints=floor_hints, floor_stability_v2=floor_stability_v2)
         on_floor = [m for m in valid if m.floor == self.floor]
         self.last_active_proxies = len(on_floor)
         self.last_rejected_outliers = 0
@@ -724,15 +743,16 @@ class HouseEKFManager:
         active_camera_hits: list[tuple[str, float, float]] | None = None,
         active_pir_hits: list[tuple[str, float, float]] | None = None,
         bermuda_area_floor: str | None = None,
+        ekf_floor_stability_v2: bool | None = None,
     ) -> KalmanEstimate:
         """Update one tracker with BLE ranges + Mahalanobis-gated camera/PIR observations."""
         ekf = self.get_tracker(tracker_entity_id)
         fp = floorplan if isinstance(floorplan, dict) else {}
-
-        # Floor hints: only use Bermuda's own calibrated floor or hits consistent with BLE
-        floor_hints: dict[str, float] = {}
-        if bermuda_area_floor:
-            floor_hints[bermuda_area_floor] = floor_hints.get(bermuda_area_floor, 0.0) + 1.5
+        use_v2 = (
+            self.cfg.ekf_floor_stability_v2
+            if ekf_floor_stability_v2 is None
+            else bool(ekf_floor_stability_v2)
+        )
 
         # If BLE has live proxies on at least one floor, do NOT inject unattributed other-floor hints
         live_ble_floors = {
@@ -740,13 +760,36 @@ class HouseEKFManager:
             for m in ble_ranges
             if m.age_sec <= self.cfg.max_ble_age_sec and m.distance_ft <= self.cfg.max_ble_range_ft
         }
+
+        floor_hints: dict[str, float] = {}
+        if bermuda_area_floor and (not use_v2 or not live_ble_floors):
+            # In v2, only use Bermuda's area-floor fallback when live per-proxy ranges are absent
+            # (prevents double-counting Bermuda on top of per-proxy BLE floor scores).
+            floor_hints[bermuda_area_floor] = floor_hints.get(bermuda_area_floor, 0.0) + 1.5
+
         if not live_ble_floors:
             for cfl, _cx, _cy in active_camera_hits or []:
                 floor_hints[cfl] = floor_hints.get(cfl, 0.0) + 3.0
             for pfl, _px, _py in active_pir_hits or []:
                 floor_hints[pfl] = floor_hints.get(pfl, 0.0) + 1.5
+        elif use_v2 and ekf.initialized:
+            # Incumbent-floor camera corroboration: if a camera on the current floor actively sees
+            # an occupant within association range of this track, reinforce holding the current floor
+            # (still blocks other-floor unattributed cameras from pulling this track).
+            scale = max(1e-6, self.cfg.px_per_foot)
+            for cfl, cx, cy in active_camera_hits or []:
+                if cfl == ekf.floor:
+                    dist_ft = math.hypot(cx - ekf.x[0], cy - ekf.x[1]) / scale
+                    if dist_ft <= self.cfg.assoc_max_dist_ft:
+                        floor_hints[cfl] = floor_hints.get(cfl, 0.0) + 2.5
+                        break
 
-        ekf.update_ble_ranges(ble_ranges, now_ts=now_ts, floor_hints=floor_hints)
+        ekf.update_ble_ranges(
+            ble_ranges,
+            now_ts=now_ts,
+            floor_hints=floor_hints,
+            floor_stability_v2=use_v2,
+        )
 
         # Fuse camera sub-zones first (tight sigma), gated so other occupants never pull this track
         fused_cam = False
@@ -814,6 +857,7 @@ def update_house_ekf_from_hass(
     *,
     ble_ranges_provider: Any = None,
     pir_spillover: dict[str, dict[str, float]] | None = None,
+    ekf_floor_stability_v2: bool | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Update all configured BLE EKF tracks from live Bermuda ranges + gated cameras/PIRs."""
     fp = floorplan if isinstance(floorplan, dict) else {}
@@ -937,6 +981,7 @@ def update_house_ekf_from_hass(
             active_camera_hits=cam_hits,
             active_pir_hits=pir_hits,
             bermuda_area_floor=area_floor,
+            ekf_floor_stability_v2=ekf_floor_stability_v2,
         )
 
     return ekf_manager.serialize_tracks(fp)

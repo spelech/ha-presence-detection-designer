@@ -44,6 +44,7 @@ CONF_NOTIFY_ON_CLEARED = "notify_on_cleared"
 CONF_NEGATIVE_SPACE_ENABLED = "negative_space_enabled"
 CONF_GUEST_MODE_ENABLED = "guest_mode_enabled"
 CONF_BLE_DECIDER_ENABLED = "ble_decider_enabled"
+CONF_EKF_FLOOR_STABILITY_V2 = "ekf_floor_stability_v2"
 CONF_PIR_VALIDATION_ENABLED = "pir_validation_enabled"
 CONF_PIR_CANDIDATE_WINDOW = "pir_candidate_window"
 
@@ -54,6 +55,7 @@ DEFAULT_NOTIFY_SLACK = True
 DEFAULT_NEGATIVE_SPACE_ENABLED = True
 DEFAULT_GUEST_MODE_ENABLED = False
 DEFAULT_BLE_DECIDER_ENABLED = False
+DEFAULT_EKF_FLOOR_STABILITY_V2 = True
 DEFAULT_PIR_VALIDATION_ENABLED = True
 DEFAULT_PIR_CANDIDATE_WINDOW = 10  # seconds to wait for PIR corroboration
 
