@@ -74,14 +74,38 @@ def _logit(p: float) -> float:
     return math.log(pc / (1.0 - pc))
 
 
-def _eval_condition(raw_state: str | None, op: str, target: str) -> bool:
+def _eval_condition(
+    raw_state: str | None,
+    op: str,
+    target: str,
+    entity_id: str = "",
+) -> bool:
     if raw_state is None:
         return False
+    raw_s = str(raw_state).strip()
+    raw_low = raw_s.lower()
+    if raw_low in ("unavailable", "unknown"):
+        return False
+    tgt_s = str(target).strip()
+    tgt_low = tgt_s.lower()
     if op == "equals":
-        return str(raw_state) == str(target)
+        # LG webOS / HDMI displays report "on" (never "playing") when displaying an HDMI source.
+        if entity_id.startswith("media_player.") and tgt_low == "playing":
+            return raw_low in ("playing", "on")
+        return raw_low == tgt_low
+    if op == "not_equals":
+        return raw_low != tgt_low
+    if op == "in":
+        candidates = [p.strip().lower() for p in tgt_s.split(",") if p.strip()]
+        return raw_low in candidates
     if op == "greater_than":
         try:
-            return float(raw_state) > float(target)
+            return float(raw_s) > float(tgt_s)
+        except (TypeError, ValueError):
+            return False
+    if op == "less_than":
+        try:
+            return float(raw_s) < float(tgt_s)
         except (TypeError, ValueError):
             return False
     return False
@@ -570,7 +594,7 @@ class HouseHMMEngine:
                 eid = str(cond.get("entity_id", ""))
                 op = str(cond.get("operator", "equals"))
                 target = str(cond.get("state", ""))
-                if _eval_condition(state_getter(eid), op, target):
+                if _eval_condition(state_getter(eid), op, target, entity_id=eid):
                     sust = True
                     active_drivers[r].append(f"sustain:{eid}")
                     break
