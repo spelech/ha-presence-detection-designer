@@ -29,6 +29,7 @@ from .const import DATA_STORE, DOMAIN, OccupancyState
 from .coordinator_dispatch import (
     _safe_state_getter,
     async_send_coordinator_test_notification,
+    attach_coordinator_timer_hooks,
     dispatch_presence_transition,
     evaluate_coordinator_bayesian,
     evaluate_coordinator_hmm,
@@ -130,49 +131,8 @@ class RoomPresenceCoordinator:
         dispatch_presence_transition(self)
 
     def _attach_ha_timer_hooks(self) -> None:
-        """Wire event-driven HA async_call_later timers into the RoomPresenceStateMachine."""
-        if not self.hass or not hasattr(self.hass, "loop"):
-            return
-        try:
-            from homeassistant.helpers.event import async_call_later
-
-            if type(async_call_later).__name__ == "MagicMock":
-                return
-
-            def _schedule(delay: float, cb: Callable[[], None]) -> Callable[[], None]:
-                @callback
-                def _timer_cb(_now: Any) -> None:
-                    cb()
-
-                return async_call_later(self.hass, delay, _timer_cb)
-
-            def _on_expired(expired_trigger: str) -> None:
-                if (
-                    expired_trigger == "countdown_expired"
-                    and self.state_machine.state == OccupancyState.OCCUPIED_VERIFYING
-                ):
-                    if self._is_guest_mode_active():
-                        self.state_machine.handle_llm_result(
-                            False, "Skipped LLM verification in Guest Mode"
-                        )
-                        self.async_update_listeners()
-                        return
-                    self.async_update_listeners()
-                    if hasattr(self.hass, "async_create_task"):
-                        self.hass.async_create_task(self.async_run_llm_verification())
-                    return
-                self.async_update_listeners()
-
-            def _on_pir_expired(_expired_trigger: str) -> None:
-                self.async_update_listeners()
-
-            self.state_machine._timer_scheduler = _schedule
-            self.state_machine._on_timer_expired = _on_expired
-            if self.pir_validator is not None:
-                self.pir_validator._timer_scheduler = _schedule
-                self.pir_validator._on_timer_expired = _on_pir_expired
-        except Exception:  # noqa: BLE001
-            pass
+        """Attach Home Assistant async timer callbacks to the state machine."""
+        attach_coordinator_timer_hooks(self)
 
     async def async_setup(self) -> None:
         """Start listening to entity state changes and schedule event-driven timers."""

@@ -11,6 +11,8 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
+from .const import DATA_STORE, DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
 EVENT_PRESENCE_TRANSITION = "presence_detection_designer_transition"
@@ -326,3 +328,46 @@ class NotificationDispatcher:
                 err,
             )
             return False
+
+
+async def async_send_coordinator_test_notification(
+    coord: Any,
+    service: str | None = None,
+    target: str | None = None,
+    verbosity: str | None = None,
+) -> bool:
+    """Send a test diagnostic notification via Home Assistant notify.* service."""
+    global_settings: dict[str, Any] = {}
+    if coord.hass and hasattr(coord.hass, "data") and isinstance(coord.hass.data, dict):
+        store = coord.hass.data.get(DOMAIN, {}).get(DATA_STORE)
+        if store is not None and hasattr(store, "global_settings"):
+            global_settings = dict(store.global_settings or {})
+
+    if service:
+        global_settings["notify_service"] = service
+    if target:
+        global_settings["notify_target"] = target
+    if verbosity:
+        global_settings["notify_verbosity"] = verbosity
+
+    attribution = TransitionAttribution(
+        room_id="studio_test",
+        room_name=f"Design Studio Test ({coord.room_name})",
+        from_state="clear",
+        to_state="occupied",
+        primary_driver="Test Trigger (Manual Studio Verification)",
+        driver_type="sensor",
+        confidence_pct=95.0,
+        threshold_pct=75.0,
+        active_sensors=["test_sensor.manual_ping"],
+        sustaining_conditions=[],
+        arrival_context="Manual Studio Test",
+        duration_occupied_str=None,
+    )
+    return await coord._notification_dispatcher.async_dispatch_notification(
+        coord.hass,
+        attribution,
+        global_settings,
+        {"notify_enabled": True, "notify_on_occupied": True},
+        force_test=True,
+    )

@@ -14,7 +14,11 @@ from .spatial_topology import (
     get_default_floorplan,
 )
 from .store import async_get_store
-from .view_serializers import HomeAssistantView, async_apply_and_persist_room_config
+from .view_serializers import (
+    HomeAssistantView,
+    async_apply_and_persist_room_config,
+    serialize_sensor_weights,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -306,3 +310,62 @@ class PDDNotificationTestView(HomeAssistantView):
                 "message": f"Test alert sent via {global_settings.get('notify_service') or '(default)'}",
             }
         )
+
+
+class PDDStateGraphView(HomeAssistantView):
+    """Return live transitions Mermaid diagram, active state, and audit feed per room."""
+
+    url = "/api/presence_detection_designer/state_graph"
+    name = "api:presence_detection_designer:state_graph"
+    requires_auth = True
+
+    async def get(self, request: Any) -> Any:
+        """Handle GET /api/presence_detection_designer/state_graph."""
+        hass = request.app["hass"]
+        entry_filter = None
+        if hasattr(request, "query") and request.query:
+            entry_filter = request.query.get("entry_id")
+
+        rooms: list[dict[str, Any]] = []
+        for eid, coord in hass.data.get(DOMAIN, {}).items():
+            if not isinstance(coord, RoomPresenceCoordinator):
+                continue
+            if entry_filter and eid != entry_filter:
+                continue
+            sm = coord.state_machine
+            pv = getattr(coord, "pir_validator", None)
+            sensor_weights = serialize_sensor_weights(coord.bayesian_observations)
+            rooms.append(
+                {
+                    "entry_id": coord.entry_id,
+                    "room_name": coord.room_name,
+                    "occupancy_state": str(sm.state),
+                    "is_present": sm.is_present,
+                    "is_cooling_down": sm.is_cooling_down,
+                    "cooling_remaining_sec": sm.cooling_remaining_sec,
+                    "state_reason": sm.state_reason,
+                    "verified_by": sm.verified_by,
+                    "override": sm.override,
+                    "mermaid_diagram": sm.get_mermaid_diagram(),
+                    "transition_history": sm.transition_history,
+                    "pir_validation_enabled": getattr(coord, "pir_validation_enabled", True),
+                    "pir_candidate_window": getattr(
+                        pv, "candidate_window_sec", getattr(coord, "pir_candidate_window", 15.0)
+                    ),
+                    "pir_validation_state": str(pv.state) if pv is not None else "disabled",
+                    "pir_corroboration_source": pv.last_corroboration_source
+                    if pv is not None
+                    else None,
+                    "pir_corroboration_detail": pv.last_corroboration_detail
+                    if pv is not None
+                    else None,
+                    "pir_candidate_remaining_sec": pv.candidate_remaining_sec
+                    if pv is not None
+                    else 0,
+                    "pir_mermaid_diagram": pv.get_mermaid_diagram() if pv is not None else "",
+                    "pir_transition_history": pv.transition_history if pv is not None else [],
+                    "sensor_weights": sensor_weights,
+                }
+            )
+        rooms.sort(key=lambda r: str(r.get("room_name", "")).lower())
+        return self.json({"rooms": rooms})

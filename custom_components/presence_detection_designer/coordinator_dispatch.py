@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
+
+from homeassistant.core import callback
 
 from .camera_guard import is_camera_verification_rejected
 from .condition_evaluator import is_state_stale
@@ -15,12 +18,12 @@ from .const import (
 )
 from .coordinator_helpers import (
     _safe_state_getter,
-    async_send_coordinator_test_notification,
     build_coordinator_evidence_snapshot,
     record_coordinator_timeline_snapshot,
     resolve_global_llm_defaults,
     sync_coordinator_evidence,
 )
+from .notifications import async_send_coordinator_test_notification
 from .sensor_reliability import (
     classify_sensor_reliability,
     is_camera_entity,
@@ -374,3 +377,49 @@ def process_coordinator_trigger_event(coord: Any, event: Any) -> None:
     if is_on_raw and coord.state_machine.is_present:
         coord._notify_connected_rooms_if_active()
     coord.async_update_listeners()
+
+
+def attach_coordinator_timer_hooks(coord: Any) -> None:
+    """Wire event-driven HA async_call_later timers into the RoomPresenceStateMachine."""
+    if not coord.hass or not hasattr(coord.hass, "loop"):
+        return
+    try:
+        from homeassistant.helpers.event import async_call_later
+
+        if type(async_call_later).__name__ == "MagicMock":
+            return
+
+        def _schedule(delay: float, cb: Callable[[], None]) -> Callable[[], None]:
+            @callback
+            def _timer_cb(_now: Any) -> None:
+                cb()
+
+            return async_call_later(coord.hass, delay, _timer_cb)
+
+        def _on_expired(expired_trigger: str) -> None:
+            if (
+                expired_trigger == "countdown_expired"
+                and coord.state_machine.state == OccupancyState.OCCUPIED_VERIFYING
+            ):
+                if coord._is_guest_mode_active():
+                    coord.state_machine.handle_llm_result(
+                        False, "Skipped LLM verification in Guest Mode"
+                    )
+                    coord.async_update_listeners()
+                    return
+                coord.async_update_listeners()
+                if hasattr(coord.hass, "async_create_task"):
+                    coord.hass.async_create_task(coord.async_run_llm_verification())
+                return
+            coord.async_update_listeners()
+
+        def _on_pir_expired(_expired_trigger: str) -> None:
+            coord.async_update_listeners()
+
+        coord.state_machine._timer_scheduler = _schedule
+        coord.state_machine._on_timer_expired = _on_expired
+        if coord.pir_validator is not None:
+            coord.pir_validator._timer_scheduler = _schedule
+            coord.pir_validator._on_timer_expired = _on_pir_expired
+    except Exception:  # noqa: BLE001
+        pass

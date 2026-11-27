@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_STALE_COUNT_TIMEOUT,
     DOMAIN,
 )
+from .perimeter_reconciliation import reconcile_tracker_headcount
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -458,86 +459,9 @@ class HousePerimeterTracker:
             target = "guest"
         self.set_house_mode(target, persist=persist, notify_digest=notify_digest)
 
-    def reconcile_headcount(
-        self,
-        now_ts: float | None = None,
-        occupied_room_names: list[str] | None = None,
-        force: bool = False,
-    ) -> bool:
-        """Reconcile house occupancy mode on missed exits or pet presence updates."""
-        from .perimeter_helpers import active_ble_resident_count, has_active_pet_presence
-
-        now = now_ts if now_ts is not None else time.time()
-        self.check_pending_exit_corroborations(now_ts=now)
-        if not force and (now - self._last_reconcile_ts) < 60.0:
-            return False
-        self._last_reconcile_ts = now
-
-        changed = False
-        old_mode, old_count = self.state.mode, self.state.count
-        if occupied_room_names is None:
-            from .coordinator_helpers import get_all_room_coordinators
-
-            occupied_room_names = [
-                c.room_name
-                for c in get_all_room_coordinators(self.hass)
-                if getattr(c, "state_machine", None) and c.state_machine.is_present
-            ]
-
-        ble_active = active_ble_resident_count(self)
-        if self.state.count > 0 and not occupied_room_names and ble_active == 0:
-            recent_ambiguous_exit = (
-                self.state.mode == "occupied"
-                and not self._is_guest_mode_enabled()
-                and self.state.last_event_type == "ambiguous"
-                and self.state.last_event_ts > 0.0
-                and 0.0 <= (now - self.state.last_event_ts) <= 600.0
-            )
-            effective_timeout = (
-                min(self._stale_count_timeout(), 60.0)
-                if recent_ambiguous_exit
-                else self._stale_count_timeout()
-            )
-            if self._all_clear_since is None:
-                self._all_clear_since = now
-            elif now - self._all_clear_since >= effective_timeout:
-                _LOGGER.info(
-                    "House Perimeter: all rooms clear for %.0fs; resetting mode %s -> vacant/pet_only",
-                    now - self._all_clear_since,
-                    self.state.mode,
-                )
-                self.state.count = 0
-                if self.state.mode == "pet_only":
-                    self.state.mode = "vacant"
-                changed = True
-        else:
-            self._all_clear_since = None
-
-        if self.state.count <= 0:
-            self.state.count = 0
-            if self.state.mode != "pet_only" and has_active_pet_presence(self):
-                self.state.mode = "pet_only"
-                changed = True
-            elif self.state.mode not in ("vacant", "pet_only"):
-                self.state.mode = "vacant"
-                changed = True
-        elif self._is_guest_mode_enabled() or self.state.mode == "guest":
-            self.state.mode = "guest"
-            self.state.count = 2
-        else:
-            self.state.mode = "occupied"
-            self.state.count = 1
-
-        if self.state.mode != old_mode or self.state.count != old_count:
-            changed = True
-
-        if changed:
-            self.enforce_conservation_law()
-            self._notify_listeners()
-            from .perimeter_helpers import persist_and_notify_headcount
-
-            persist_and_notify_headcount(self, persist=True, force_digest=False)
-        return changed
+    def reconcile_headcount(self, **kwargs: Any) -> bool:
+        """Reconcile stale headcount against active rooms and BLE trackers."""
+        return reconcile_tracker_headcount(self, **kwargs)
 
     def enforce_conservation_law(self, newly_occupied_room: str | None = None) -> list[str]:
         """Enforce conservation law: total occupied rooms must not exceed house occupant count."""

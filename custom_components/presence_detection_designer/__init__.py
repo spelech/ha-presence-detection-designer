@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.helpers import config_validation as cv
 
 from .bayesian_engine import parse_yaml_or_dict_to_config
+from .config_translator import _collect_available_entities_for_room
 from .const import (
     CONF_LLM_AGENT_ID,
     CONF_LLM_API_KEY,
@@ -132,47 +133,6 @@ def _register_service(
         except (ImportError, TypeError):
             pass
     hass.services.async_register(DOMAIN, service, handler)
-
-
-def _collect_available_entities_for_room(
-    hass: Any, room_name: str | None = None
-) -> list[dict[str, str]]:
-    """Collect candidate entities from HA state machine matching a room name."""
-    if not hass or not hasattr(hass, "states") or not hasattr(hass.states, "async_all"):
-        return []
-    room_tokens = (
-        [t for t in room_name.lower().replace("'", "").split() if len(t) > 2] if room_name else []
-    )
-    results: list[dict[str, str]] = []
-    try:
-        for state_obj in hass.states.async_all():
-            eid = getattr(state_obj, "entity_id", "")
-            if not eid.startswith(
-                (
-                    "binary_sensor.",
-                    "sensor.",
-                    "media_player.",
-                    "camera.",
-                    "light.",
-                    "fan.",
-                    "switch.",
-                )
-            ):
-                continue
-            attrs = getattr(state_obj, "attributes", {}) or {}
-            fname = str(attrs.get("friendly_name", eid))
-            haystack = f"{eid} {fname}".lower()
-            if not room_tokens or all(tok in haystack for tok in room_tokens) or "ble_area" in eid:
-                results.append(
-                    {
-                        "entity_id": eid,
-                        "name": fname,
-                        "state": str(getattr(state_obj, "state", "")),
-                    }
-                )
-    except Exception:  # noqa: BLE001
-        return []
-    return results[:80]
 
 
 def _get_default_llm_verifier(hass: Any) -> LLMVerifier:
