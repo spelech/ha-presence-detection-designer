@@ -332,6 +332,10 @@ async def async_apply_global_settings_side_effects(
             tracker.set_house_mode("occupied", persist=False, notify_digest=False)
     if any(k in body for k in ("perimeter_doors", "exit_corroborators")):
         await tracker.async_setup()
+    if "designer_ui_enabled" in body:
+        from . import _async_ensure_panel_and_views
+
+        await _async_ensure_panel_and_views(hass)
 
 
 def active_ble_resident_count(tracker: Any) -> int:

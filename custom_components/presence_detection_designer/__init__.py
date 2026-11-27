@@ -80,7 +80,20 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Skipping HTTP view registration: %s", err)
 
-    if domain_data.get(PANEL_REGISTERED) != version:
+    store = domain_data.get("_store")
+    gs = getattr(store, "global_settings", None) if store is not None else None
+    designer_enabled = True if not isinstance(gs, dict) else bool(gs.get("designer_ui_enabled", True))
+
+    if not designer_enabled:
+        if domain_data.get(PANEL_REGISTERED):
+            try:
+                from homeassistant.components.frontend import async_remove_panel
+
+                async_remove_panel(hass, DOMAIN, warn_if_unknown=False)
+                domain_data[PANEL_REGISTERED] = False
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Skipping sidebar panel removal: %s", err)
+    elif domain_data.get(PANEL_REGISTERED) != version:
         try:
             from homeassistant.components.frontend import (
                 async_register_built_in_panel,

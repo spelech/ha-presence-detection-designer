@@ -4102,7 +4102,7 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   { id: "interface", icon: "🎛️", label: "Interface & Advanced" },
                   { id: "detection", icon: "📡", label: "Detection & Inference" },
                   { id: "ai", icon: "🤖", label: "AI & Vision" },
-                  { id: "notifications", icon: "🔔", label: "Slack Alerts" },
+                  { id: "notifications", icon: "🔔", label: "Notifications" },
                 ]
                   .map(
                     (tab) => `
@@ -4252,74 +4252,40 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   </div>
                 </div>
 
-                <!-- Pane 4: Notifications (Slack) -->
+                <!-- Pane 4: Notifications (Home Assistant notify.*) -->
                 <div class="settings-pane ${this._settingsTab === "notifications" ? "active" : ""}" data-settings-pane="notifications">
                   <div class="settings-item" style="display:flex;flex-direction:column;gap:10px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;">
-                      <span class="setting-label" style="font-weight:600;">Slack Presence Notifications</span>
-                      <input type="checkbox" id="gl-notify-enabled" data-tip="Master toggle for all Slack presence transition alerts." data-tip-align="right" title="Master toggle for Slack presence notifications" ${
-                        this._globalDraft?.notifications_enabled !== false ? "checked" : ""
+                      <span class="setting-label" style="font-weight:600;">Presence Notifications</span>
+                      <input type="checkbox" id="gl-notify-enabled" data-tip="Master toggle for Home Assistant presence transition alerts." data-tip-align="right" title="Master toggle for presence notifications" ${
+                        this._globalDraft?.notifications_enabled ? "checked" : ""
                       } />
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                       <div>
-                        <div class="setting-label" style="margin-bottom:4px;">Notify Service</div>
-                        <input type="text" class="input" id="gl-slack-service" value="${this._escape(
-                          this._globalDraft?.slack_notify_service || "notify.scdbots"
-                        )}" placeholder="notify.scdbots" />
+                        <div class="setting-label" style="margin-bottom:4px;">HA Notify Service</div>
+                        <input type="text" class="input" id="gl-notify-service" value="${this._escape(
+                          this._globalDraft?.notify_service || ""
+                        )}" placeholder="notify.mobile_app_phone" />
                       </div>
                       <div>
-                        <div class="setting-label" style="margin-bottom:4px;">Target Channel</div>
-                        <input type="text" class="input" id="gl-slack-channel" value="${this._escape(
-                          this._globalDraft?.slack_channel || "#presence-alerts"
-                        )}" placeholder="#presence-alerts" />
+                        <div class="setting-label" style="margin-bottom:4px;">Target (Optional)</div>
+                        <input type="text" class="input" id="gl-notify-target" value="${this._escape(
+                          this._globalDraft?.notify_target || ""
+                        )}" placeholder="optional target" />
                       </div>
                     </div>
                     <div>
                       <div class="setting-label" style="margin-bottom:4px;">Alert Verbosity</div>
-                      <select class="select" id="gl-slack-verbosity">
-                        <option value="minimal" ${this._globalDraft?.slack_verbosity === "minimal" ? "selected" : ""}>Minimal (1-line badge: 🟢 Room occupied 95% via motion)</option>
-                        <option value="compact" ${(!this._globalDraft?.slack_verbosity || this._globalDraft?.slack_verbosity === "compact") ? "selected" : ""}>Compact (2-line summary: State + Driver / Localization)</option>
-                        <option value="full" ${this._globalDraft?.slack_verbosity === "full" ? "selected" : ""}>Full Diagnostic (Detailed 8-point card)</option>
+                      <select class="select" id="gl-notify-verbosity">
+                        <option value="minimal" ${this._globalDraft?.notify_verbosity === "minimal" ? "selected" : ""}>Minimal (1-line summary)</option>
+                        <option value="compact" ${(!this._globalDraft?.notify_verbosity || this._globalDraft?.notify_verbosity === "compact") ? "selected" : ""}>Compact (2-line summary: State + Driver)</option>
+                        <option value="full" ${this._globalDraft?.notify_verbosity === "full" ? "selected" : ""}>Full Diagnostic</option>
                       </select>
                     </div>
-                    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
-                      <input type="checkbox" id="gl-slack-daily-thread" ${this._globalDraft?.slack_daily_thread !== false ? "checked" : ""} style="margin-top:2px;" />
-                      <div>
-                        <strong>Daily Presence Thread</strong>
-                        <div style="font-size:11px;color:var(--ha-muted);margin-top:2px;">Maintain one live status dashboard per day in Slack, threading all room transitions underneath it.</div>
-                      </div>
-                    </label>
-                    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;">
-                      <input type="checkbox" id="gl-include-camera-snapshot" ${this._globalDraft?.include_camera_snapshot ? "checked" : ""} style="margin-top:2px;" />
-                      <div>
-                        <strong>Detection Capture Review (Camera Snapshots)</strong>
-                        <div style="font-size:11px;color:var(--ha-muted);margin-top:2px;">Support attaching Frigate detection captures to cards for review of light vs person/pet (defaults to OFF).</div>
-                      </div>
-                    </label>
-                    <div style="border-top:1px solid var(--ha-border);padding-top:10px;display:flex;flex-direction:column;gap:8px;">
-                      <div>
-                        <div class="setting-label" style="margin-bottom:4px;">Slack Interactivity Webhook URL</div>
-                        <div style="display:flex;gap:6px;align-items:center;">
-                          <input type="text" class="input" id="gl-slack-webhook-url" readonly value="${this._escape(
-                            this._globalDraft?.slack_webhook_id
-                              ? `${window.location.origin}/api/webhook/${this._globalDraft.slack_webhook_id}`
-                              : "Auto-generated on HA startup"
-                          )}" style="font-family:monospace;font-size:11px;flex:1;" />
-                          <button class="btn" id="btn-copy-slack-webhook" style="font-size:11px;white-space:nowrap;">📋 Copy</button>
-                        </div>
-                        <div style="font-size:11px;color:var(--ha-muted);margin-top:3px;">One unified URL for <strong>api.slack.com/apps</strong>: paste into <strong>Interactivity &amp; Shortcuts</strong> (buttons + Control Modal), <strong>Slash Commands</strong> (<code>/presence</code>), and <strong>Event Subscriptions</strong> (<code>app_home_opened</code> for live App Home).</div>
-                      </div>
-                      <div>
-                        <div class="setting-label" style="margin-bottom:4px;">Slack Signing Secret <span style="font-weight:400;color:var(--ha-muted);">(Optional HMAC verification)</span></div>
-                        <input type="password" class="input" id="gl-slack-signing-secret" value="${this._escape(
-                          this._globalDraft?.slack_signing_secret || ""
-                        )}" placeholder="Leave blank or paste Slack App Signing Secret" />
-                      </div>
-                    </div>
                     <div style="display:flex;justify-content:flex-end;">
-                      <button class="btn" id="btn-test-slack-alert" style="font-size:12px;">
-                        🔔 Send Test Alert to Slack
+                      <button class="btn" id="btn-test-notify-alert" style="font-size:12px;">
+                        🔔 Send Test Notification
                       </button>
                     </div>
                   </div>
@@ -5004,13 +4970,13 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           </div>
         </div>
 
-        <!-- Card 3: Slack Presence Notifications -->
+        <!-- Card 3: Presence Notifications -->
         <div class="ha-card">
           <div class="card-head">
             <div>
-              <h3 class="card-title">Slack Presence Notifications</h3>
+              <h3 class="card-title">Presence Notifications</h3>
               <div class="card-desc">
-                Send diagnostic alerts to <code>#presence-alerts</code> when presence transitions in this room.
+                Send Home Assistant notifications when presence transitions in this room.
               </div>
             </div>
           </div>
@@ -5018,18 +4984,18 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
           <div class="list-divider">
             <div class="setting-row">
               <div>
-                <div class="setting-label">Enable Slack alerts for this room</div>
-                <div class="setting-help">Send real-time cards detailing what sensor or rule caused this room to occupy or clear.</div>
+                <div class="setting-label">Enable alerts for this room</div>
+                <div class="setting-help">Send real-time notifications detailing what sensor or rule caused this room to occupy or clear.</div>
               </div>
               <div>
-                <input type="checkbox" id="cfg-notify-slack" data-tip="Send Slack alerts when this room transitions between occupied and vacant." data-tip-align="right" title="Send Slack alerts for this room" ${cfg.notify_slack ? "checked" : ""} style="width:16px;height:16px;" />
+                <input type="checkbox" id="cfg-notify-enabled" data-tip="Send alerts when this room transitions between occupied and vacant." data-tip-align="right" title="Send alerts for this room" ${cfg.notify_enabled ? "checked" : ""} style="width:16px;height:16px;" />
               </div>
             </div>
 
-            <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
+            <div class="setting-row" style="opacity:${cfg.notify_enabled ? "1" : "0.5"};pointer-events:${cfg.notify_enabled ? "auto" : "none"};">
               <div>
                 <div class="setting-label">Transition Triggers</div>
-                <div class="setting-help">Choose which presence transitions trigger a Slack notification.</div>
+                <div class="setting-help">Choose which presence transitions trigger a notification.</div>
               </div>
               <div style="display:flex;gap:18px;">
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
@@ -5040,16 +5006,6 @@ class PresenceDetectionDesignerPanel extends HTMLElement {
                   <input type="checkbox" id="cfg-notify-on-cleared" ${cfg.notify_on_cleared !== false ? "checked" : ""} />
                   Alert on Cleared
                 </label>
-              </div>
-            </div>
-
-            <div class="setting-row" style="opacity:${cfg.notify_slack ? "1" : "0.5"};pointer-events:${cfg.notify_slack ? "auto" : "none"};">
-              <div>
-                <div class="setting-label">Attach Camera Snapshot for Detection Review</div>
-                <div class="setting-help">Attach Frigate detection capture to alert card to audit light vs human/pet (defaults to OFF).</div>
-              </div>
-              <div>
-                <input type="checkbox" id="cfg-include-camera-snapshot" data-tip="Attach the triggering camera snapshot to Slack cards to review false positives." data-tip-align="right" title="Attach camera snapshot to Slack cards" ${cfg.include_camera_snapshot ? "checked" : ""} style="width:16px;height:16px;" />
               </div>
             </div>
           </div>
@@ -10137,12 +10093,9 @@ action:
           .map((s) => s.trim())
           .filter(Boolean),
         notifications_enabled: Boolean(root.querySelector("#gl-notify-enabled")?.checked),
-        slack_notify_service: root.querySelector("#gl-slack-service")?.value || "notify.scdbots",
-        slack_channel: root.querySelector("#gl-slack-channel")?.value || "#presence-alerts",
-        slack_verbosity: root.querySelector("#gl-slack-verbosity")?.value || "compact",
-        slack_daily_thread: Boolean(root.querySelector("#gl-slack-daily-thread")?.checked !== false),
-        include_camera_snapshot: Boolean(root.querySelector("#gl-include-camera-snapshot")?.checked),
-        slack_signing_secret: root.querySelector("#gl-slack-signing-secret")?.value ?? this._globalDraft?.slack_signing_secret ?? "",
+        notify_service: root.querySelector("#gl-notify-service")?.value || "",
+        notify_target: root.querySelector("#gl-notify-target")?.value || "",
+        notify_verbosity: root.querySelector("#gl-notify-verbosity")?.value || "compact",
         negative_space_enabled: Boolean(root.querySelector("#gl-neg-space-enabled")?.checked),
         guest_mode_enabled: Boolean(root.querySelector("#gl-guest-mode-enabled")?.checked),
         ble_decider_enabled: Boolean(root.querySelector("#gl-ble-decider-enabled")?.checked),
@@ -10156,32 +10109,19 @@ action:
       this.saveGlobalSettings();
     });
 
-    root.querySelector("#btn-copy-slack-webhook")?.addEventListener("click", async () => {
-      const urlVal = root.querySelector("#gl-slack-webhook-url")?.value || "";
-      if (!urlVal.startsWith("http")) return;
-      try {
-        await navigator.clipboard.writeText(urlVal);
-        this.showToast("Copied Slack Interactivity URL to clipboard.", "success");
-      } catch (_err) {
-        this.showToast(urlVal, "info");
-      }
-    });
-
-    root.querySelector("#btn-test-slack-alert")?.addEventListener("click", async () => {
-      const btn = root.querySelector("#btn-test-slack-alert");
+    root.querySelector("#btn-test-notify-alert")?.addEventListener("click", async () => {
+      const btn = root.querySelector("#btn-test-notify-alert");
       if (btn) btn.disabled = true;
       try {
-        const service = root.querySelector("#gl-slack-service")?.value || "notify.scdbots";
-        const channel = root.querySelector("#gl-slack-channel")?.value || "#presence-alerts";
-        const verbosity = root.querySelector("#gl-slack-verbosity")?.value || "compact";
-        const dailyThread = Boolean(root.querySelector("#gl-slack-daily-thread")?.checked !== false);
+        const service = root.querySelector("#gl-notify-service")?.value || "";
+        const target = root.querySelector("#gl-notify-target")?.value || "";
+        const verbosity = root.querySelector("#gl-notify-verbosity")?.value || "compact";
         const res = await this._apiCall("POST", "/api/presence_detection_designer/notifications/test", {
-          slack_notify_service: service,
-          slack_channel: channel,
-          slack_verbosity: verbosity,
-          slack_daily_thread: dailyThread,
+          notify_service: service,
+          notify_target: target,
+          notify_verbosity: verbosity,
         });
-        this.showToast(res?.message || "Test alert dispatched to Slack!", "success");
+        this.showToast(res?.message || "Test notification dispatched!", "success");
       } catch (err) {
         this.showToast("Failed to send test alert: " + (err.message || err), "error");
       } finally {
