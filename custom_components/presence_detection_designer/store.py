@@ -41,6 +41,7 @@ from .const import (
 )
 from .engine.hmm_engine import DEFAULT_HMM_PARAMS, HouseHMMEngine, HouseTopologyModel
 from .spatial.ble_kalman_tracker import HouseEKFManager
+from .spatial.ble_scanner_hub import NativeBLEScannerHub
 from .spatial.spatial_topology import get_default_floorplan
 from .store_defaults import (
     DEFAULT_GLOBAL_SETTINGS,
@@ -68,6 +69,7 @@ class PDDStore:
         self._data: dict[str, Any] = _default_store_data()
         self._loaded: bool = False
         self.ekf_manager: HouseEKFManager = HouseEKFManager()
+        self.ble_hub: NativeBLEScannerHub = NativeBLEScannerHub()
         self.hmm_engine: HouseHMMEngine | None = None
         self._hmm_sig: Any = None
         self._ble_ranges_provider: Any = None
