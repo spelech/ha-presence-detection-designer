@@ -195,3 +195,146 @@ def test_native_ble_hub_auto_discovers_private_ble_and_feeds_ekf(monkeypatch):
     assert "private_ble.pble_1" in tracks
     assert tracks["private_ble.pble_1"]["floor"] == "upstairs"
     assert tracks["private_ble.pble_1"]["active_proxy_count"] == 1
+
+
+def test_legacy_bermuda_ble_tracker_migrates_seamlessly_to_private_ble_device(monkeypatch):
+    """Existing `.storage` ble_trackers=['sensor.steve_s_s25_ble_area'] resolves via friendly name."""
+    import base64
+
+    irk_bytes = bytes.fromhex("00112233445566778899aabbccddeeff")
+    irk_b64 = base64.b64encode(irk_bytes).decode("ascii")
+    rpa_phone = "52:aa:bb:cc:dd:ee"
+
+    fake_bdt = SimpleNamespace(
+        get_cipher_for_irk=lambda b: f"cipher:{b.hex()}",
+        resolve_private_address=lambda cipher, addr: (
+            cipher.endswith("00112233445566778899aabbccddeeff") and addr == rpa_phone
+        ),
+        monotonic_time_coarse=lambda: 300.0,
+    )
+    monkeypatch.setitem(sys.modules, "bluetooth_data_tools", fake_bdt)
+
+    # Simulate exact live HA setup: random MAC entry title, base64 IRK, friendly_name in state
+    pble_phone = SimpleNamespace(
+        entry_id="e_phone",
+        title="78:a6:ad:3a:a5:b4",
+        data={"irk": irk_b64},
+        disabled_by=None,
+    )
+    pble_tablet = SimpleNamespace(
+        entry_id="e_tablet",
+        title="49:e0:74:56:25:8d",
+        data={"irk": "ffeeddccbbaa99887766554433221100"},
+        disabled_by=None,
+    )
+    ent_phone = SimpleNamespace(
+        entity_id="device_tracker.private_ble_device_cde674",
+        device_id="dev_phone",
+        unique_id="00112233445566778899aabbccddeeff_device_tracker",
+    )
+    ent_tablet = SimpleNamespace(
+        entity_id="device_tracker.private_ble_device_6d94ad",
+        device_id="dev_tablet",
+        unique_id="ffeeddccbbaa99887766554433221100_device_tracker",
+    )
+    fake_er = SimpleNamespace(
+        async_get=lambda _h: "er",
+        async_entries_for_config_entry=lambda _er, eid: (
+            [ent_phone] if eid == "e_phone" else [ent_tablet]
+        ),
+    )
+    fake_dr = SimpleNamespace(
+        CONNECTION_BLUETOOTH="bluetooth",
+        CONNECTION_NETWORK_MAC="mac",
+        async_get=lambda _h: SimpleNamespace(
+            async_get=lambda did: (
+                SimpleNamespace(name_by_user="Steve's S25+ (BLE)", name="Private BLE")
+                if did == "dev_phone"
+                else SimpleNamespace(name_by_user="Tab S10 Lite (BLE)", name="Private BLE")
+            ),
+            async_get_device=lambda connections=None: (
+                SimpleNamespace(area_id="area_office")
+                if connections and ("bluetooth", "AA:BB:CC:DD:EE:FF") in connections
+                else None
+            ),
+        ),
+    )
+    fake_ar = SimpleNamespace(
+        async_get=lambda _h: SimpleNamespace(
+            async_get_area=lambda aid: (
+                SimpleNamespace(name="Office") if aid == "area_office" else None
+            )
+        )
+    )
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.entity_registry", fake_er)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.device_registry", fake_dr)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.area_registry", fake_ar)
+    if "homeassistant.helpers" in sys.modules:
+        monkeypatch.setattr(
+            sys.modules["homeassistant.helpers"], "entity_registry", fake_er, raising=False
+        )
+        monkeypatch.setattr(
+            sys.modules["homeassistant.helpers"], "device_registry", fake_dr, raising=False
+        )
+        monkeypatch.setattr(
+            sys.modules["homeassistant.helpers"], "area_registry", fake_ar, raising=False
+        )
+
+    # Scanner has NO .area_name (real BaseHaScanner!) — must match via Device+Area Registry!
+    scanner = SimpleNamespace(
+        source="AA:BB:CC:DD:EE:FF",
+        name="esp32_proxy_generic",
+        discovered_devices_and_advertisement_data={
+            rpa_phone: (
+                SimpleNamespace(address=rpa_phone),
+                SimpleNamespace(rssi=-58, tx_power=None, manufacturer_data={}),
+            )
+        },
+        discovered_device_timestamps={rpa_phone: 299.0},
+    )
+    fake_bt_api = SimpleNamespace(
+        _get_manager=lambda _h: SimpleNamespace(async_current_scanners=lambda: [scanner])
+    )
+    monkeypatch.setitem(sys.modules, "homeassistant.components.bluetooth.api", fake_bt_api)
+
+    hass = MagicMock()
+    hass.config_entries.async_entries.side_effect = lambda domain: (
+        [pble_phone, pble_tablet] if domain == "private_ble_device" else []
+    )
+    hass.states.get.side_effect = lambda eid: (
+        SimpleNamespace(
+            state="home",
+            attributes={"friendly_name": "Steve's S25+ (BLE)", "current_address": rpa_phone},
+        )
+        if eid == "device_tracker.private_ble_device_cde674"
+        else (
+            SimpleNamespace(
+                state="home",
+                attributes={
+                    "friendly_name": "Tab S10 Lite (BLE)",
+                    "current_address": "52:99:99:99:99:99",
+                },
+            )
+            if eid == "device_tracker.private_ble_device_6d94ad"
+            else None
+        )
+    )
+
+    fp = get_default_floorplan()
+    hub = NativeBLEScannerHub()
+    mgr = HouseEKFManager()
+
+    # Legacy Bermuda ble_trackers config migrates cleanly to Steve's phone only (not Tab S10 Lite)!
+    tracks = update_house_ekf_from_hass(
+        mgr,
+        hass,
+        fp,
+        None,
+        now_ts=1000.0,
+        tracker_entities=["sensor.steve_s_s25_ble_area"],
+        ble_hub=hub,
+    )
+    assert "device_tracker.private_ble_device_cde674" in tracks
+    assert "device_tracker.private_ble_device_6d94ad" not in tracks
+    assert tracks["device_tracker.private_ble_device_cde674"]["floor"] == "upstairs"
+    assert tracks["device_tracker.private_ble_device_cde674"]["active_proxy_count"] == 1

@@ -84,18 +84,60 @@ def _parse_manual_tracker_spec(resolver: BLEIrkResolver, spec: str) -> str | Non
 
 
 def _get_ha_scanners(hass: Any) -> list[Any]:
-    """Return active HA Bluetooth scanners using HA's public bluetooth API."""
+    """Return active HA Bluetooth scanners from HA's Bluetooth manager."""
     if hass is None:
         return []
     try:
+        from homeassistant.components.bluetooth.api import _get_manager
+
+        mgr = _get_manager(hass)
+        if mgr is not None and hasattr(mgr, "async_current_scanners"):
+            scanners = mgr.async_current_scanners()
+            if scanners is not None:
+                return list(scanners)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         from homeassistant.components import bluetooth
 
-        scanners = bluetooth.async_current_scanners(hass)
-        if scanners is not None:
-            return list(scanners)
+        if hasattr(bluetooth, "async_current_scanners"):
+            scanners = bluetooth.async_current_scanners(hass)
+            if scanners is not None:
+                return list(scanners)
     except Exception:  # noqa: BLE001
         pass
     return []
+
+
+def _resolve_scanner_area_name(hass: Any, scanner: Any) -> str:
+    """Resolve scanner's Home Assistant area name via Device + Area registries."""
+    direct = getattr(scanner, "area_name", None)
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    if hass is None:
+        return ""
+    src = str(getattr(scanner, "source", "") or "").strip()
+    if not src:
+        return ""
+    try:
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+
+        dev_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
+        if dev_reg is None or area_reg is None:
+            return ""
+        dev = dev_reg.async_get_device(connections={(dr.CONNECTION_BLUETOOTH, src.upper())})
+        if dev is None:
+            dev = dev_reg.async_get_device(connections={(dr.CONNECTION_NETWORK_MAC, src.lower())})
+        area_id = getattr(dev, "area_id", None) if dev is not None else None
+        if area_id:
+            area = area_reg.async_get_area(area_id)
+            if area is not None and getattr(area, "name", None):
+                return str(area.name)
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def _index_floorplan_proxies(
@@ -130,6 +172,7 @@ def _index_floorplan_proxies(
 
 
 def _match_scanner_to_proxy(
+    hass: Any,
     scanner: Any,
     by_source: dict[str, dict[str, Any]],
     by_key: dict[str, dict[str, Any]],
@@ -153,7 +196,7 @@ def _match_scanner_to_proxy(
             if key in s_norm or s_norm in key:
                 return proxy
 
-    s_area = _norm_token(getattr(scanner, "area_name", "") or "")
+    s_area = _norm_token(_resolve_scanner_area_name(hass, scanner))
     if s_area:
         cands = by_room.get(s_area) or []
         if len(cands) == 1:
@@ -184,16 +227,25 @@ class NativeBLEScannerHub:
             return list(dict.fromkeys(auto_ids or list(self.resolver.registered_tracker_ids)))
 
         active: list[str] = []
+        matched_any = False
         for spec in raw_specs:
             manual_tid = _parse_manual_tracker_spec(self.resolver, spec)
             if manual_tid is not None:
+                matched_any = True
                 if manual_tid not in active:
                     active.append(manual_tid)
                 continue
             aliased = self.resolver.resolve_alias(spec)
-            tid = aliased or spec
-            if tid not in active:
-                active.append(tid)
+            if aliased is not None:
+                matched_any = True
+                if aliased not in active:
+                    active.append(aliased)
+            elif spec not in active:
+                active.append(spec)
+        if not matched_any and auto_ids:
+            # Graceful migration: stale legacy entity IDs (e.g. removed sensor.*_ble_area)
+            # fall back to auto-discovered private_ble_device entries rather than tracking nothing.
+            return list(dict.fromkeys(auto_ids))
         return active
 
     def collect_proxy_ranges(
@@ -231,7 +283,7 @@ class NativeBLEScannerHub:
         seen_per_tracker: dict[str, set[str]] = {t: set() for t in active_trackers}
 
         for scanner in scanners:
-            proxy = _match_scanner_to_proxy(scanner, by_source, by_key, by_room)
+            proxy = _match_scanner_to_proxy(hass, scanner, by_source, by_key, by_room)
             if proxy is None:
                 continue
             pid = str(proxy.get("id") or _norm_token(getattr(scanner, "name", "")))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 import time
@@ -55,13 +56,37 @@ def is_resolvable_private_address(address: str) -> bool:
     return (first_byte & 0xC0) == 0x40
 
 
+def _normalize_alias_token(raw: str) -> str:
+    """Normalize an entity ID or friendly name for cross-source tracker matching."""
+    low = str(raw or "").strip().lower()
+    if "." in low:
+        prefix, rest = low.split(".", 1)
+        if prefix in ("sensor", "device_tracker", "private_ble"):
+            low = rest
+    low = re.sub(r"\(ble\)", "", low)
+    norm = re.sub(r"[^a-z0-9]+", "_", low).strip("_")
+    for suffix in ("_ble_bermuda_tracker", "_bermuda_tracker", "_ble_area", "_area", "_ble"):
+        if norm.endswith(suffix):
+            norm = norm[: -len(suffix)].strip("_")
+    return norm
+
+
 def parse_irk(raw: bytes | str) -> bytes | None:
-    """Parse a 16-byte IRK from bytes or 32-character hex string."""
+    """Parse a 16-byte IRK from raw bytes, 32-char hex string, or base64 string."""
     if isinstance(raw, (bytes, bytearray)):
         return bytes(raw) if len(raw) == 16 else None
-    cleaned = re.sub(r"[^0-9a-fA-F]", "", str(raw or "")).lower()
-    if _HEX_IRK_RE.match(cleaned):
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    cleaned = re.sub(r"[^0-9a-fA-F]", "", text).lower()
+    if len(cleaned) == 32 and _HEX_IRK_RE.match(cleaned) and len(text) >= 32:
         return bytes.fromhex(cleaned)
+    try:
+        decoded = base64.b64decode(text, validate=True)
+        if len(decoded) == 16:
+            return decoded
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
 
@@ -128,14 +153,22 @@ class BLEIrkResolver:
         return tuple(ids)
 
     def resolve_alias(self, token: str) -> str | None:
-        """Map an entity_id, entry_id, or slug to a registered canonical tracker_id."""
+        """Map an entity_id, entry_id, friendly name, or legacy ble_area ID to canonical ID."""
         key = str(token or "").strip().lower()
         if not key:
             return None
         if key in self._aliases:
             return self._aliases[key]
-        norm = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
-        return self._aliases.get(norm)
+        norm = _normalize_alias_token(key)
+        if not norm:
+            return None
+        if norm in self._aliases:
+            return self._aliases[norm]
+        # Substring fallback for legacy names (e.g. sensor.steve_s_s25_ble_area -> steve_s_s25)
+        for alias_key, tid in self._aliases.items():
+            if len(alias_key) >= 4 and (norm in alias_key or alias_key in norm):
+                return tid
+        return None
 
     def _add_aliases(self, tracker_id: str, *extras: str) -> None:
         for raw in (tracker_id, *extras):
@@ -143,7 +176,7 @@ class BLEIrkResolver:
             if not low:
                 continue
             self._aliases[low] = tracker_id
-            norm = re.sub(r"[^a-z0-9]+", "_", low).strip("_")
+            norm = _normalize_alias_token(low)
             if norm:
                 self._aliases[norm] = tracker_id
 
@@ -294,30 +327,68 @@ class BLEIrkResolver:
             return []
 
         ent_reg = None
+        dev_reg = None
         try:
+            from homeassistant.helpers import device_registry as dr
             from homeassistant.helpers import entity_registry as er
 
             ent_reg = er.async_get(hass)
+            dev_reg = dr.async_get(hass)
         except Exception:  # noqa: BLE001
-            ent_reg = None
+            pass
 
+        states_obj = getattr(hass, "states", None)
+        now = _monotonic_now()
         discovered: list[str] = []
+
         for entry in cfg_entries.async_entries("private_ble_device"):
-            data = getattr(entry, "data", None) or {}
-            raw_irk = data.get("irk")
-            if not raw_irk:
+            if getattr(entry, "disabled_by", None) is not None:
                 continue
             entry_id = str(getattr(entry, "entry_id", "") or "")
             title = str(getattr(entry, "title", "") or "")
-            tracker_eid = self._find_private_ble_tracker_entity(ent_reg, entry_id)
+            tracker_ent = self._find_private_ble_tracker_entry(ent_reg, entry_id)
+            tracker_eid = str(getattr(tracker_ent, "entity_id", "") or "") if tracker_ent else None
+
+            # IRK may live in entry.data["irk"] (hex/base64) or entity unique_id prefix (hex)
+            data = getattr(entry, "data", None) or {}
+            raw_irk = data.get("irk")
+            if not raw_irk and tracker_ent is not None:
+                uid = str(getattr(tracker_ent, "unique_id", "") or "")
+                if uid:
+                    raw_irk = uid.split("_", 1)[0]
+            if not raw_irk:
+                continue
+
             canonical_id = tracker_eid or f"private_ble.{entry_id or title}"
-            aliases = tuple(x for x in (entry_id, title, tracker_eid) if x)
-            if self.register_irk(canonical_id, raw_irk, aliases=aliases):
+            alias_list: list[str] = [x for x in (entry_id, title, tracker_eid) if x]
+
+            # Pull human-readable device name (Device Registry name_by_user / name)
+            dev_id = getattr(tracker_ent, "device_id", None) if tracker_ent is not None else None
+            if dev_reg is not None and dev_id and hasattr(dev_reg, "async_get"):
+                dev_entry = dev_reg.async_get(dev_id)
+                if dev_entry is not None:
+                    for attr in ("name_by_user", "name"):
+                        val = getattr(dev_entry, attr, None)
+                        if isinstance(val, str) and val.strip():
+                            alias_list.append(val.strip())
+
+            # Pull state friendly_name and seed current_address MAC if already resolved by HA
+            if tracker_eid and states_obj is not None and hasattr(states_obj, "get"):
+                st = states_obj.get(tracker_eid)
+                st_attrs = getattr(st, "attributes", None) or {}
+                fname = st_attrs.get("friendly_name")
+                if isinstance(fname, str) and fname.strip():
+                    alias_list.append(fname.strip())
+                cur_addr = st_attrs.get("current_address")
+                if isinstance(cur_addr, str) and is_valid_mac(cur_addr):
+                    self._put_cache(normalize_mac(cur_addr), canonical_id, now)
+
+            if self.register_irk(canonical_id, raw_irk, aliases=tuple(alias_list)):
                 discovered.append(canonical_id)
         return discovered
 
     @staticmethod
-    def _find_private_ble_tracker_entity(ent_reg: Any, entry_id: str) -> str | None:
+    def _find_private_ble_tracker_entry(ent_reg: Any, entry_id: str) -> Any:
         if ent_reg is None or not entry_id:
             return None
         try:
@@ -329,5 +400,5 @@ class BLEIrkResolver:
         for ent in entries or ():
             eid = str(getattr(ent, "entity_id", "") or "")
             if eid.startswith("device_tracker."):
-                return eid
+                return ent
         return None
