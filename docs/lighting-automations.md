@@ -30,9 +30,8 @@ conditions:
   # Never overwrite lights/scenes that are already on
   - condition: state
     entity_id:
-      - light.office_fan_light
-      - light.office_floor_lamp
-      - light.torch_lamp
+      - light.office_ceiling
+      - light.office_lamp
     state: "off"
   # Room-specific spillover-aware confidence gate
   - condition: state
@@ -92,13 +91,10 @@ conditions:
   - condition: or
     conditions:
       - condition: state
-        entity_id: light.office_fan_light
+        entity_id: light.office_ceiling
         state: "on"
       - condition: state
-        entity_id: light.office_floor_lamp
-        state: "on"
-      - condition: state
-        entity_id: light.torch_lamp
+        entity_id: light.office_lamp
         state: "on"
 actions:
   - wait_for_trigger:
@@ -119,9 +115,8 @@ actions:
   - action: light.turn_off
     target:
       entity_id:
-        - light.office_fan_light
-        - light.office_floor_lamp
-        - light.torch_lamp
+        - light.office_ceiling
+        - light.office_lamp
 ```
 
 ---

@@ -60,6 +60,12 @@ extra_javascript:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - UI Guide:
+      - Room Editor: ui/room-editor.md
+      - Floorplan Studio: ui/floorplan-studio.md
+      - Timeline Playback: ui/timeline-playback.md
+      - Replay & Statistics: ui/replay-and-statistics.md
+      - Global Settings: ui/global-settings.md
   - Lighting Automations: lighting-automations.md
   - How It Works: how-it-works.md
   - Configuration & Reference: reference.md

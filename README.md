@@ -83,8 +83,8 @@ triggers:
 conditions:
   - condition: state
     entity_id:
-      - light.office_fan_light
-      - light.office_floor_lamp
+      - light.office_ceiling
+      - light.office_lamp
     state: "off"
   - condition: state
     entity_id: binary_sensor.office_presence
@@ -121,6 +121,12 @@ actions:
 ## Documentation Map
 
 - **[Getting Started](docs/getting-started.md)** — Installation, room setup, floorplan calibration, Frigate & Bermuda integration.
+- **UI Guide:**
+  - **[Room Editor](docs/ui/room-editor.md)** — Setup, Rules & NL↔YAML Studio, State Machine, and Diagnostics tabs.
+  - **[Floorplan Studio](docs/ui/floorplan-studio.md)** — Multi-floor canvas, blueprint underlay, tool modes, camera alignment, doorway occlusion, and live EKF overlay.
+  - **[Timeline Playback](docs/ui/timeline-playback.md)** — Whole-house synchronized historical scrubbing and driver auditing.
+  - **[Replay & Statistics](docs/ui/replay-and-statistics.md)** — What-if parameter simulation and long-term sensor analytics.
+  - **[Global Settings](docs/ui/global-settings.md)** — Inference engine, feature toggles, BLE trackers, Vision LLM, and Slack alerts.
 - **[Lighting Automations](docs/lighting-automations.md)** — Entry lighting, anti-reset auto-off with tunable helpers, and spillover thresholds.
 - **[How It Works](docs/how-it-works.md)** — Plain-English guide to the Coupled HMM, 2D+Floor EKF (`ekf_floor_stability_v2`), negative space, and Playback.
 - **[Configuration & Reference](docs/reference.md)** — Full entity attributes, services, global feature toggles, and troubleshooting.

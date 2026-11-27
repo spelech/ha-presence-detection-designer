@@ -56,6 +56,7 @@ flowchart LR
 ## Explore the Docs
 
 - **[Getting Started](getting-started.md)** — Install via HACS, map your floorplan, and connect Frigate, PIRs, and Bermuda.
+- **UI Guide:** [Room Editor](ui/room-editor.md) · [Floorplan Studio](ui/floorplan-studio.md) · [Timeline Playback](ui/timeline-playback.md) · [Replay & Statistics](ui/replay-and-statistics.md) · [Global Settings](ui/global-settings.md)
 - **[Lighting Automations](lighting-automations.md)** — Copy-pasteable Entry Lighting and Anti-Reset Auto-Off recipes with UI-tunable timeouts.
 - **[How It Works](how-it-works.md)** — Plain-English walkthrough of the Coupled HMM, 2D+Floor EKF, negative space, and Playback.
 - **[Configuration & Reference](reference.md)** — Complete attribute dictionary, services, feature toggles, and real-world troubleshooting.
