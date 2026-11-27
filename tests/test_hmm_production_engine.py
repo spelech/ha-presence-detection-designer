@@ -119,3 +119,45 @@ def test_playback_suppresses_impossible_cross_floor_teleports() -> None:
     assert lr_txs
     assert lr_txs[0]["from_room"] is None
     assert lr_txs[0]["from_floor"] is None
+
+
+def test_webos_media_player_on_matches_playing_sustain_condition():
+    """LG webOS HDMI displays report 'on' instead of 'playing' and must still sustain occupancy."""
+    from custom_components.presence_detection_designer.hmm_engine import _eval_condition
+
+    assert (
+        _eval_condition(
+            "on", "equals", "playing", entity_id="media_player.living_room_display_webos"
+        )
+        is True
+    )
+    assert (
+        _eval_condition(
+            "playing", "equals", "playing", entity_id="media_player.living_room_display_webos"
+        )
+        is True
+    )
+    assert (
+        _eval_condition(
+            "off", "equals", "playing", entity_id="media_player.living_room_display_webos"
+        )
+        is False
+    )
+    assert (
+        _eval_condition(
+            "idle", "equals", "playing", entity_id="media_player.living_room_display_webos"
+        )
+        is False
+    )
+    assert (
+        _eval_condition(
+            "on", "in", "on,playing", entity_id="media_player.living_room_display_webos"
+        )
+        is True
+    )
+    assert (
+        _eval_condition(
+            "on", "not_equals", "off", entity_id="media_player.living_room_display_webos"
+        )
+        is True
+    )
