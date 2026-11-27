@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import math
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 from custom_components.presence_detection_designer.spatial.ble_kalman_tracker import (
     BLEKalmanTracker,
@@ -12,7 +10,6 @@ from custom_components.presence_detection_designer.spatial.ble_kalman_tracker im
     HouseEKFManager,
     KalmanConfig,
     ekf_room_probability_to_likelihood,
-    read_bermuda_proxy_ranges,
 )
 from custom_components.presence_detection_designer.spatial.spatial_topology import (
     get_default_floorplan,
@@ -171,33 +168,6 @@ def test_ekf_floor_hysteresis_resists_single_tick_vertical_bleed():
     assert ekf.floor == "upstairs"
 
 
-def test_read_bermuda_proxy_ranges_from_runtime_data():
-    """read_bermuda_proxy_ranges maps Bermuda adverts to floorplan proxy coordinates."""
-    fp = get_default_floorplan()
-    adv = SimpleNamespace(
-        rssi_distance=2.0,  # 2 meters == 6.56 ft
-        rssi=-62,
-        stamp=999.0,
-        scanner_device=SimpleNamespace(name="office_speaker"),
-    )
-    dev = SimpleNamespace(name="Steve's S25+ (BLE)", adverts={"aa:bb": adv})
-    bermuda_entry = SimpleNamespace(
-        runtime_data=SimpleNamespace(coordinator=SimpleNamespace(devices={"11:22:33": dev}))
-    )
-    hass = MagicMock()
-    hass.config_entries.async_entries.return_value = [bermuda_entry]
-    hass.states.get.return_value = SimpleNamespace(
-        state="Office", attributes={"current_mac": "11:22:33"}
-    )
-
-    ranges = read_bermuda_proxy_ranges(hass, "sensor.steve_s_s25_ble_area", fp, now_ts=1000.0)
-    assert len(ranges) == 1
-    assert ranges[0].proxy_id == "office_speaker"
-    assert ranges[0].floor == "upstairs"
-    assert abs(ranges[0].distance_ft - 6.56) < 0.05
-    assert ranges[0].age_sec == 1.0
-
-
 def test_ekf_multi_occupant_gating_ignores_distant_person():
     """Margot triggering upstairs or in Family Room must not pull Steve's Kitchen EKF track."""
     fp = get_default_floorplan()
@@ -253,39 +223,6 @@ def test_ekf_room_probability_to_likelihood_is_smooth_and_bounded():
     assert (pt_unc / pf_unc) < lr_hi
 
 
-def test_read_bermuda_proxy_ranges_handles_irk_mac_and_monotonic_stamp():
-    """Live Bermuda IRK devices with monotonic_time_coarse stamps produce fresh ranges."""
-    import time
-
-    fp = get_default_floorplan()
-    mono_stamp = time.monotonic() - 2.0
-    adv = SimpleNamespace(
-        device_address="73:09:e8:e6:be:a4",
-        rssi_distance=1.5,
-        rssi=-58,
-        stamp=mono_stamp,
-        area_name="Master Bedroom",
-        scanner_device=SimpleNamespace(name="Master Bedroom Speaker", area_name="Master Bedroom"),
-    )
-    dev = SimpleNamespace(
-        name="Steve's S25+ (BLE)", address="irk_abc123", adverts={("x", "y"): adv}
-    )
-    bermuda_entry = SimpleNamespace(
-        runtime_data=SimpleNamespace(coordinator=SimpleNamespace(devices={"irk_abc123": dev}))
-    )
-    hass = MagicMock()
-    hass.config_entries.async_entries.return_value = [bermuda_entry]
-    hass.states.get.return_value = SimpleNamespace(
-        state="Master Bedroom",
-        attributes={"current_mac": "73:09:e8:e6:be:a4", "friendly_name": "Steve's S25+ (BLE) Area"},
-    )
-
-    ranges = read_bermuda_proxy_ranges(hass, "sensor.steve_s_s25_ble_area", fp, now_ts=1795665580.0)
-    assert len(ranges) == 1
-    assert ranges[0].proxy_id == "master_bedroom_speaker"
-    assert ranges[0].age_sec < 5.0
-
-
 def test_ekf_floor_stability_v2_prevents_2proxy_count_bias():
     """With v2 enabled, 2 slightly farther upstairs proxies cannot overpower 1 main-floor proxy."""
     # v2 enabled (default): 1 main proxy at 3.5 ft holds against 2 upstairs proxies at 3.3 + 4.0 ft
@@ -313,11 +250,11 @@ def test_ekf_floor_stability_v2_prevents_2proxy_count_bias():
     assert ekf_v1.floor == "upstairs"
 
 
-def test_ekf_floor_stability_v2_no_bermuda_double_count_and_camera_hold():
-    """With v2 enabled, Bermuda area bounce is not double-counted and incumbent camera holds floor."""
+def test_ekf_floor_stability_v2_no_area_hint_double_count_and_camera_hold():
+    """With v2 enabled, area-floor bounce is not double-counted and incumbent camera holds floor."""
     fp = get_default_floorplan()
     mgr = HouseEKFManager(KalmanConfig(ekf_floor_stability_v2=True))
-    tid = "sensor.steve_s_s25_ble_area"
+    tid = "device_tracker.steve_s_s25"
 
     # Establish track on main floor in Living Room (near x=210, y=410)
     main_ble = [BLERangeMeasurement("lr_spk", "main", 210.0, 410.0, 4.0)]
@@ -328,11 +265,11 @@ def test_ekf_floor_stability_v2_no_bermuda_double_count_and_camera_hold():
             floorplan=fp,
             now_ts=float(t),
             active_camera_hits=[("main", 215.0, 405.0)],
-            bermuda_area_floor="main",
+            area_floor_hint="main",
         )
     assert mgr.get_tracker(tid).floor == "main"
 
-    # Bermuda area bounces to upstairs + weak upstairs BLE, while Living Room camera still sees occupant
+    # Area hint bounces to upstairs + weak upstairs BLE, while Living Room camera still sees occupant
     noisy = [
         BLERangeMeasurement("lr_spk", "main", 210.0, 410.0, 6.0),
         BLERangeMeasurement("mb_nfc", "upstairs", 210.0, 410.0, 3.0),
@@ -344,7 +281,7 @@ def test_ekf_floor_stability_v2_no_bermuda_double_count_and_camera_hold():
             floorplan=fp,
             now_ts=float(t),
             active_camera_hits=[("main", 215.0, 405.0)],
-            bermuda_area_floor="upstairs",
+            area_floor_hint="upstairs",
         )
     assert mgr.get_tracker(tid).floor == "main"
 
@@ -356,6 +293,6 @@ def test_ekf_floor_stability_v2_no_bermuda_double_count_and_camera_hold():
             floorplan=fp,
             now_ts=float(t),
             active_camera_hits=[("upstairs", 215.0, 405.0)],
-            bermuda_area_floor="main",
+            area_floor_hint="main",
         )
     assert mgr.get_tracker(tid).floor == "main"

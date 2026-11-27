@@ -7,6 +7,8 @@ import logging
 import time
 from typing import Any
 
+from ..const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -342,18 +344,30 @@ async def async_apply_global_settings_side_effects(
 
 
 def active_ble_resident_count(tracker: Any) -> int:
-    """Return number of configured BLE resident trackers actively detected in a room or home."""
+    """Return number of tracked BLE resident devices actively detected in a room or home."""
     hass = getattr(tracker, "hass", None)
+    domain_data = (getattr(hass, "data", None) or {}).get(DOMAIN, {}) if hass else {}
+    store = domain_data.get("_store") if isinstance(domain_data, dict) else None
+    ekf_mgr = getattr(store, "ekf_manager", None) if store is not None else None
+    if ekf_mgr is not None and getattr(ekf_mgr, "trackers", None):
+        ekf_active = sum(
+            1 for ekf in ekf_mgr.trackers.values() if getattr(ekf, "initialized", False)
+        )
+        if ekf_active > 0:
+            return ekf_active
+
     states_obj = getattr(hass, "states", None) if hass else None
     if states_obj is None or not callable(getattr(states_obj, "get", None)):
         return 0
-    trackers = tracker._global_settings().get("ble_trackers") or []
-    if not isinstance(trackers, (list, tuple, set)):
-        return 0
+    ble_hub = getattr(store, "ble_hub", None) if store is not None else None
+    trackers = list(tracker._global_settings().get("ble_trackers") or [])
+    if not trackers and ble_hub is not None:
+        trackers = list(ble_hub.resolver.registered_tracker_ids)
     inactive = {"", "unknown", "unavailable", "off", "away", "not_home", "none"}
     count = 0
     for eid in trackers:
-        st = states_obj.get(str(eid))
+        resolved = ble_hub.resolver.resolve_alias(str(eid)) if ble_hub is not None else None
+        st = states_obj.get(resolved or str(eid))
         raw = getattr(st, "state", None) if st is not None else None
         if isinstance(raw, str) and raw.strip().lower() not in inactive:
             count += 1
