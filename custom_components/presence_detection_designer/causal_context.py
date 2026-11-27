@@ -141,6 +141,7 @@ class RoomActuationTracker:
         self._context_order: deque[str] = deque(maxlen=50)
         self.custom_voice_user_ids: set[str] = set(custom_voice_user_ids or set())
         self.custom_automation_user_ids: set[str] = set(custom_automation_user_ids or set())
+        self._last_automation_off_ts: float = -1e9
 
     def record_pdd_transition_context(self, context_id: str | None) -> None:
         """Record a Home Assistant Context ID emitted by PDD so downstream actuator reactions are recognized as automated."""
@@ -171,22 +172,41 @@ class RoomActuationTracker:
         actor = classification.get("actor")
         action = classification.get("action")
         is_manual = bool(classification.get("is_manual"))
+        ts = now_ts if now_ts is not None else time.time()
+
+        # Parent light groups often emit a follow-up 'off' state_changed without parent_id
+        # immediately after an automation turns off a child light. Treat that echo as automated.
+        if (
+            is_manual
+            and actor == "physical_switch"
+            and action == "off"
+            and (ts - self._last_automation_off_ts) <= 3.0
+        ):
+            is_manual = False
+            actor = "automation_echo"
+            classification = {**classification, "is_manual": False, "actor": actor}
 
         if actor == "automation":
             if action == "on":
                 self.automated_entities_on.add(entity_id)
             elif action == "off":
                 self.automated_entities_on.discard(entity_id)
+                self._last_automation_off_ts = ts
         elif is_manual:
             self.automated_entities_on.discard(entity_id)
             self.last_manual_actor = actor
             self.last_manual_entity = entity_id
             self.last_manual_action = action
-            self.last_manual_ts = now_ts if now_ts is not None else time.time()
+            self.last_manual_ts = ts
             if action == "on":
                 self.manual_intent = "manual_on"
             elif action == "off":
-                self.manual_intent = "manual_off_suppressed"
+                # Only suppress entry lighting if the room is currently occupied; turning off
+                # lights in an already-vacant room must never latch suppression for the next entry.
+                if room_is_occupied:
+                    self.manual_intent = "manual_off_suppressed"
+                else:
+                    self.manual_intent = "auto"
 
         return {
             **classification,
