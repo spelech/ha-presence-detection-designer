@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" width="1000" height="580">
+  <defs>
+    <pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse">
+      <path d="M 25 0 L 0 0 0 25" fill="none" stroke="#1e293b" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1000" height="580" fill="#0b1120"/>
+  <rect width="1000" height="580" fill="url(#grid)"/>
+  <rect x="40" y="55" width="920" height="485" rx="8" fill="none" stroke="#64748b" stroke-width="3"/>
+  <text x="50" y="34" fill="#e2e8f0" font-family="Inter,system-ui,sans-serif" font-size="18" font-weight="700">Main Floor — Generic Demo Layout</text>
+  <text x="950" y="34" text-anchor="end" fill="#94a3b8" font-family="Inter,system-ui,sans-serif" font-size="12">Example 3-Level Smart Home Floorplan</text>
+  <rect x="50" y="65" width="290" height="230" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="195" y="180" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Living Room</text>
+  <rect x="340" y="65" width="210" height="180" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="445" y="155" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Dining Room</text>
+  <rect x="550" y="65" width="220" height="230" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="660" y="180" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Kitchen</text>
+  <rect x="770" y="65" width="180" height="465" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="860" y="297" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Garage</text>
+  <rect x="50" y="295" width="180" height="235" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="140" y="412" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Front Entry</text>
+  <rect x="230" y="295" width="110" height="110" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="285" y="350" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Powder Bath</text>
+  <rect x="230" y="405" width="110" height="125" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="285" y="467" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Laundry Room</text>
+  <rect x="340" y="295" width="430" height="235" rx="4" fill="#111827" fill-opacity="0.72" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.75"/>
+  <text x="555" y="412" text-anchor="middle" dominant-baseline="middle" fill="#cbd5e1" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="600">Family Room</text>
+  <line x1="820" y1="560" x2="945" y2="560" stroke="#94a3b8" stroke-width="2"/>
+  <text x="882" y="554" text-anchor="middle" fill="#94a3b8" font-family="Inter,system-ui,sans-serif" font-size="11">10 ft (Generic Demo)</text>
+</svg>

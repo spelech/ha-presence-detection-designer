@@ -307,7 +307,7 @@ def reconstruct_house_timeline(
                     occ["from_floor"] = leg_from_floor
 
         for pet in pet_list:
-            pet_label = str(pet.get("occupant_label") or "Riley (Dog)")
+            pet_label = str(pet.get("occupant_label") or "Household Pet (Dog)")
             pet_room = str(pet.get("room") or "")
             if not pet_room:
                 continue

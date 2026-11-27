@@ -165,10 +165,10 @@ export function resolveOccupantProfile(occ, overview = null) {
   const methodStr = String(occ?.method || occ?.inference_type || "").toLowerCase();
   const isInferred = methodStr === "negative_space" || methodStr.startsWith("negative_space_");
 
-  if (oType === "pet" || lower.includes("dog") || lower.includes("riley") || lower.includes("pet")) {
+  if (oType === "pet" || lower.includes("dog") || lower.includes("pet")) {
     return {
-      key: rawLabel || "Riley (Dog)",
-      shortLabel: rawLabel.replace(/\s*\(Dog\)/i, "").trim() || "Riley",
+      key: rawLabel || "Household Pet (Dog)",
+      shortLabel: rawLabel.replace(/\s*\(Dog\)/i, "").trim() || "Household Pet",
       role: "pet",
       isInferred: false,
       color: "#d97706",
@@ -176,10 +176,10 @@ export function resolveOccupantProfile(occ, overview = null) {
       pictureUrl: null,
     };
   }
-  if (lower.includes("margot") || lower.includes("kid") || lower.includes("child")) {
+  if (lower.includes("resident b") || lower.includes("resident_b") || lower.includes("kid") || lower.includes("child")) {
     return {
-      key: rawLabel || "Margot",
-      shortLabel: rawLabel || "Margot",
+      key: rawLabel || "Resident B",
+      shortLabel: rawLabel || "Resident B",
       role: "kid",
       isInferred,
       color: isInferred ? "#0284c7" : "#db2777",

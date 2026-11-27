@@ -825,7 +825,7 @@ def test_reconcile_headcount_preserves_count_when_ble_resident_active(mock_hass)
         mock_hass,
         **{
             CONF_STALE_COUNT_TIMEOUT: 10,
-            "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+            "ble_trackers": ["sensor.resident_a_phone_ble_area"],
         },
     )
     mock_hass.states.get = MagicMock(return_value=MagicMock(state="Family Room"))
@@ -919,7 +919,7 @@ def test_reconcile_uses_short_settle_after_recent_ambiguous_door_exit(mock_hass)
         mock_hass,
         **{
             CONF_STALE_COUNT_TIMEOUT: 900,
-            "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+            "ble_trackers": ["sensor.resident_a_phone_ble_area"],
         },
     )
     mock_hass.states.get = MagicMock(return_value=MagicMock(state="unknown"))

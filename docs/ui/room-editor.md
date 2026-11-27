@@ -2,8 +2,6 @@
 
 The **Room Editor** is the primary per-room workspace in Presence Detection Designer. Select any room from the left sidebar to configure its sensors, sustaining rules, state machine, and diagnostics across four focused tabs.
 
-![Room Editor Overview](../images/clean_ha_room_editor.png)
-
 ---
 
 ## 1. Setup Tab
@@ -18,8 +16,6 @@ Configure the room's core identity, physical boundaries, and hardware bindings:
 - **Sustaining Conditions:** Add secondary device conditions (TV `media_player`, workstation power draw, shower humidity derivative) that hold occupancy while you are stationary.
 - **Per-Room Notifications:** Override Slack alert verbosity or toggle occupied/cleared notifications for this specific room.
 
-![Per-Room Slack Notification Card](../screenshots/slack_notifications_room_card.png)
-
 ---
 
 ## 2. Rules & Sensors Tab (NL ↔ YAML Studio)
@@ -29,11 +25,7 @@ Define which sensors vote on the room's occupancy and inspect how their combinat
 - **Triggers & Observations:** Add Frigate person sub-zones, fast PIRs, Ecobee occupancy sensors, door contacts, and BLE trackers with intuitive weight presets (`decisive`, `strong`, `moderate`, `supporting`).
 - **Combinatorics Matrix:** Preview the exact resulting posterior probability for every combination of active sensors before saving.
 
-![Combinatorics Matrix](../images/combinatorics_matrix.png)
-
 - **Natural Language ↔ YAML Studio:** Describe your desired room logic in plain English and translate it into structured PDD configuration (or translate an existing config back into a plain-English summary).
-
-![NL to YAML Studio](../images/nl_yaml_studio.png)
 
 ---
 

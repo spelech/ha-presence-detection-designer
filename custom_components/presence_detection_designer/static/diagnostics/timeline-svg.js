@@ -26,7 +26,7 @@ export function buildSingleFloorTimelineParts(panel, targetFloor, frames, frameI
     if (curTs && trTs > curTs) break;
     const trFrameIdx = tr.iso ? frames.findIndex((f) => (f.iso || f.timestamp) === tr.iso) : -1;
     if (trFrameIdx > frameIdx) continue;
-    const key = String(tr.occupant_key || tr.occupant_label || (tr.occupant_type === "pet" ? "Riley (Dog)" : "Occupant")).trim();
+    const key = String(tr.occupant_key || tr.occupant_label || (tr.occupant_type === "pet" ? "Household Pet (Dog)" : "Occupant")).trim();
     latestMoveByOcc.set(key, { tr, trFrameIdx: trFrameIdx >= 0 ? trFrameIdx : i });
   }
 
@@ -112,7 +112,7 @@ export function buildSingleFloorTimelineParts(panel, targetFloor, frames, frameI
         room: occ.room,
         floor: occ.floor || targetFloor.id,
         occupant_type: "pet",
-        occupant_label: (occ.detected_animals && occ.detected_animals[0]) || "Riley (Dog)",
+        occupant_label: (occ.detected_animals && occ.detected_animals[0]) || "Household Pet (Dog)",
       });
     }
   });

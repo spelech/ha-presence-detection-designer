@@ -32,16 +32,12 @@ Copy `custom_components/presence_detection_designer/` into your Home Assistant `
 
 Open **Presence Detection** from the Home Assistant sidebar to launch the interactive Studio:
 
-![Design Studio Overview](images/design_studio_overview.png)
-
 1. **Floors & Rooms:** Define your floors (e.g., `basement`, `main`, `upstairs`) and position each room polygon. Optionally upload a blueprint underlay for exact alignment.
 2. **Doorways & Stairs:** Connect adjacent rooms and mark vertical transitions (stairs) so the Coupled HMM knows which rooms can physically hand off occupancy to one another.
 3. **Place Physical Sensors:**
    - **Cameras & Sub-Zones:** Place each Frigate camera with its heading and FOV, and map sub-zones (e.g., `living_room_couch`, `office_desk`, `bedroom_bed`) to their exact floor coordinates.
    - **PIR Motion Sensors:** Place each PIR with its mounting position, heading, and model preset. PDD automatically raycasts the FOV against your walls to compute the **PIR Spillover Matrix** (e.g., detecting when a bedroom Vallhorn can see into the hallway).
    - **BLE Proxies:** Place your ESPHome / Google Home Bluetooth proxies on their exact floors and coordinates.
-
-![Floorplan Sensors and Sub-Zones](screenshots/floorplan_sensors_and_subzones.png)
 
 ---
 
@@ -73,8 +69,6 @@ Sustaining conditions dramatically slow occupancy decay while you are sitting st
 ## 6. Validate with Timeline Playback
 
 Before connecting your lights, open the **Playback** tab in the PDD Studio to replay historical Home Assistant sensor timelines across the entire house:
-
-![Whole-House Timeline Playback](screenshots/whole_house_timeline_playback.png)
 
 Verify that:
 - Walking between rooms produces clean handoffs without impossible cross-floor teleports.

@@ -92,7 +92,7 @@ def test_playback_suppresses_impossible_cross_floor_teleports() -> None:
                 "probability_pct": 92.0,
                 "verified_by": "camera",
                 "camera_confirmed": True,
-                "entity_states": {"sensor.steve_s_s25_ble_area": "Master Bedroom"},
+                "entity_states": {"sensor.resident_a_phone_ble_area": "Master Bedroom"},
             }
         ],
         "Living Room": [
@@ -103,7 +103,7 @@ def test_playback_suppresses_impossible_cross_floor_teleports() -> None:
                 "probability_pct": 88.0,
                 "verified_by": "camera",
                 "camera_confirmed": True,
-                "entity_states": {"sensor.steve_s_s25_ble_area": "Living Room"},
+                "entity_states": {"sensor.resident_a_phone_ble_area": "Living Room"},
             }
         ],
     }

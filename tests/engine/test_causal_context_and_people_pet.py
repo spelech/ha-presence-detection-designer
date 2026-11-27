@@ -44,18 +44,18 @@ def _make_state(
 
 
 def test_household_profiles_no_sara():
-    """Verify Sara placeholder is removed and Steve, Margot, Guest, and Riley are modeled."""
+    """Verify Sara placeholder is removed and Resident A, Resident B, Guest, and Household Pet are modeled."""
     assert all("sara" not in eid.lower() for eid in PRIMARY_BLE_TRACKER_ENTITIES)
     assert "sara" not in HOUSEHOLD_PEOPLE_PROFILES
-    assert set(HOUSEHOLD_PEOPLE_PROFILES.keys()) == {"steve", "margot", "guest"}
-    assert "riley" in HOUSEHOLD_ANIMAL_PROFILES
-    assert HOUSEHOLD_ANIMAL_PROFILES["riley"]["label"] == "Riley (Dog)"
+    assert set(HOUSEHOLD_PEOPLE_PROFILES.keys()) == {"resident_a", "resident_b", "guest"}
+    assert "pet" in HOUSEHOLD_ANIMAL_PROFILES
+    assert HOUSEHOLD_ANIMAL_PROFILES["pet"]["label"] == "Household Pet (Dog)"
 
 
-def test_co_presence_steve_and_riley_and_untracked_margot():
-    """Verify simultaneous human + pet co-presence and untracked Margot attribution."""
+def test_co_presence_resident_a_and_pet_and_untracked_resident_b():
+    """Verify simultaneous human + pet co-presence and untracked Resident B attribution."""
     states = {
-        "sensor.steve_s_s25_ble_area": "Family Room",
+        "sensor.resident_a_phone_ble_area": "Family Room",
         "binary_sensor.couch_person_occupancy": "on",
         "binary_sensor.family_room_dog_occupancy": "on",
         "binary_sensor.nursery_bed_person_occupancy": "on",
@@ -72,24 +72,24 @@ def test_co_presence_steve_and_riley_and_untracked_margot():
     assert fam["human_present"] is True
     assert fam["pet_present"] is True
     assert fam["occupant_type"] == "tracked_human"
-    assert fam["detected_people"] == ["Steve"]
-    assert fam["detected_animals"] == ["Riley (Dog)"]
-    assert fam["presence_summary"] == "Steve + Riley (Dog)"
+    assert fam["detected_people"] == ["Resident A"]
+    assert fam["detected_animals"] == ["Household Pet (Dog)"]
+    assert fam["presence_summary"] == "Resident A + Household Pet (Dog)"
 
-    margot_rm = frame["room_estimates"]["Margot's Room"]
-    assert margot_rm["occupied"] is True
-    assert margot_rm["human_present"] is True
-    assert margot_rm["occupant_type"] == "untracked_human"
-    assert margot_rm["occupant_label"] == "Margot"
-    assert margot_rm["presence_summary"] == "Margot"
+    resident_b_rm = frame["room_estimates"]["Kids Room"]
+    assert resident_b_rm["occupied"] is True
+    assert resident_b_rm["human_present"] is True
+    assert resident_b_rm["occupant_type"] == "untracked_human"
+    assert resident_b_rm["occupant_label"] == "Resident B"
+    assert resident_b_rm["presence_summary"] == "Resident B"
 
     dining = frame["room_estimates"]["Dining Room"]
     assert dining["occupied"] is False
     assert dining["human_present"] is False
     assert dining["pet_present"] is True
     assert dining["occupant_type"] == "pet"
-    assert dining["occupant_label"] == "Riley (Dog)"
-    assert dining["presence_summary"] == "Riley (Dog)"
+    assert dining["occupant_label"] == "Household Pet (Dog)"
+    assert dining["presence_summary"] == "Household Pet (Dog)"
     assert len(frame["pet_estimates"]) == 2
 
 

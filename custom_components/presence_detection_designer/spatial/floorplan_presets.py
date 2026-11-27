@@ -19,7 +19,7 @@ SPILLOVER_CAMERA_ENTITIES: dict[str, list[str]] = {
         "binary_sensor.office_person_occupancy",
         "binary_sensor.office_entryway_person_occupancy",
     ],
-    "Margot's Room": ["binary_sensor.nursery_person_occupancy"],
+    "Kids Room": ["binary_sensor.nursery_person_occupancy"],
     "Basement Theater": [
         "binary_sensor.basement_theater_person_occupancy",
         "binary_sensor.basement_stairwell_person_occupancy",
@@ -44,7 +44,7 @@ RECOMMENDED_INACTIVITY_TIMEOUTS: dict[str, int] = {
     "Master Bathroom": 600,
     "Upstairs Bathroom": 600,
     "Office": 240,
-    "Margot's Room": 300,
+    "Kids Room": 300,
     "Guest Room": 300,
     "Basement Theater": 240,
     "Basement Play Area": 180,

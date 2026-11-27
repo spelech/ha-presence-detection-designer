@@ -8,7 +8,7 @@
   "global_settings": {
     "ble_decider_enabled": true,
     "ble_trackers": [
-      "sensor.steve_s_s25_ble_area"
+      "sensor.resident_a_phone_ble_area"
     ]
   },
   "rooms": [
@@ -126,7 +126,7 @@
     }
   ],
   "initial_states": {
-    "sensor.steve_s_s25_ble_area": "Away",
+    "sensor.resident_a_phone_ble_area": "Away",
     "binary_sensor.office_motion_occupancy": "off",
     "sensor.office_ups_used_watts_filtered": "220",
     "binary_sensor.family_room_motion_occupancy": "off",
@@ -159,7 +159,7 @@
     {
       "at": 10,
       "set": {
-        "sensor.steve_s_s25_ble_area": "Office",
+        "sensor.resident_a_phone_ble_area": "Office",
         "binary_sensor.office_motion_occupancy": "on"
       }
     },
@@ -190,7 +190,7 @@
     {
       "at": 30,
       "set": {
-        "sensor.steve_s_s25_ble_area": "Kitchen"
+        "sensor.resident_a_phone_ble_area": "Kitchen"
       }
     },
     {
@@ -219,7 +219,7 @@
       "at": 60,
       "set": {
         "binary_sensor.family_room_motion_occupancy": "off",
-        "sensor.steve_s_s25_ble_area": "Master Bathroom",
+        "sensor.resident_a_phone_ble_area": "Master Bathroom",
         "binary_sensor.master_bathroom_motion_occupancy": "on",
         "fan.master_bathroom_exhaust": "on",
         "light.master_bathroom_vanity": "on",
@@ -239,7 +239,7 @@
       "at": 70,
       "set": {
         "binary_sensor.master_bathroom_motion_occupancy": "off",
-        "sensor.steve_s_s25_ble_area": "Master Bedroom"
+        "sensor.resident_a_phone_ble_area": "Master Bedroom"
       }
     },
     {

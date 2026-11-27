@@ -44,11 +44,10 @@ Most Home Assistant presence setups fail in predictable ways because each sensor
 ## Visual Tour
 
 <p align="center">
-  <img src="docs/images/design_studio_overview.png" alt="Presence Detection Designer Studio Overview" width="49%" />
-  <img src="docs/screenshots/floorplan_sensors_and_subzones.png" alt="3D Floorplan Sensors and Camera Sub-Zones" width="49%" />
+  <img src="docs/public/images/floor_main.svg" alt="Generic Main Floor Blueprint" width="49%" />
+  <img src="docs/public/images/floor_upstairs.svg" alt="Generic Upstairs Floor Blueprint" width="49%" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/whole_house_timeline_playback.png" alt="Whole-House Timeline Playback" width="49%" />
   <img src="docs/images/optimization_pareto_frontier.svg" alt="Coupled HMM Optimization Pareto Frontier" width="49%" />
 </p>
 
@@ -153,4 +152,4 @@ uv run pytest -q
 
 ## License
 
-Distributed under the [MIT License](LICENSE). Copyright &copy; 2026 Steven T. Pelech.
+Distributed under the [MIT License](LICENSE). Copyright &copy; 2026 Resident An T. Pelech.

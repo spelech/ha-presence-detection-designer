@@ -156,7 +156,7 @@ def test_native_ble_hub_auto_discovers_private_ble_and_feeds_ekf(monkeypatch):
     monkeypatch.setitem(sys.modules, "bluetooth_data_tools", fake_bdt)
 
     # Mock HA private_ble_device config entry + bluetooth.async_current_scanners
-    pble_entry = SimpleNamespace(entry_id="pble_1", title="Steve Phone", data={"irk": irk_hex})
+    pble_entry = SimpleNamespace(entry_id="pble_1", title="Resident A Phone", data={"irk": irk_hex})
     hass = MagicMock()
     hass.config_entries.async_entries.side_effect = lambda domain: (
         [pble_entry] if domain == "private_ble_device" else []
@@ -198,7 +198,7 @@ def test_native_ble_hub_auto_discovers_private_ble_and_feeds_ekf(monkeypatch):
 
 
 def test_legacy_bermuda_ble_tracker_migrates_seamlessly_to_private_ble_device(monkeypatch):
-    """Existing `.storage` ble_trackers=['sensor.steve_s_s25_ble_area'] resolves via friendly name."""
+    """Existing `.storage` ble_trackers=['sensor.resident_a_phone_ble_area'] resolves via friendly name."""
     import base64
 
     irk_bytes = bytes.fromhex("00112233445566778899aabbccddeeff")
@@ -248,9 +248,9 @@ def test_legacy_bermuda_ble_tracker_migrates_seamlessly_to_private_ble_device(mo
         CONNECTION_NETWORK_MAC="mac",
         async_get=lambda _h: SimpleNamespace(
             async_get=lambda did: (
-                SimpleNamespace(name_by_user="Steve's S25+ (BLE)", name="Private BLE")
+                SimpleNamespace(name_by_user="Resident A Phone (BLE)", name="Private BLE")
                 if did == "dev_phone"
-                else SimpleNamespace(name_by_user="Tab S10 Lite (BLE)", name="Private BLE")
+                else SimpleNamespace(name_by_user="Resident B Tablet (BLE)", name="Private BLE")
             ),
             async_get_device=lambda connections=None: (
                 SimpleNamespace(area_id="area_office")
@@ -304,14 +304,14 @@ def test_legacy_bermuda_ble_tracker_migrates_seamlessly_to_private_ble_device(mo
     hass.states.get.side_effect = lambda eid: (
         SimpleNamespace(
             state="home",
-            attributes={"friendly_name": "Steve's S25+ (BLE)", "current_address": rpa_phone},
+            attributes={"friendly_name": "Resident A Phone (BLE)", "current_address": rpa_phone},
         )
         if eid == "device_tracker.private_ble_device_cde674"
         else (
             SimpleNamespace(
                 state="home",
                 attributes={
-                    "friendly_name": "Tab S10 Lite (BLE)",
+                    "friendly_name": "Resident B Tablet (BLE)",
                     "current_address": "52:99:99:99:99:99",
                 },
             )
@@ -324,14 +324,14 @@ def test_legacy_bermuda_ble_tracker_migrates_seamlessly_to_private_ble_device(mo
     hub = NativeBLEScannerHub()
     mgr = HouseEKFManager()
 
-    # Legacy Bermuda ble_trackers config migrates cleanly to Steve's phone only (not Tab S10 Lite)!
+    # Legacy Bermuda ble_trackers config migrates cleanly to Resident A's phone only (not Resident B Tablet)!
     tracks = update_house_ekf_from_hass(
         mgr,
         hass,
         fp,
         None,
         now_ts=1000.0,
-        tracker_entities=["sensor.steve_s_s25_ble_area"],
+        tracker_entities=["sensor.resident_a_phone_ble_area"],
         ble_hub=hub,
     )
     assert "device_tracker.private_ble_device_cde674" in tracks

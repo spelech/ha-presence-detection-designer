@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from ..spatial.spatial_catalog import (
+    PRIMARY_RESIDENT_BLE_ENTITIES,
     ROOM_DOG_OCCUPANCY_ENTITIES,
     SECONDARY_BLE_TRACKER_ENTITIES,
-    STEVE_DEFINITIVE_BLE_ENTITIES,
     _normalize_ble_area_to_room,
 )
 
 _GENERIC_HUMAN_LABELS = frozenset(
-    {"", "Occupant", "Guest / Untracked Occupant", "Margot / Untracked Occupant"}
+    {"", "Occupant", "Guest / Untracked Occupant", "Resident B / Secondary Occupant"}
 )
 
 _MIN_NON_ADJACENT_FLOOR_TRANSIT_SEC = 10.0
@@ -79,28 +79,28 @@ def _consolidate_frame_occupants(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Enforce BLE telemetry identity hints and prune stale inferred holds."""
     occ_list = [dict(o) for o in (raw_occ_list or [])]
-    steve_pinned = any(str(o.get("occupant_label") or "") == "Steve" for o in occ_list)
+    resident_a_pinned = any(str(o.get("occupant_label") or "") == "Resident A" for o in occ_list)
 
     for o in occ_list:
         r_name = str(o.get("room") or "")
         r_ble = telemetry_ble_by_room.get(r_name) or []
         lbl = str(o.get("occupant_label") or "").strip()
         if (
-            not steve_pinned
+            not resident_a_pinned
             and lbl in _GENERIC_HUMAN_LABELS
-            and any(eid in STEVE_DEFINITIVE_BLE_ENTITIES for eid in r_ble)
+            and any(eid in PRIMARY_RESIDENT_BLE_ENTITIES for eid in r_ble)
         ):
-            o["occupant_label"] = "Steve"
+            o["occupant_label"] = "Resident A"
             o["occupant_type"] = "tracked_human"
-            o["detected_people"] = ["Steve"]
+            o["detected_people"] = ["Resident A"]
             o["definitive_tracker_pinned"] = True
-            steve_pinned = True
+            resident_a_pinned = True
         elif lbl in _GENERIC_HUMAN_LABELS and any(
             eid in SECONDARY_BLE_TRACKER_ENTITIES for eid in r_ble
         ):
-            o["occupant_label"] = "Margot"
+            o["occupant_label"] = "Resident B"
             o["occupant_type"] = "untracked_human"
-            o["detected_people"] = ["Margot"]
+            o["detected_people"] = ["Resident B"]
 
     pruned_inferred_rooms: list[str] = []
     if conservation_enabled and not guest_mode_enabled and house_occupant_count is not None:
@@ -137,14 +137,14 @@ def _extract_drivers_from_entity_states(
         s_eid = str(eid)
         val_str = str(raw_val or "").strip()
         val_lower = val_str.lower()
-        if s_eid in STEVE_DEFINITIVE_BLE_ENTITIES:
+        if s_eid in PRIMARY_RESIDENT_BLE_ENTITIES:
             if _normalize_ble_area_to_room(val_str) == room_name:
-                identity = "Steve"
+                identity = "Resident A"
                 drivers.append(s_eid)
             continue
         if s_eid in SECONDARY_BLE_TRACKER_ENTITIES:
             if _normalize_ble_area_to_room(val_str) == room_name and identity is None:
-                identity = "Margot"
+                identity = "Resident B"
                 drivers.append(s_eid)
             continue
         if s_eid in dog_entities:
@@ -154,6 +154,6 @@ def _extract_drivers_from_entity_states(
         if val_lower in ("on", "playing", "open", "home"):
             drivers.append(s_eid)
 
-    if identity is None and room_name == "Margot's Room":
-        identity = "Margot"
+    if identity is None and room_name == "Kids Room":
+        identity = "Resident B"
     return sorted(set(drivers)), identity, pet_on

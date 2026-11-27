@@ -222,7 +222,7 @@ export function bindRoomEvents(panel, root, presets) {
       (panel._overview &&
         panel._overview.global_settings &&
         panel._overview.global_settings.ble_trackers) || [
-        "sensor.steve_s_s25_ble_area",
+        "sensor.resident_a_phone_ble_area",
       ];
     const obs = panel._draftConfig.bayesian_observations || [];
     trackers.forEach((eid, idx) => {

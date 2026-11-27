@@ -72,8 +72,8 @@ def test_simulate_config_and_replay_comparison_eliminates_false_positives():
                 "state": "on",
             },
             {
-                "entity_id": "sensor.tab_s10_lite_ble_area",
-                "label": "Tab S10 Lite BLE",
+                "entity_id": "sensor.resident_b_tablet_ble_area",
+                "label": "Resident B Tablet BLE",
                 "preset": "moderate",
                 "prob_given_true": 0.72,
                 "prob_given_false": 0.12,
@@ -92,14 +92,14 @@ def test_simulate_config_and_replay_comparison_eliminates_false_positives():
         ],
     }
 
-    # Candidate config tunes Tab S10 Lite BLE down to 'supporting' (0.35 / 0.22)
+    # Candidate config tunes Resident B Tablet BLE down to 'supporting' (0.35 / 0.22)
     candidate_cfg = {
         **baseline_cfg,
         CONF_BAYESIAN_OBSERVATIONS: [
             baseline_cfg[CONF_BAYESIAN_OBSERVATIONS][0],
             {
-                "entity_id": "sensor.tab_s10_lite_ble_area",
-                "label": "Tab S10 Lite BLE",
+                "entity_id": "sensor.resident_b_tablet_ble_area",
+                "label": "Resident B Tablet BLE",
                 "preset": "supporting",
                 "prob_given_true": 0.35,
                 "prob_given_false": 0.22,
@@ -122,7 +122,7 @@ def test_simulate_config_and_replay_comparison_eliminates_false_positives():
             {"ts": start_ts, "state": "on"},
             {"ts": start_ts + 1200.0, "state": "off"},
         ],
-        "sensor.tab_s10_lite_ble_area": [
+        "sensor.resident_b_tablet_ble_area": [
             {"ts": start_ts, "state": "Living Room"},
             {"ts": start_ts + 2400.0, "state": "Family Room"},
         ],

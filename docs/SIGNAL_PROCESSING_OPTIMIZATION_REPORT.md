@@ -17,7 +17,7 @@
 | **Expected Calibration Error (ECE)** *(lower = better)* | `0.09235` | `0.01513` (-83.6%) | `0.01406` (-84.8%) | `0.01762` (-80.9%) | **`0.01280` (-86.1%)** |
 | **Vision-LLM Ambiguity Band** ($P_r \in [0.35, 0.70] \ge 5\text{s}$) | `4.89%` | `0.20%` (-95.9%) | `0.25%` (-94.9%) | `0.22%` (-95.5%) | **`0.16%` (-96.7%)** |
 | **Entry Latency (Mean / P95)** | `3.61s` / **`9.0s`** | `5.42s` / `15.0s` | `5.67s` / `11.0s` | **`3.59s`** / **`9.0s`** | `5.34s` / `14.0s` |
-| **Hard Safety Violations** *(Riley dog, BLE bleed, Shades, Storage)* | `0` | **`0`** | **`0`** | **`0`** | **`0`** |
+| **Hard Safety Violations** *(Household Pet dog, BLE bleed, Shades, Storage)* | `0` | **`0`** | **`0`** | **`0`** | **`0`** |
 | **Multi-Objective Scalar Loss** *(lower = better)* | `10,255.3` | **`4,122.9` (-59.8%)** | `5,019.1` (-51.1%) | `8,157.7` (-20.5%) | `4,950.3` (-51.7%) |
 | **Runtime per 48-Run Suite** | `48.43 s` | **`3.68 s`** | `16.79 s` | `4.01 s` | `3.80 s` |
 
@@ -26,7 +26,7 @@
 1. **Undisputed Overall Winner — Pure Candidate B (`B_Coupled_HMM_ref_04`):** Testing Candidate E (Hybrid HMM + Weibull HSMM + EKF Heading) empirically before committing to it paid off. While **E** tied **B** on Train (`41/48`) and achieved the tightest held-out probability calibration (**`ECE = 0.01280`**, **`0.16%`** Vision-LLM ambiguity), **Pure Candidate B generalized decisively better on unseen fuzzed seeds (`303, 404, 505`)**: **`37/48` (`77.1%`, `+18.8 pp` over v6.1)**, **`12s` FP (-99.5%)**, **`2` flaps (-88.9%)**, **`0.00789` Brier (-75.0%)**, **`4,122.9` loss (-59.8%)**, and **`13.2×` faster** than v6.1 (`3.68s` vs `48.43s`).
 2. **Why Candidate E (`Hybrid HMM + Weibull`) Lost to Candidate B on Held-Out Validation:** Once the `signal_layers.py` `from_room`/`to_room` schema bug was fixed so `ble_adjacent_bounce_prob` actually fired during fuzzing, Candidate E's aggressive EKF velocity-aligned neighbor boost (`ekf_heading_boost = 0.782`, `ekf_support_gain = 0.427`) over-reacted to noisy adjacent-room BLE bounces during rapid multi-room transitions in `morning_routine_wake_to_work_departure` (`0/3`, `27s` FP, `3` flaps vs. B's `2/3`, `0s` FP, `1` flap). This is a classic bias–variance result: Candidate B's simpler, lower-variance Markovian exit hazard (`12` params vs. `13`) with calmer EKF drift (`0.272`) resists out-of-sample RF noise far better.
 3. **Why Candidate C (`2D Raycast Grid`) Jumped +6.2 pp After the Digital-Twin Fix:** Fixing `_interpolate_actor` to resolve ground-truth rooms against physical floorplan bounding boxes eliminated `188s` of artificial behind-wall midpoint flips that had unfairly penalized purely 2D-geometric inference. Candidate C rose from `31/48` to **`34/48` (`70.8%`, `37s` FP, `1` flap)** and actually topped the Ceiling-Kitchen sensitivity split (`27/32`, `84.4%`), though at `4.6×` higher CPU cost (`16.79s`) and worse multi-occupant continuity (`0/3`).
-4. **Why Candidate D (`RFS-PHD + HSMM`) Struggled Under Active Adjacent BLE Bounce:** Candidate D remains the fastest-triggering (`3.59s` mean latency, `928s` Actionable FN) and best multi-occupant tracker (`3/3` on `multi_occupant_steve_and_margot_split_rooms`, and `lowest_brier` achieves `0.00715` Brier / `0.00975` ECE), but its multiplicative PHD intensity update amplifies noisy adjacent-room BLE bounces (`395s` FP, `22` flaps).
+4. **Why Candidate D (`RFS-PHD + HSMM`) Struggled Under Active Adjacent BLE Bounce:** Candidate D remains the fastest-triggering (`3.59s` mean latency, `928s` Actionable FN) and best multi-occupant tracker (`3/3` on `multi_occupant_resident_a_and_resident_b_split_rooms`, and `lowest_brier` achieves `0.00715` Brier / `0.00975` ECE), but its multiplicative PHD intensity update amplifies noisy adjacent-room BLE bounces (`395s` FP, `22` flaps).
 5. **Production Cutover Recommendation:** Cut over to **Pure Candidate B (`Coupled Continuous-Time Log-Odds HMM`, `ref_04`)** as PDD's unified 1 Hz inference core—keeping `HouseEKFManager` 2D trilateration intact as a supporting-only drift term (`GUARD-02`) and feeding Schmitt-hysteresis outputs into `state_machine.py` and `[0.35, 0.70]` ambiguity-band triggers into `llm_verifier.py`.
 
 ---
@@ -68,14 +68,13 @@ flowchart LR
 ```
 
 - **Interactive Studio (LAN):** http://preview.lan/m-pdd-opt-race/
-- **Interactive Studio (Remote):** https://preview.wileyriley.com/m-pdd-opt-race/
 - **Mermaid Live Editor:** [Open 5-Candidate Optimization Race Diagram in mermaid.live](https://mermaid.live/edit#pako:eNp9VG1v2jAQ_iunfJhaNbRJgPVFW6UQQqkWICJd92FMk0k8sGZsZDsbrOt_3zmh0DBtkZzEZ99zzz139pOTy4I6N843Ln_mS6IMJNOZAHx0OV8osl5C4n2eORmu0QIythCEwxu4o3JFjdpCytaUM0HhxIfhr9OZ86V2t89dPEZX_y1kORVEMalhAzijtNDv5uri9uRBESZuoBO44Hu-C4EXwG94JPwG2l7bhY7XcaHrdY9xJ4g74FKqNSfiQOYNZGvGufxBVY2fLrea5ch4KuUKenJDNZzBJ8LRQrY50QandzbNZoT4wwAjBP2zKgjEG0NFgfl_IHyFAQeMm5cQNm0YldywVqrkZgu9JLagxOD-iKwu0vtpEzyajPuIvucWSVEww6RgYrGjTY12ATUvKH77SAE_D48X2VL-pAqyUhvU7YCK5GbiqGzTMIoxSrcVEYQvkA6kRGHmlEOo8iUzNDeloihEThv8QnQ7OIUVJUytKHNLEn68PfehR3RV9ppvcHXRucLCDVIIOn5HN_PtNfB6cPLpfjyOp6eVbyTLNUelErloTYpCw3A0qkHbl3tQP9D2h5O1huBIzAZ4VLkG_X11J3leronIt1hlVuyAO3vg9uUB2G8C9xvA_cp1Osha6bCP5R1mo1GjDdreAfS6W6GO4Tq4OtIibqDGcDLczpFYrQWmbruTsnmJDXpmuxCGlBT7vmh3XwWxMeIoBu_c84Or_zdD_BgmtuXwEBuJxwTLOSdzxpk2LMfjKRXGaBDNrLB3khdU2GWaE7WTLyUau3GQuhBWDUHmnGKybi2jCwlmhoIflamOr-Ta9m8dD6Ylp7uLoKfYboG6VS8k0kbB_Jo44ch20yPTGLiVJCMIV3O2KJnBc4ey7hh-VcAEfPbO210X9bn0vsDte-ge1SINp4g1pLxoTUoDO3EGSgrDXsr6UWhKRX1l_etKeiU43njQat1WR_zFMjmy2Ko2LfavMoVYmh6OCEcfR1yv_2WuNmd2irriG1WpdzZt1TbMciYc11lRtSKscG6eHLOkK3vpF0R9d56f_wDC17-H)
 
 ### 2.2 Pareto Frontiers & Held-Out Comparison Plots
 
-![Optimization Sprawl and Held-Out Pareto Frontier](images/optimization_pareto_frontier.svg)
+![Optimization Sprawl and Held-Out Pareto Frontier](/images/optimization_pareto_frontier.svg)
 
-![Held-Out Validation Scorecard and Calibration Bars](images/candidate_comparison_bars.svg)
+![Held-Out Validation Scorecard and Calibration Bars](/images/candidate_comparison_bars.svg)
 
 ### 2.3 Winning Pipeline Architecture (`Candidate B: Coupled Log-Odds HMM`)
 
@@ -111,7 +110,6 @@ flowchart TB
 ```
 
 - **Interactive Studio (LAN):** http://preview.lan/m-pdd-winner-core/
-- **Interactive Studio (Remote):** https://preview.wileyriley.com/m-pdd-winner-core/
 - **Mermaid Live Editor:** [Open Winning Core Diagram in mermaid.live](https://mermaid.live/edit#pako:eNp9Vftv20YM_lcIASvk2oofXVogqAP4WReTH5Bid1idGSfpIh0s6YS7kxP38b-XPC1bnQ3TD_b5RH4kP36kvzqxTLhz4zzk8jHOmDJwN96XgI-uo1SxKoNwtgo_750-LL7ARJaJMEKWPIF1pLk6Mfql985940XPZLRE-7kSKTMcwjry_kAHDa8gNFKxlMOEFVyx95Hq3rphxhK04sbkokzhA_m0Ya64zuCk0V0bJkrw_aB1EWXzMaAoTBs6anDD9Wo9n0MXdiPfX6yDFR4_nb9w_AoQudWE23ADs6c4rzXmjYECdo4JI6xEnssTVxAehHer8NXsqQKfmTi7DDz7bY6BB9P2PJdS0U9wq4P6Ew8d0CIt2F-hRo_sDAHXGLGNdVSVVIZKnCrxYCA-WFt4De6g8vqtyyCj7e8YBOk2_MkQcw0N6N5g3-2wrDCTj5hwsqgLgW0549UslhGnkseyLhPsUshZ_g80L5N9-aK_k3Uww1ifRFlydYO9wRYn1IUxuBNZVzmiUCKirGWtvTtRcPBl6q2TRMNiuXzRlmA2fVbLkqmjPMFG8UTExiae-N3EwBC8zFUdW1WLGPDBA_9QKSFVQ14bVlykWYQET2RRcYOqO3GkDkm4iLfdULi_81lypmvFC14a2FZUhoXzD8rFSO0h6egQswI7QqdKKAzPnyrXQ112DaspHWYML93wORMy5McHTHGSc6ZQvGgTy9NBvZD9BjP5sB0FU683sD2zLUdGK4u0LWOplMSaMK0E61Xwfgi5TIVxTcYNO2DW2E8Pelf9wUta12MSBMtF1LhvpEZjJMxib5oCh1aAUiRuU3ELcHQ-9zrQv_9_DdwFPsIvzoSJZMewrk1Vk_J2gibF8_0lzHTMcjvwF7mFkwX6hnFWCIP7A-c-5cpKRsncZvdzdUOs7m3_1w40lzFRai-ve2-t8VKU3vSR5zncDuHN5WrZ-bRafkppVEQirUn7Y9St9V-X-RnhBr1fQD4A1nLUDQtXb647-OJd756Qry-RFyOqX6K2R1oLHDYU0Kwk2XFtYSNRMnU-aF5qSduhOVy9RtXKiEUixyT-i2Pchsgirij8pF3ximYbPO-WpNuY0Mxc3uDBXqCmnlE29oJ08Oy0HtPVN1yCnCcRi48oXDDt_t75ZiEv7ahN9nsx-hdAwyJON1jiCQCZBu_KvsX59XYsppXQhZUUGhd4xuMjmdkEnY6D-7xgInFuvjrY14L-UhKcfuf79x9rI_QP)
 
 ---
@@ -168,7 +166,7 @@ Before running the 5-candidate comparison, we audited [`tests/golden/signal_laye
 ### 4.2 Remaining Real-World Layout / Digital-Twin Blind Zones (Documented, Not Hacked)
 Two real-world physical/layout limitations remain in the digital twin and explain the residual latency-only misses on `office_to_storage` and `bedtime`:
 1. **`Basement Play Area` East Walkway Blind Pocket (`x=560..695, y=170..225`):** In `live_floorplan_snapshot.json`, `basement_play_floor` ends at `x=560` while the Storage Room doorway sits at `x=695`. Returning from Storage Room traverses ~12 seconds of unmonitored walkway before reaching `basement_stairs_bottom_motion` (`t=187`). Adding a Frigate sub-zone extension (or doorway PIR) in real life would eliminate this physical gap.
-2. **`Laundry Room` $\leftrightarrow$ `Garage` Door Contact Path Offset:** `binary_sensor.laundry_room_door` sits at `(x=566, y=420)` with a `22 px` trigger radius. In `evening_return_home_with_margot_and_riley`, the straight-line waypoint `(680, 500) -> (580, 360)` crosses `y=420` at `x=623` (`57 px` laterally offset from the contact), so the simulated actor passes without tripping the door contact. Both Candidate B and Candidate E still pass `evening_return` **`3/3` (`0s` FP, `0` flaps)** even without the door contact!
+2. **`Laundry Room` $\leftrightarrow$ `Garage` Door Contact Path Offset:** `binary_sensor.laundry_room_door` sits at `(x=566, y=420)` with a `22 px` trigger radius. In `evening_return_home_with_resident_b_and_pet`, the straight-line waypoint `(680, 500) -> (580, 360)` crosses `y=420` at `x=623` (`57 px` laterally offset from the contact), so the simulated actor passes without tripping the door contact. Both Candidate B and Candidate E still pass `evening_return` **`3/3` (`0s` FP, `0` flaps)** even without the door contact!
 
 ---
 
@@ -224,21 +222,21 @@ Moving `binary_sensor.kitchen_motion_occupancy` to the center of `Kitchen` with 
 | Scenario (3 Fuzzed Runs Each) | **A (Pass / FP / ActFN / Flaps)** | **B (Pass / FP / ActFN / Flaps)** | **C (Pass / FP / ActFN / Flaps)** | **D (Pass / FP / ActFN / Flaps)** | **E (Pass / FP / ActFN / Flaps)** |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | `basement_theater_play_area_handoff_and_zone` | `1/3` / `5s` / `52s` / `0` | `1/3` / `0s` / `61s` / `0` | `0/3` / `0s` / `80s` / `0` | `1/3` / `0s` / `52s` / `0` | `1/3` / `0s` / `62s` / `0` |
-| `bedtime_margot_room_kitchen_snack_runs` | `0/3` / `30s` / `72s` / `0` | `0/3` / `0s` / `178s` / `0` | `0/3` / `0s` / `204s` / `0` | `0/3` / `29s` / `61s` / `3` | `0/3` / `0s` / `188s` / `0` |
+| `bedtime_resident_b_room_kitchen_snack_runs` | `0/3` / `30s` / `72s` / `0` | `0/3` / `0s` / `178s` / `0` | `0/3` / `0s` / `204s` / `0` | `0/3` / `29s` / `61s` / `3` | `0/3` / `0s` / `188s` / `0` |
 | `ble_vertical_floor_bleed_no_false_trigger` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** | `3/3` / `0s` / `3s` / `0` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** |
-| `evening_return_home_with_margot_and_riley` | `0/3` / `563s` / `127s` / `3` | **`3/3` / `0s` / `289s` / `0`** | `0/3` / `22s` / `285s` / `0` | `1/3` / `34s` / `99s` / `2` | **`3/3` / `0s` / `291s` / `0`** |
+| `evening_return_home_with_resident_b_and_pet` | `0/3` / `563s` / `127s` / `3` | **`3/3` / `0s` / `289s` / `0`** | `0/3` / `22s` / `285s` / `0` | `1/3` / `34s` / `99s` / `2` | **`3/3` / `0s` / `291s` / `0`** |
 | `garage_entry_laundry_handoff` | `3/3` / `0s` / `4s` / `0` | `3/3` / `0s` / `49s` / `0` | `3/3` / `0s` / `31s` / `0` | `1/3` / `1s` / `3s` / `2` | `3/3` / `0s` / `55s` / `0` |
 | `living_dining_archway_spillover` | `3/3` / `61s` / `2s` / `0` | **`3/3` / `0s` / `2s` / `0`** | `3/3` / `0s` / `4s` / `0` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `2s` / `0`** |
 | `master_bedroom_to_master_bath_shower` | `2/3` / `2s` / `51s` / `1` | **`3/3` / `0s` / `51s` / `0`** | `3/3` / `0s` / `60s` / `0` | `3/3` / `0s` / `42s` / `0` | **`3/3` / `0s` / `51s` / `0`** |
 | `morning_routine_wake_to_work_departure` | `0/3` / `566s` / `140s` / `4` | `2/3` / `0s` / `583s` / `1` | **`3/3` / `0s` / `724s` / `0`** | `0/3` / `168s` / `344s` / `11` | `0/3` / `27s` / `593s` / `3` |
-| `multi_occupant_steve_and_margot_split_rooms` | `1/3` / `0s` / `184s` / `0` | `2/3` / `0s` / `31s` / `0` | `0/3` / `0s` / `34s` / `0` | **`3/3` / `0s` / `28s` / `0`** | `2/3` / `0s` / `31s` / `0` |
+| `multi_occupant_resident_a_and_resident_b_split_rooms` | `1/3` / `0s` / `184s` / `0` | `2/3` / `0s` / `31s` / `0` | `0/3` / `0s` / `34s` / `0` | **`3/3` / `0s` / `28s` / `0`** | `2/3` / `0s` / `31s` / `0` |
 | `office_desk_stillness_and_remote_ups_leave` | `3/3` / `0s` / `21s` / `0` | `3/3` / `0s` / `52s` / `0` | `3/3` / `0s` / `71s` / `0` | `3/3` / `0s` / `20s` / `0` | `3/3` / `0s` / `60s` / `0` |
 | `office_to_storage_room_direct_route` | `0/3` / `1003s` / `63s` / `10` | `0/3` / `12s` / `132s` / `1` | **`2/3` / `15s` / `256s` / `1`** | `0/3` / `158s` / `53s` / `4` | `0/3` / `12s` / `156s` / `1` |
 | `open_plan_passthrough_front_to_family` | `0/3` / `22s` / `8s` / `0` | **`2/3` / `0s` / `13s` / `0`** | `2/3` / `0s` / `26s` / `0` | `0/3` / `5s` / `13s` / `0` | `2/3` / `0s` / `20s` / `0` |
-| `riley_dog_patrol_main_floor` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** | `3/3` / `0s` / `0s` / `0` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** |
+| `household_pet_patrol_main_floor` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** | `3/3` / `0s` / `0s` / `0` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** |
 | `storage_room_doorway_bleed_from_play_area` | `3/3` / `0s` / `162s` / `0` | `3/3` / `0s` / `162s` / `0` | `3/3` / `0s` / `167s` / `0` | `3/3` / `0s` / `162s` / `0` | `3/3` / `0s` / `162s` / `0` |
 | `sunlit_shade_movement_false_camera_flicker` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** | `3/3` / `0s` / `3s` / `0` | `3/3` / `0s` / `0s` / `0` | **`3/3` / `0s` / `0s` / `0`** |
-| `upstairs_hallway_to_guest_room_and_margot` | `3/3` / `162s` / `51s` / `0` | **`3/3` / `0s` / `90s` / `0`** | `3/3` / `0s` / `129s` / `0` | `3/3` / `0s` / `51s` / `0` | `3/3` / `0s` / `126s` / `0` |
+| `upstairs_hallway_to_guest_room_and_resident_b` | `3/3` / `162s` / `51s` / `0` | **`3/3` / `0s` / `90s` / `0`** | `3/3` / `0s` / `129s` / `0` | `3/3` / `0s` / `51s` / `0` | `3/3` / `0s` / `126s` / `0` |
 
 > **Key Takeaway on B vs. E:** On **15 of 16 scenarios**, Candidate B and Candidate E tie on pass count—with B matching or edging out E on Actionable FN. The entire `37/48` vs `35/48` gap comes from `morning_routine_wake_to_work_departure` (`B: 2/3, 0s FP, 1 flap` vs `E: 0/3, 27s FP, 3 flaps`), where E's aggressive `ekf_heading_boost` (`0.782`) chased noisy adjacent-room BLE bounces. Meanwhile, both B and E achieve **`0s` FP across 14 of 16 scenarios** (B has `0s` FP on **15 of 16**—its only `12s` FP across all 48 runs is in `office_to_storage`!).
 

@@ -39,7 +39,7 @@ def _make_async_hass(
         "negative_space_enabled": False,
         "notifications_enabled": False,
         "transit_window_sec": 90.0,
-        "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+        "ble_trackers": ["sensor.resident_a_phone_ble_area"],
     }
     store.get_floorplan = MagicMock(return_value=floorplan or get_default_floorplan())
     store._last_spatial_frame = {}

@@ -45,7 +45,7 @@ def test_bayesian_never_starts_occupancy_from_vacant_and_holds_when_occupied() -
     # Direct trigger enters occupied_confirmed
     sm.apply_evidence(
         RoomEvidenceSnapshot(
-            active_triggers=frozenset({"binary_sensor.steves_desk_person_occupancy"}),
+            active_triggers=frozenset({"binary_sensor.office_desk_person_occupancy"}),
             camera_confirmed=True,
             bayesian_occupied=True,
             bayesian_probability=0.95,

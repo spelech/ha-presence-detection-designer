@@ -240,7 +240,7 @@ def test_categorical_house_modes_dog_letout_and_pet_only_resolution(mock_hass) -
     assert tracker.state.mode == "occupied"
     assert tracker.state.count == 1
 
-    # Once Office clears and Riley (dog) is detected inside, exiting Kitchen resolves to pet_only (count=0)
+    # Once Office clears and Household Pet (dog) is detected inside, exiting Kitchen resolves to pet_only (count=0)
     office.state_machine.force_clear(reason="test")
     dog_active["on"] = True
     tracker.handle_door_state_change("binary_sensor.back_door", True, now_ts=200.0)

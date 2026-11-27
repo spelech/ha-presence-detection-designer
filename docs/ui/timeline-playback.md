@@ -2,8 +2,6 @@
 
 The **Timeline Playback** view lets you scrub through historical Home Assistant Recorder data across **every floor and room simultaneously** — making it easy to audit why a room turned on, cleared, or flapped without waiting for real-world edge cases.
 
-![Whole-House Timeline Playback](../screenshots/whole_house_timeline_playback.png)
-
 ---
 
 ## Key Capabilities

@@ -75,7 +75,7 @@ def test_combinatorics_preview_solo_and_pairs():
             "state": "on",
         },
         {
-            "entity_id": "sensor.steve_s_s25_ble_area",
+            "entity_id": "sensor.resident_a_phone_ble_area",
             "label": "Phone BLE in Office",
             "preset": str(BayesianWeightPreset.MODERATE),
             "operator": "equals",
@@ -337,7 +337,7 @@ async def test_views_end_to_end(mock_hass):
                 mock_hass,
                 {
                     "llm_model": "gemini-2.5-flash",
-                    "ble_trackers": ["sensor.steve_s_s25_ble_area"],
+                    "ble_trackers": ["sensor.resident_a_phone_ble_area"],
                 },
             )
         )
@@ -1168,10 +1168,10 @@ for (const r of panel._floorplan.rooms) {
 
 // 7. All-floors timeline parts render every floor simultaneously + person picture / kid / dog + arrows
 panel._overview.entities.push({
-  entity_id: "person.steve",
-  name: "Steve",
+  entity_id: "person.resident_a",
+  name: "Resident A",
   domain: "person",
-  entity_picture: "/api/image/serve/steve_avatar/512x512",
+  entity_picture: "/api/image/serve/resident_a_avatar/512x512",
 });
 panel._timelineFloor = "all";
 panel._timelineData = {
@@ -1180,17 +1180,17 @@ panel._timelineData = {
       ts: 1000,
       iso: "2026-11-16T20:00:00Z",
       occupied_rooms: ["Kitchen"],
-      occupant_estimates: [{ room: "Kitchen", floor: "main", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive" }],
+      occupant_estimates: [{ room: "Kitchen", floor: "main", occupant_label: "Resident A", occupant_type: "tracked_human", method: "positive" }],
     },
     {
       ts: 1020,
       iso: "2026-11-16T20:00:20Z",
-      occupied_rooms: ["Living Room", "Margot's Room"],
+      occupied_rooms: ["Living Room", "Kids Room"],
       occupant_estimates: [
-        { room: "Living Room", floor: "main", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive" },
-        { room: "Margot's Room", floor: "upstairs", occupant_label: "Margot", occupant_type: "untracked_human", method: "positive" },
+        { room: "Living Room", floor: "main", occupant_label: "Resident A", occupant_type: "tracked_human", method: "positive" },
+        { room: "Kids Room", floor: "upstairs", occupant_label: "Resident B", occupant_type: "untracked_human", method: "positive" },
       ],
-      pet_estimates: [{ room: "Dining Room", floor: "main", occupant_label: "Riley (Dog)", occupant_type: "pet" }],
+      pet_estimates: [{ room: "Dining Room", floor: "main", occupant_label: "Household Pet (Dog)", occupant_type: "pet" }],
     },
   ],
   transitions: [
@@ -1201,8 +1201,8 @@ panel._timelineData = {
       to_room: "Living Room",
       from_floor: "main",
       to_floor: "main",
-      occupant_key: "Steve",
-      occupant_label: "Steve",
+      occupant_key: "Resident A",
+      occupant_label: "Resident A",
       occupant_type: "tracked_human",
       method: "hybrid",
       positive_drivers: ["binary_sensor.kitchen_pir"],
@@ -1215,14 +1215,14 @@ const multiParts = panel._buildTimelineFrameParts();
 assert.strictEqual(multiParts.floorParts.length, panel._floorplan.floors.length, "All Floors mode must render every floor");
 const mainPart = multiParts.floorParts.find((fp) => fp.floor.id === "main");
 const upPart = multiParts.floorParts.find((fp) => fp.floor.id === "upstairs");
-assert(mainPart.svgInner.includes("/api/image/serve/steve_avatar/512x512"), "Confirmed person should use entity_picture");
+assert(mainPart.svgInner.includes("/api/image/serve/resident_a_avatar/512x512"), "Confirmed person should use entity_picture");
 assert(mainPart.svgInner.includes("🐶"), "Dog should use dog icon");
 assert(mainPart.arrowsSvg.includes("marker-end"), "Same-floor transition should draw directional arrow");
 assert(upPart.svgInner.includes("🧒"), "Kid should use kid icon");
 
 // 8. ASD-STE100 transition formatter uses short active-voice sentences
 const ste = panel._formatTransitionSte100(panel._timelineData.transitions[0], new Map([["binary_sensor.kitchen_pir", "Kitchen PIR"], ["camera.living_room", "Living Room Cam"]]));
-assert.strictEqual(ste.actionText, "Steve moved from Kitchen to Living Room.");
+assert.strictEqual(ste.actionText, "Resident A moved from Kitchen to Living Room.");
 assert(ste.reasonText.includes("Sensor Kitchen PIR detected motion. Camera Living Room Cam shows no person."));
 
 // 9. Solid vs Dashed rings, lower-right count badge, persistent dashed arrows, and clean cross-floor
@@ -1238,11 +1238,11 @@ for (let i = 0; i < 16; i++) {
     iso: `2026-11-16T21:00:${String(i).padStart(2, "0")}Z`,
     occupied_rooms: i === 0 ? ["Kitchen"] : ["Living Room", "Master Bathroom"],
     occupant_estimates: i === 0
-      ? [{ room: "Kitchen", floor: "main", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive" }]
+      ? [{ room: "Kitchen", floor: "main", occupant_label: "Resident A", occupant_type: "tracked_human", method: "positive" }]
       : [
           { room: "Living Room", floor: "main", occupant_label: "Occupant", occupant_type: "human", method: "negative_space", from_room: "Kitchen", from_floor: "main" },
           { room: "Living Room", floor: "main", occupant_label: "Occupant", occupant_type: "human", method: "negative_space" },
-          { room: "Master Bathroom", floor: "upstairs", occupant_label: "Steve", occupant_type: "tracked_human", method: "positive", from_room: "Kitchen", from_floor: "main" },
+          { room: "Master Bathroom", floor: "upstairs", occupant_label: "Resident A", occupant_type: "tracked_human", method: "positive", from_room: "Kitchen", from_floor: "main" },
         ],
   });
 }
@@ -1345,7 +1345,7 @@ async def test_timeline_reconstruction_view_uses_component_logs(mock_hass):
             "probability_pct": 91.2,
             "entity_states": {
                 "binary_sensor.office_person_occupancy": "on",
-                "sensor.steve_s_s25_ble_area": "Office",
+                "sensor.resident_a_phone_ble_area": "Office",
             },
         },
     )
@@ -1361,7 +1361,7 @@ async def test_timeline_reconstruction_view_uses_component_logs(mock_hass):
     office_occ = next(o for o in last_occ if o["room"] == "Office")
     kitchen_occ = next(o for o in last_occ if o["room"] == "Kitchen")
     assert office_occ["method"] == "positive"
-    assert office_occ["occupant_label"] == "Steve"
+    assert office_occ["occupant_label"] == "Resident A"
     assert office_occ["probability_pct"] == 91.2
     assert kitchen_occ["method"] == "negative_space"
     assert kitchen_occ["occupancy_state"] == "occupied_holding"

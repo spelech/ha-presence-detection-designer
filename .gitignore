@@ -17,3 +17,8 @@ tests/golden/optimization/results/
 
 # Stray mock dirs from tests
 MagicMock/
+
+# VitePress build & deps
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/

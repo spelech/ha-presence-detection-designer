@@ -30,7 +30,7 @@
           "preset": "strong"
         },
         {
-          "entity_id": "sensor.steve_s_s25_ble_area",
+          "entity_id": "sensor.resident_a_phone_ble_area",
           "operator": "equals",
           "state": "Office",
           "preset": "moderate"
@@ -79,7 +79,7 @@
   ],
   "initial_states": {
     "binary_sensor.office_motion_occupancy": "off",
-    "sensor.steve_s_s25_ble_area": "Office",
+    "sensor.resident_a_phone_ble_area": "Office",
     "binary_sensor.office_occupancy": "on",
     "binary_sensor.office_person_occupancy": "off",
     "binary_sensor.kitchen_island_person_occupancy": "off",
@@ -124,7 +124,7 @@
     {
       "at": 25,
       "set": {
-        "sensor.steve_s_s25_ble_area": "Kitchen"
+        "sensor.resident_a_phone_ble_area": "Kitchen"
       },
       "expect": {
         "Office": {
