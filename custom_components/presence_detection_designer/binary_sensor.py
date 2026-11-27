@@ -27,7 +27,7 @@ except Exception:  # noqa: BLE001
 
 
 from .const import DOMAIN
-from .coordinator import RoomPresenceCoordinator
+from .engine.coordinator import RoomPresenceCoordinator
 from .entity import PresenceDesignerEntityMixin
 
 

@@ -8,8 +8,7 @@ from typing import Any
 
 from homeassistant.helpers import config_validation as cv
 
-from .bayesian_engine import parse_yaml_or_dict_to_config
-from .config_translator import _collect_available_entities_for_room
+from .api.views import async_apply_and_persist_room_config, async_register_views
 from .const import (
     CONF_LLM_AGENT_ID,
     CONF_LLM_API_KEY,
@@ -23,10 +22,11 @@ from .const import (
     VIEWS_REGISTERED,
     LLMProviderType,
 )
-from .coordinator import RoomPresenceCoordinator
-from .llm_verifier import LLMVerifier
+from .engine.bayesian_engine import parse_yaml_or_dict_to_config
+from .engine.coordinator import RoomPresenceCoordinator
+from .llm.config_translator import _collect_available_entities_for_room
+from .llm.llm_verifier import LLMVerifier
 from .store import async_get_store
-from .views import async_apply_and_persist_room_config, async_register_views
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -302,7 +302,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 
     async def handle_set_guest_mode(call: Any) -> None:
         """Enable or disable global Guest Mode across all rooms."""
-        from .house_perimeter import get_house_perimeter_tracker
+        from .spatial.house_perimeter import get_house_perimeter_tracker
 
         enabled = bool(call.data.get("enabled", True))
         tracker = get_house_perimeter_tracker(hass)
@@ -341,7 +341,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 
     async def handle_set_house_occupant_count(call: Any) -> None:
         """Set whole-house occupancy mode (vacant/occupied/guest/pet_only) or mapped count."""
-        from .house_perimeter import get_house_perimeter_tracker
+        from .spatial.house_perimeter import get_house_perimeter_tracker
 
         tracker = get_house_perimeter_tracker(hass)
         raw_mode = str(call.data.get("mode") or "").strip().lower()
@@ -362,7 +362,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 
     async def handle_reset_vacancy(call: Any) -> None:
         """Reset house vacancy to 0 (and optionally clear occupied rooms)."""
-        from .perimeter_helpers import async_reset_house_vacancy
+        from .spatial.perimeter_helpers import async_reset_house_vacancy
 
         await async_reset_house_vacancy(hass, clear_rooms=bool(call.data.get("clear_rooms", False)))
 

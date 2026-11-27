@@ -26,8 +26,8 @@ from .const import (
     DOMAIN,
     LLMProviderType,
 )
-from .hmm_engine import DEFAULT_HMM_PARAMS
-from .spatial_topology import get_default_floorplan
+from .engine.hmm_engine import DEFAULT_HMM_PARAMS
+from .spatial.spatial_topology import get_default_floorplan
 
 DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "llm_provider_type": str(LLMProviderType.VISION_API),

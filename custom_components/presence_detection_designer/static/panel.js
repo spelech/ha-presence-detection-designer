@@ -15,7 +15,7 @@ import {
   refreshStateGraph,
   runReplay,
   saveOrCompileFloorplan,
-} from "./components/api-client.js";
+} from "./shared/api-client.js";
 import {
   applyYamlDraft,
   refreshPreview,
@@ -24,7 +24,7 @@ import {
   runTranslation,
   saveCurrentRoom,
   saveGlobalSettings,
-} from "./components/api-room-actions.js";
+} from "./shared/api-room-actions.js";
 import {
   buildOccupantTokenSvg,
   colorFromHex,
@@ -32,8 +32,8 @@ import {
   getRoomInteriorAnchor,
   hslToRgb,
   resolveOccupantProfile,
-} from "./components/colors.js";
-import { compileFloorplanClient } from "./components/floorplan-compiler.js";
+} from "./shared/colors.js";
+import { compileFloorplanClient } from "./shared/floorplan-compiler.js";
 import {
   applyFriendlyRoleGroup,
   escapeHtml,
@@ -47,7 +47,7 @@ import {
   roomStatusSummary,
   sensorWeightMap,
   slugifyRoom,
-} from "./components/formatters.js";
+} from "./shared/formatters.js";
 import {
   buildStepSvgPaths,
   computeCameraVisibilityPolygon,
@@ -61,15 +61,15 @@ import {
   snapRoomGeometry,
   snapValue,
   transformSvgPath,
-} from "./components/geometry.js";
-import { buildLosAndConeHandlesSvg, renderCameraSelectOptions } from "./components/ui-primitives.js";
-import { renderAdvancedDrawer } from "./panes/advanced-drawer.js";
-import { bindCanvasDragEvents } from "./panes/events-canvas-drag.js";
-import { bindFloorplanDoorEvents } from "./panes/events-floorplan-doors.js";
-import { bindFloorplanEvents } from "./panes/events-floorplan.js";
-import { bindRoomEvents } from "./panes/events-room.js";
-import { bindTimelineAndModalEvents } from "./panes/events-timeline-modals.js";
-import { renderFloorplanPane } from "./panes/floorplan-pane.js";
+} from "./shared/geometry.js";
+import { buildLosAndConeHandlesSvg, renderCameraSelectOptions } from "./shared/ui-primitives.js";
+import { renderAdvancedDrawer } from "./room/advanced-drawer.js";
+import { bindCanvasDragEvents } from "./floorplan/events-canvas-drag.js";
+import { bindFloorplanDoorEvents } from "./floorplan/events-floorplan-doors.js";
+import { bindFloorplanEvents } from "./floorplan/events-floorplan.js";
+import { bindRoomEvents } from "./room/events-room.js";
+import { bindTimelineAndModalEvents } from "./diagnostics/events-timeline-modals.js";
+import { renderFloorplanPane } from "./floorplan/floorplan-pane.js";
 import {
   detectActiveFpPreset,
   getDefaultFloorplan,
@@ -87,26 +87,26 @@ import {
   syncQuickBarValuesInPlace,
   undoFp,
   updateFloorplanCanvasInPlace,
-} from "./panes/floorplan-state.js";
-import { renderFloorplanSvgBundle } from "./panes/floorplan-svg.js";
+} from "./floorplan/floorplan-state.js";
+import { renderFloorplanSvgBundle } from "./floorplan/floorplan-svg.js";
 import {
   buildFloorplanHudHtml,
   getActiveFloorContext,
   isSpecLocked,
   renderCameraAlignmentDetails,
   renderQuickAdjustBar,
-} from "./panes/floorplan-widgets.js";
-import { renderPanelShell } from "./panes/panel-shell.js";
-import { renderSimpleRoomEditor } from "./panes/room-editor.js";
-import { renderStateMachinePane } from "./panes/state-machine-pane.js";
-import { renderReplayPane, renderStatisticsPane } from "./panes/statistics-replay-panes.js";
-import { renderTimelinePane, toggleTimelinePlay } from "./panes/timeline-pane.js";
+} from "./floorplan/floorplan-widgets.js";
+import { renderPanelShell } from "./layout/panel-shell.js";
+import { renderSimpleRoomEditor } from "./room/room-editor.js";
+import { renderStateMachinePane } from "./room/state-machine-pane.js";
+import { renderReplayPane, renderStatisticsPane } from "./diagnostics/statistics-replay-panes.js";
+import { renderTimelinePane, toggleTimelinePlay } from "./diagnostics/timeline-pane.js";
 import {
   buildSingleFloorTimelineParts,
   buildTimelineFrameParts,
   patchSvgTimelineLayers,
   updateTimelineFrameInPlace,
-} from "./panes/timeline-svg.js";
+} from "./diagnostics/timeline-svg.js";
 
 class PresenceDetectionDesignerPanel extends HTMLElement {
   constructor() {

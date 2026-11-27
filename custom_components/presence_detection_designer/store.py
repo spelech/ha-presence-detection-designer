@@ -31,7 +31,6 @@ except Exception:  # noqa: BLE001
             self._mem = copy.deepcopy(data)
 
 
-from .ble_kalman_tracker import HouseEKFManager
 from .const import (
     DATA_STORE,
     DOMAIN,
@@ -40,8 +39,9 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
 )
-from .hmm_engine import DEFAULT_HMM_PARAMS, HouseHMMEngine, HouseTopologyModel
-from .spatial_topology import get_default_floorplan
+from .engine.hmm_engine import DEFAULT_HMM_PARAMS, HouseHMMEngine, HouseTopologyModel
+from .spatial.ble_kalman_tracker import HouseEKFManager
+from .spatial.spatial_topology import get_default_floorplan
 from .store_defaults import (
     DEFAULT_GLOBAL_SETTINGS,
     _default_store_data,
