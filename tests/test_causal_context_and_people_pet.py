@@ -191,3 +191,55 @@ def test_coordinator_google_assistant_manual_off_and_auto_latch_prevention():
     coord.async_update_listeners()
     assert bin_sensor.extra_state_attributes["manual_intent"] == "auto"
     assert bin_sensor.extra_state_attributes["manual_off_suppressed"] is False
+
+
+def test_manual_off_in_vacant_room_and_automation_group_echo_do_not_suppress():
+    """Turning off lights in a vacant room or via automation group-entity echo must not latch suppression."""
+    from custom_components.presence_detection_designer.causal_context import RoomActuationTracker
+
+    tracker = RoomActuationTracker()
+
+    # 1. Manual/physical off while room is ALREADY vacant -> must stay 'auto' (not suppressed)
+    res_vacant = tracker.handle_actuator_event(
+        entity_id="light.master_bedroom_lights",
+        old_state=_make_state("on"),
+        new_state=_make_state("off", user_id=None, parent_id=None),
+        room_is_occupied=False,
+        now_ts=1000.0,
+    )
+    assert res_vacant["manual_off_suppressed"] is False
+    assert tracker.manual_intent == "auto"
+
+    # 2. Automation turns off child light, followed 0.2s later by parent group echo without parent_id
+    #    even while occupied -> must be classified as automation_echo and NOT suppress
+    res_child = tracker.handle_actuator_event(
+        entity_id="light.master_bedroom_nightstands",
+        old_state=_make_state("on"),
+        new_state=_make_state("off", parent_id="auto_off_parent"),
+        room_is_occupied=True,
+        now_ts=2000.0,
+    )
+    assert res_child["actor"] == "automation"
+    res_group_echo = tracker.handle_actuator_event(
+        entity_id="light.master_bedroom_lights",
+        old_state=_make_state("on"),
+        new_state=_make_state("off", user_id=None, parent_id=None),
+        room_is_occupied=True,
+        now_ts=2000.2,
+    )
+    assert res_group_echo["actor"] == "automation_echo"
+    assert res_group_echo["is_manual"] is False
+    assert res_group_echo["manual_off_suppressed"] is False
+    assert tracker.manual_intent == "auto"
+
+    # 3. Genuine physical off while occupied (outside 3s echo window) -> DOES suppress
+    res_real = tracker.handle_actuator_event(
+        entity_id="light.master_bedroom_lights",
+        old_state=_make_state("on"),
+        new_state=_make_state("off", user_id=None, parent_id=None),
+        room_is_occupied=True,
+        now_ts=2010.0,
+    )
+    assert res_real["is_manual"] is True
+    assert res_real["manual_off_suppressed"] is True
+    assert tracker.manual_intent == "manual_off_suppressed"
