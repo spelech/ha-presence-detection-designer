@@ -587,15 +587,27 @@ def test_blueprints_consume_occupancy_state_without_box_state():
         assert required_tok in lighting_raw
 
 
+def _read_static_frontend_sources() -> str:
+    """Concatenate all static frontend JS and CSS modules for UI contract assertions."""
+    from pathlib import Path
+
+    static_dir = (
+        Path(__file__).resolve().parent.parent
+        / "custom_components"
+        / "presence_detection_designer"
+        / "static"
+    )
+    parts: list[str] = []
+    for ext in ("*.js", "*.css"):
+        for path in sorted(static_dir.rglob(ext)):
+            parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 @pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
 def test_panel_js_ui_contracts():
     """@requirement UI-02: panel.js exposes PIR Gate, max_hold_timeout, Automations tab, and valid presets."""
-    from pathlib import Path
-
-    repo_root = Path(__file__).resolve().parent.parent
-    panel_js = (
-        repo_root / "custom_components" / "presence_detection_designer" / "static" / "panel.js"
-    ).read_text(encoding="utf-8")
+    panel_js = _read_static_frontend_sources()
 
     for stale in ("box_state", "timer_active", "occupied_sealed", "occupied_unsealed"):
         assert stale not in panel_js, f"Found legacy token {stale!r} in panel.js"
@@ -619,12 +631,7 @@ def test_panel_js_ui_contracts():
 @pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
 def test_panel_js_responsive_and_state_chart_strip():
     """@requirement UI-02: panel.js includes container-query HA-sidebar layout, floorplan layers/legend, badge strip, and multipane settings."""
-    from pathlib import Path
-
-    repo_root = Path(__file__).resolve().parent.parent
-    panel_js = (
-        repo_root / "custom_components" / "presence_detection_designer" / "static" / "panel.js"
-    ).read_text(encoding="utf-8")
+    panel_js = _read_static_frontend_sources()
 
     for tok in (
         "@container pdd (max-width: 1460px)",
@@ -780,11 +787,8 @@ def test_panel_js_floorplan_pointer_ux():
         repo_root / "custom_components" / "presence_detection_designer" / "static" / "panel.js"
     )
     js_test = r"""
-const fs = require("fs");
-const vm = require("vm");
-const assert = require("assert");
-
-const src = fs.readFileSync(process.argv[1], "utf8");
+import assert from "node:assert";
+import { pathToFileURL } from "node:url";
 
 function makeElement(tag = "div") {
   return {
@@ -817,7 +821,7 @@ class FakeHTMLElement {
 }
 
 const defined = {};
-const sandbox = {
+Object.assign(globalThis, {
   HTMLElement: FakeHTMLElement,
   customElements: { define(n, c) { defined[n] = c; }, get(n) { return defined[n]; } },
   document: {
@@ -826,25 +830,14 @@ const sandbox = {
     removeEventListener: () => {},
     activeElement: null,
   },
-  window: { addEventListener: () => {}, removeEventListener: () => {} },
+  window: { location: { origin: "http://localhost:8123" }, addEventListener: () => {}, removeEventListener: () => {} },
   localStorage: { _m: {}, getItem(k) { return this._m[k] || null; }, setItem(k, v) { this._m[k] = String(v); } },
   requestAnimationFrame: (fn) => { fn(); return 1; },
   cancelAnimationFrame: () => {},
   ResizeObserver: class { observe() {} disconnect() {} },
-  console,
-  setTimeout,
-  clearTimeout,
-  Math,
-  JSON,
-  Number,
-  String,
-  Array,
-  Object,
-  Map,
-  Set,
-};
-sandbox.globalThis = sandbox;
-vm.runInNewContext(src, sandbox);
+});
+
+await import(pathToFileURL(process.argv[1]).href);
 
 const PanelClass = defined["presence-detection-designer-panel"];
 assert(PanelClass, "Panel custom element should register");
@@ -978,7 +971,7 @@ assert.strictEqual(
 );
 """
     proc = subprocess.run(
-        [node_bin, "-e", js_test, str(panel_path)],
+        [node_bin, "--input-type=module", "-e", js_test, str(panel_path)],
         capture_output=True,
         text=True,
         timeout=20,
@@ -1006,7 +999,7 @@ def test_panel_js_ui_polish_behaviors():
         / "static"
         / "panel.js"
     )
-    panel_text = panel_path.read_text(encoding="utf-8")
+    panel_text = _read_static_frontend_sources()
     for tok in (
         "1. Canvas Edit Tool",
         "2. Map Visibility",
@@ -1020,11 +1013,9 @@ def test_panel_js_ui_polish_behaviors():
         assert tok in panel_text, f"Missing UI polish token {tok!r}"
 
     js_test = r"""
-const fs = require("fs");
-const vm = require("vm");
-const assert = require("assert");
+import assert from "node:assert";
+import { pathToFileURL } from "node:url";
 
-const src = fs.readFileSync(process.argv[1], "utf8");
 function makeElement(tag) {
   return {
     tagName: tag,
@@ -1065,7 +1056,7 @@ class FakeHTMLElement {
   attachShadow() { return this.shadowRoot; }
 }
 const defined = {};
-const sandbox = {
+Object.assign(globalThis, {
   HTMLElement: FakeHTMLElement,
   customElements: { define(n, c) { defined[n] = c; }, get(n) { return defined[n]; } },
   document: {
@@ -1074,26 +1065,13 @@ const sandbox = {
     removeEventListener: () => {},
     activeElement: null,
   },
-  window: { addEventListener: () => {}, removeEventListener: () => {} },
+  window: { location: { origin: "http://localhost:8123" }, addEventListener: () => {}, removeEventListener: () => {} },
   localStorage: { _m: {}, getItem(k) { return this._m[k] || null; }, setItem(k, v) { this._m[k] = String(v); } },
   requestAnimationFrame: (fn) => { fn(); return 1; },
   cancelAnimationFrame: () => {},
   ResizeObserver: class { observe() {} disconnect() {} },
-  console,
-  setTimeout,
-  clearTimeout,
-  Math,
-  JSON,
-  Number,
-  String,
-  Array,
-  Object,
-  Map,
-  Set,
-  Date,
-};
-sandbox.globalThis = sandbox;
-vm.runInNewContext(src, sandbox);
+});
+await import(pathToFileURL(process.argv[1]).href);
 
 const PanelClass = defined["presence-detection-designer-panel"];
 const panel = new PanelClass();
@@ -1276,7 +1254,7 @@ assert(ringUp.occupantsSvg.includes("From Main"), "Cross-floor transition must s
 assert(ringUp.arrowsSvg.includes('stroke-dasharray="4,3"'), "Cross-floor transition must show compact dashed entry stub");
 """
     proc = subprocess.run(
-        [node_bin, "-e", js_test, str(panel_path)],
+        [node_bin, "--input-type=module", "-e", js_test, str(panel_path)],
         capture_output=True,
         text=True,
         timeout=20,

@@ -117,7 +117,7 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
                     config={
                         "_panel_custom": {
                             "name": "presence-detection-designer-panel",
-                            "js_url": f"/presence_detection_designer/static/panel.js?v={version}",
+                            "module_url": f"/presence_detection_designer/static/panel.js?v={version}",
                         },
                         "version": version,
                     },

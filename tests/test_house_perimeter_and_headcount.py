@@ -859,13 +859,13 @@ def test_panel_js_strips_house_occupant_count_from_global_settings_save():
     """Global settings UI save must never re-submit stale house_occupant_count."""
     from pathlib import Path
 
-    panel_js = (
+    static_dir = (
         Path(__file__).resolve().parents[1]
         / "custom_components"
         / "presence_detection_designer"
         / "static"
-        / "panel.js"
-    ).read_text()
+    )
+    panel_js = "\n".join(p.read_text(encoding="utf-8") for p in sorted(static_dir.rglob("*.js")))
     assert "delete payload.house_occupant_count;" in panel_js
 
 
