@@ -5,16 +5,12 @@ from __future__ import annotations
 import pytest
 
 from custom_components.presence_detection_designer.bayesian_engine import (
-    apply_contextual_bayesian_penalties,
     build_effective_observations,
-    evaluate_bayesian,
     resolve_observation_weights,
     solo_posterior_pct,
 )
 from custom_components.presence_detection_designer.const import (
     CONF_BAYESIAN_OBSERVATIONS,
-    CONF_BAYESIAN_PRIOR,
-    CONF_BAYESIAN_THRESHOLD,
     CONF_ROOM_NAME,
     CONF_SUSTAINING_CONDITIONS,
     CONF_TRIGGER_ENTITIES,
@@ -25,7 +21,6 @@ from custom_components.presence_detection_designer.sensor_reliability import (
     temper_observation_dict_reliability,
 )
 from custom_components.presence_detection_designer.state_machine import RoomPresenceStateMachine
-from tests.harness.virtual_ha import VirtualHAHarness
 
 
 @pytest.mark.requirement("BAYES-01", category="BAYESIAN", req_type="FailClosedGuardrail")
@@ -149,137 +144,3 @@ def test_single_pass_tempering_supporting_floor_and_store_cleanup(mock_hass) -> 
     assert eco_occ["cooldown_weighted"] == 1800.0
     _, pt_occ_rt, pf_occ_rt = resolve_observation_weights(eco_occ)
     assert (pt_occ_rt, pf_occ_rt) == (eco_occ["prob_given_true"], eco_occ["prob_given_false"])
-
-
-@pytest.mark.requirement("BAYES-04", category="BAYESIAN", req_type="FailClosedGuardrail")
-@pytest.mark.asyncio
-async def test_asymmetric_negative_evidence_ble_confirmation_and_neutral_camera_pir(
-    tmp_path,
-) -> None:
-    """@requirement BAYES-04: Camera/PIR off neutral; BLE penalizes only when destination room is corroborated."""
-    rooms = [
-        {
-            CONF_ROOM_NAME: "Office",
-            "mode": "open",
-            "inactivity_timeout": 20,
-            "pir_validation_enabled": False,
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.office_occupancy_occupancy"],
-            CONF_BAYESIAN_PRIOR: 0.35,
-            CONF_BAYESIAN_THRESHOLD: 0.75,
-            CONF_BAYESIAN_OBSERVATIONS: [
-                {
-                    "entity_id": "binary_sensor.office_person_occupancy",
-                    "preset": "supporting",
-                    "penalize_when_off": True,
-                },
-                {
-                    "entity_id": "binary_sensor.office_occupancy",
-                    "preset": "supporting",
-                    "prob_given_true": 0.62,
-                    "prob_given_false": 0.28,
-                    "cooldown_sec": 1800.0,
-                    "cooldown_weighted": 1800.0,
-                },
-                {
-                    "entity_id": "sensor.office_ups_used_watts_filtered",
-                    "operator": "greater_than",
-                    "state": "140",
-                    "preset": "supporting",
-                    "prob_given_true": 0.68,
-                    "prob_given_false": 0.25,
-                    "signal_weighted": "power_monitor",
-                },
-                {
-                    "entity_id": "sensor.steve_s_s25_ble_area",
-                    "operator": "equals",
-                    "state": "Office",
-                    "preset": "moderate",
-                },
-            ],
-        },
-        {
-            CONF_ROOM_NAME: "Living Room",
-            "mode": "open",
-            "inactivity_timeout": 20,
-            "pir_validation_enabled": False,
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.living_room_couch_person_occupancy"],
-        },
-        {
-            CONF_ROOM_NAME: "Kitchen",
-            "mode": "open",
-            "inactivity_timeout": 20,
-            "pir_validation_enabled": False,
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.kitchen_island_person_occupancy"],
-        },
-    ]
-
-    with VirtualHAHarness(
-        storage_dir=tmp_path,
-        global_settings={"ble_decider_enabled": True, "inference_engine": "legacy"},
-    ) as harness:
-        await harness.async_add_rooms(rooms)
-        harness.set_state("binary_sensor.office_person_occupancy", "off")
-        harness.set_state("binary_sensor.office_occupancy", "on")
-        harness.set_state("sensor.office_ups_used_watts_filtered", "220")
-        harness.set_state("sensor.steve_s_s25_ble_area", "Office")
-        harness.set_state("binary_sensor.living_room_couch_person_occupancy", "off")
-        harness.set_state("binary_sensor.kitchen_island_person_occupancy", "off")
-
-        # Enter Office via PIR, then clear PIR -> Office holds on corroborated Bayesian (BLE + Ecobee + UPS)
-        harness.set_state("binary_sensor.office_occupancy_occupancy", "on")
-        office = harness.coordinators["Office"]
-        assert office.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
-        harness.set_state("binary_sensor.office_occupancy_occupancy", "off")
-        assert office.state_machine.state == OccupancyState.OCCUPIED_HOLDING
-        # Camera off stayed neutral (never penalized)
-        cam_inact = next(
-            o
-            for o in office.last_bayesian_eval.inactive_observations
-            if o["entity_id"] == "binary_sensor.office_person_occupancy"
-        )
-        assert cam_inact["likelihood_ratio"] == 1.0
-
-        # BLE bleeds to Living Room (Living Room camera/PIR off -> uncorroborated!)
-        harness.set_state("sensor.steve_s_s25_ble_area", "Living Room")
-        assert office.last_bayesian_eval.is_occupied is True
-        assert office.state_machine.state == OccupancyState.OCCUPIED_HOLDING
-        ble_inact_unconf = next(
-            o
-            for o in office.last_bayesian_eval.inactive_observations
-            if o["entity_id"] == "sensor.steve_s_s25_ble_area"
-        )
-        assert ble_inact_unconf["likelihood_ratio"] == 1.0
-
-        # Watch BLE still in Office overrides S25 moving to confirmed Kitchen
-        harness.set_state("sensor.steve_watch_ble_area", "Office")
-        harness.set_state("sensor.steve_s_s25_ble_area", "Kitchen")
-        harness.set_state("binary_sensor.kitchen_island_person_occupancy", "on")
-        office._eval_bayesian_and_update()
-        assert office.last_bayesian_eval.is_occupied is True
-
-        # Once Watch also leaves Office (so Kitchen is confirmed & no BLE remains in Office), BLE penalizes Office
-        harness.set_state("sensor.steve_watch_ble_area", "Kitchen")
-        office._eval_bayesian_and_update()
-        ble_inact_conf = next(
-            o
-            for o in office.last_bayesian_eval.inactive_observations
-            if o["entity_id"] == "sensor.steve_s_s25_ble_area"
-        )
-        assert ble_inact_conf["likelihood_ratio"] < 0.35
-        assert office.last_bayesian_eval.is_occupied is False
-        assert office.state_machine.state == OccupancyState.OCCUPIED_COOLING
-
-        # Guest Mode disables cross-room BLE penalty
-        ctx_guest = apply_contextual_bayesian_penalties(
-            office.bayesian_observations,
-            room_name="Office",
-            spatial_frame=office._last_spatial_frame,
-            hass=harness.hass,
-            guest_mode_enabled=True,
-        )
-        ble_obs_guest = next(
-            o for o in ctx_guest if o["entity_id"] == "sensor.steve_s_s25_ble_area"
-        )
-        assert ble_obs_guest["penalize_when_off"] is False
-        ev_guest = evaluate_bayesian(ctx_guest, harness.hass.states.get, prior=0.35, threshold=0.75)
-        assert ev_guest.is_occupied is True

@@ -251,62 +251,6 @@ def test_ekf_room_probability_to_likelihood_is_smooth_and_bounded():
     assert (pt_unc / pf_unc) < lr_hi
 
 
-def test_ekf_continuous_bayesian_fusion_and_no_pir_double_counting(mock_hass=None):
-    """Continuous EKF probability flows into apply_contextual_bayesian_penalties without overpowering cameras."""
-    from custom_components.presence_detection_designer.bayesian_engine import (
-        apply_contextual_bayesian_penalties,
-        evaluate_bayesian,
-    )
-
-    obs = [
-        {
-            "entity_id": "binary_sensor.nursery_bed_person_occupancy",
-            "prob_given_true": 0.96,
-            "prob_given_false": 0.02,
-        },
-        {
-            "entity_id": "sensor.steve_s_s25_ble_area",
-            "operator": "equals",
-            "state": "Margot's Room",
-            "prob_given_true": 0.78,
-            "prob_given_false": 0.08,
-        },
-    ]
-    spatial_frame = {
-        "ekf_tracks": {
-            "sensor.steve_s_s25_ble_area": {
-                "floor": "main",
-                "sigma_x_ft": 2.5,
-                "sigma_y_ft": 2.5,
-                "active_proxy_count": 3,
-                "room_probabilities": {"Kitchen": 0.97, "Family Room": 0.03},
-            }
-        }
-    }
-    adjusted = apply_contextual_bayesian_penalties(
-        obs,
-        room_name="Margot's Room",
-        spatial_frame=spatial_frame,
-        hass=MagicMock(),
-        guest_mode_enabled=False,
-    )
-    ble_obs = next(o for o in adjusted if o["entity_id"] == "sensor.steve_s_s25_ble_area")
-    assert ble_obs.get("_ekf_continuous") is True
-    assert ble_obs.get("_ekf_room_prob") == 0.0
-
-    # Even with Steve's EKF squarely in Kitchen (0% in Margot's Room), Margot's camera keeps room > 75%
-    def _getter(eid: str):
-        if eid == "binary_sensor.nursery_bed_person_occupancy":
-            return SimpleNamespace(state="on", attributes={})
-        if eid == "sensor.steve_s_s25_ble_area":
-            return SimpleNamespace(state="__ekf_active__", attributes={})
-        return SimpleNamespace(state="off", attributes={})
-
-    res = evaluate_bayesian(adjusted, _getter, prior=0.15, threshold=0.75)
-    assert res.is_occupied is True
-    assert res.probability > 0.75
-
-
 def test_read_bermuda_proxy_ranges_handles_irk_mac_and_monotonic_stamp():
     """Live Bermuda IRK devices with monotonic_time_coarse stamps produce fresh ranges."""
     import time

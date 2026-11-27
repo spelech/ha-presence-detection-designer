@@ -185,6 +185,13 @@ async def test_statistics_and_replay_views_and_timeline_buffer(mock_hass):
     coord = RoomPresenceCoordinator(mock_hass, "entry_mb", cfg)
     mock_hass.data.setdefault(DOMAIN, {})["entry_mb"] = coord
     await coord.async_setup()
+    import time
+
+    from custom_components.presence_detection_designer.coordinator_dispatch import (
+        evaluate_coordinator_hmm,
+    )
+
+    evaluate_coordinator_hmm(coord, now_ts=time.time() + 2.0)
 
     # Verify coordinator automatically recorded a timeline snapshot in PDDStore
     events = store.get_timeline_events("entry_mb")

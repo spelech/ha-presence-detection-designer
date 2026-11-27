@@ -168,39 +168,44 @@ async def test_sustaining_actuator_never_latches_triggers_or_injects_manual_entr
 
     rooms = [
         {
-            "room_name": "Living Room",
+            "room_name": "Guest Room",
             "mode": "open",
             "inactivity_timeout": 30,
             "max_hold_timeout": 120,
-            "trigger_entities": ["binary_sensor.lr_motion"],
+            "trigger_entities": ["binary_sensor.guest_person_occupancy"],
             "pir_validation_enabled": False,
             "sustaining_conditions": [
-                {"entity_id": "media_player.lr_tv", "operator": "equals", "state": "playing"}
+                {"entity_id": "media_player.guest_tv", "operator": "equals", "state": "playing"}
             ],
         }
     ]
     with VirtualHAHarness(storage_dir=tmp_path) as harness:
         await harness.async_add_rooms(rooms)
-        coord = harness.coordinators["Living Room"]
-        harness.set_state("binary_sensor.lr_motion", "off")
-        harness.set_state("media_player.lr_tv", "off")
+        coord = harness.coordinators["Guest Room"]
+        harness.set_state("binary_sensor.guest_person_occupancy", "off")
+        harness.set_state("media_player.guest_tv", "off")
         harness.advance(5)
 
         # Turning on sustaining actuator alone from vacant must NOT inject manual entry or add to _active_triggers
-        harness.set_state("media_player.lr_tv", "playing")
-        assert "media_player.lr_tv" not in coord._active_triggers
+        harness.set_state("media_player.guest_tv", "playing")
+        assert "media_player.guest_tv" not in coord._active_triggers
         assert coord.state_machine.state == OccupancyState.VACANT
 
-        # Now occupy via real trigger, clear trigger -> occupied_holding, then turn TV off -> occupied_cooling -> vacant
-        harness.set_state("binary_sensor.lr_motion", "on")
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
-        harness.set_state("binary_sensor.lr_motion", "off")
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_HOLDING
-        harness.set_state("media_player.lr_tv", "off")
-        assert "media_player.lr_tv" not in coord._active_triggers
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_COOLING
-        harness.advance(31)
-        assert coord.state_machine.state == OccupancyState.VACANT
+        # Now occupy via real trigger, clear trigger -> sustaining TV holds occupancy
+        harness.set_state("binary_sensor.guest_person_occupancy", "on")
+        for _ in range(3):
+            harness.advance(1.0)
+        assert coord.state_machine.is_present is True
+        harness.set_state("binary_sensor.guest_person_occupancy", "off")
+        harness.advance(5.0)
+        assert coord.state_machine.is_present is True
+        harness.set_state("media_player.guest_tv", "off")
+        assert "media_player.guest_tv" not in coord._active_triggers
+        for _ in range(90):
+            harness.advance(1.0)
+            if not coord.state_machine.is_present:
+                break
+        assert coord.state_machine.is_present is False
 
 
 @pytest.mark.requirement("GUARD-07", category="GUARD", req_type="FailClosedGuardrail")

@@ -7,7 +7,6 @@ import time
 from typing import Any
 
 from .bayesian_engine import (
-    apply_contextual_bayesian_penalties,
     build_effective_observations,
     classify_sensor_reliability,
     config_to_yaml_representations,
@@ -280,11 +279,8 @@ class PDDPreviewBayesianView(HomeAssistantView):
         observations = normalized.get(CONF_BAYESIAN_OBSERVATIONS) or build_effective_observations(
             normalized
         )
-        room_name = str(normalized.get("room_name") or body.get("room_name") or "").strip()
         store = await async_get_store(hass)
-        spatial_frame = getattr(store, "_last_spatial_frame", None)
         gs = getattr(store, "global_settings", None)
-        guest_mode = bool(gs.get("guest_mode_enabled", False)) if isinstance(gs, dict) else False
         ble_active = (
             bool(body["ble_decider_enabled"])
             if "ble_decider_enabled" in body
@@ -294,13 +290,6 @@ class PDDPreviewBayesianView(HomeAssistantView):
                 else True
             )
         )
-        contextual_obs = apply_contextual_bayesian_penalties(
-            observations,
-            room_name=room_name,
-            spatial_frame=spatial_frame,
-            hass=hass,
-            guest_mode_enabled=guest_mode or not ble_active,
-        )
         suppressed_eids: set[str] = set()
         if not ble_active:
             for obs in observations:
@@ -309,7 +298,7 @@ class PDDPreviewBayesianView(HomeAssistantView):
                     suppressed_eids.add(eid_str)
 
         evaluation = evaluate_bayesian(
-            observations=contextual_obs,
+            observations=observations,
             state_getter=lambda eid: (
                 None if eid in suppressed_eids else _safe_state_getter(hass, eid)
             ),

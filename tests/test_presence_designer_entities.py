@@ -184,13 +184,26 @@ async def test_component_lifecycle_and_services(mock_hass, sample_config):
 
     await registered_services["presence_detection_designer.force_refresh"](call_mock)
 
-    # Coordinator event handlers
+    # Coordinator event handlers (bind camera trigger on the room for immediate HMM confirmation)
+    import time
+
+    from custom_components.presence_detection_designer.coordinator_dispatch import (
+        evaluate_coordinator_hmm,
+    )
+
+    coord.config[CONF_TRIGGER_ENTITIES] = ["binary_sensor.lr_person_occupancy"]
+    mock_hass.data[DOMAIN]["_store"]._hmm_sig = None
+    mock_hass.states.get = lambda eid: (
+        MagicMock(state="on") if eid == "binary_sensor.lr_person_occupancy" else None
+    )
     trigger_event = MagicMock()
     trigger_event.data = {
-        "entity_id": "binary_sensor.lr_motion",
+        "entity_id": "binary_sensor.lr_person_occupancy",
         "new_state": MagicMock(state="on"),
     }
     coord._handle_trigger_change(trigger_event)
+    evaluate_coordinator_hmm(coord, now_ts=time.time() + 2.0)
+    evaluate_coordinator_hmm(coord, now_ts=time.time() + 4.0)
     assert coord.state_machine.is_present is True
 
     boundary_event = MagicMock()

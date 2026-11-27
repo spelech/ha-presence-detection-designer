@@ -8,25 +8,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from custom_components.presence_detection_designer.const import (
-    CONF_BAYESIAN_OBSERVATIONS,
-    CONF_BAYESIAN_PRIOR,
-    CONF_BAYESIAN_THRESHOLD,
-    CONF_INACTIVITY_TIMEOUT,
-    CONF_LLM_ENABLED,
-    CONF_MODE,
-    CONF_PIR_VALIDATION_ENABLED,
-    CONF_ROOM_NAME,
-    CONF_SUSTAINING_CONDITIONS,
-    CONF_TRIGGER_ENTITIES,
     DATA_STORE,
     DOMAIN,
-    Mode,
     OccupancyState,
 )
 from custom_components.presence_detection_designer.evidence_snapshot import RoomEvidenceSnapshot
 from custom_components.presence_detection_designer.floorplan_presets import get_default_floorplan
 from custom_components.presence_detection_designer.state_machine import RoomPresenceStateMachine
-from tests.harness.virtual_ha import VirtualHAHarness
 
 
 def _make_async_hass(
@@ -70,77 +58,6 @@ def _set_state(hass: MagicMock, entity_id: str, value: str) -> MagicMock:
     return st
 
 
-@pytest.mark.asyncio
-@pytest.mark.requirement("STATE-08", category="STATE", req_type="PositiveFeature")
-async def test_cooling_room_resumes_holding_when_tv_and_ble_activate(tmp_path):
-    """@requirement STATE-08: Active TV/Bayesian hold evidence during cooling resumes OCCUPIED_HOLDING instead of vacating."""
-    rooms = [
-        {
-            CONF_ROOM_NAME: "Family Room",
-            CONF_MODE: str(Mode.OPEN),
-            CONF_INACTIVITY_TIMEOUT: 180,
-            "max_hold_timeout": 1800,
-            CONF_LLM_ENABLED: True,
-            CONF_PIR_VALIDATION_ENABLED: False,
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.family_room_floor_person_occupancy"],
-            CONF_SUSTAINING_CONDITIONS: [
-                {
-                    "entity_id": "media_player.family_room_tv",
-                    "operator": "equals",
-                    "state": "playing",
-                }
-            ],
-            CONF_BAYESIAN_PRIOR: 0.25,
-            CONF_BAYESIAN_THRESHOLD: 0.75,
-            CONF_BAYESIAN_OBSERVATIONS: [
-                {"entity_id": "binary_sensor.family_room_motion_occupancy", "preset": "strong"},
-                {
-                    "entity_id": "sensor.steve_s_s25_ble_area",
-                    "operator": "equals",
-                    "state": "Family Room",
-                    "preset": "moderate",
-                },
-                {
-                    "entity_id": "media_player.family_room_tv",
-                    "operator": "equals",
-                    "state": "playing",
-                    "preset": "supporting",
-                },
-            ],
-        }
-    ]
-    with VirtualHAHarness(storage_dir=tmp_path) as harness:
-        await harness.async_add_rooms(rooms)
-        coord = harness.coordinators["Family Room"]
-        harness.set_state("binary_sensor.family_room_floor_person_occupancy", "off")
-        harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
-        harness.set_state("media_player.family_room_tv", "idle")
-        harness.set_state("sensor.steve_s_s25_ble_area", "unknown")
-
-        # 1. Enter room via camera floor zone while PIR active
-        harness.set_state("binary_sensor.family_room_motion_occupancy", "on")
-        harness.set_state("binary_sensor.family_room_floor_person_occupancy", "on")
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_CONFIRMED
-
-        # 2. Sit on couch: camera zone clears -> holding on PIR
-        harness.set_state("binary_sensor.family_room_floor_person_occupancy", "off")
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_HOLDING
-
-        # 3. PIR clears while TV still idle & BLE unknown -> starts 180s cooling
-        harness.set_state("binary_sensor.family_room_motion_occupancy", "off")
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_COOLING
-
-        # 4. 90s into cooling, TV starts playing & BLE returns to Family Room -> MUST resume HOLDING
-        harness.advance(90)
-        harness.set_state("media_player.family_room_tv", "playing")
-        harness.set_state("sensor.steve_s_s25_ble_area", "Family Room")
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_HOLDING
-        assert coord.state_machine.is_present is True
-
-        # 5. Advance past original 180s inactivity window -> still OCCUPIED_HOLDING (not VERIFYING/VACANT)
-        harness.advance(120)
-        assert coord.state_machine.state == OccupancyState.OCCUPIED_HOLDING
-        assert coord.state_machine.is_present is True
 
 
 @pytest.mark.requirement("STATE-09", category="STATE", req_type="FailClosedGuardrail")

@@ -202,8 +202,19 @@ async def test_views_end_to_end(mock_hass):
             CONF_BAYESIAN_THRESHOLD: 0.75,
         },
     )
-    await coord.async_setup()
+    from custom_components.presence_detection_designer.store import async_get_store
+
+    await async_get_store(mock_hass)
     mock_hass.data.setdefault(DOMAIN, {})["entry_office"] = coord
+    await coord.async_setup()
+    # Coupled HMM integrates evidence across 2 ticks to reject 1-frame glitches
+    import time
+
+    from custom_components.presence_detection_designer.coordinator_dispatch import (
+        evaluate_coordinator_hmm,
+    )
+
+    evaluate_coordinator_hmm(coord, now_ts=time.time() + 2.0)
 
     # 1. Overview view
     overview_view = PDDOverviewView()
@@ -539,77 +550,6 @@ async def test_serialize_room_coordinator_includes_pir_gate_and_sensor_weights(m
     assert weights["sensor.office_ups_used_watts_filtered"]["human_exclusive"] is False
 
 
-@pytest.mark.requirement("UI-01", category="UI", req_type="PositiveFeature")
-@pytest.mark.anyio
-async def test_preview_bayesian_view_applies_contextual_ble_penalties_and_neutral_camera(mock_hass):
-    """@requirement UI-01: Bayesian preview penalizes confirmed other-room BLE while keeping camera/PIR off neutral."""
-
-    def _state_getter(entity_id: str):
-        states = {
-            "sensor.steve_s_s25_ble_area": MagicMock(state="Living Room", attributes={}),
-            "binary_sensor.living_room_person_occupancy": MagicMock(state="on", attributes={}),
-            "binary_sensor.office_person_occupancy": MagicMock(state="off", attributes={}),
-            "binary_sensor.office_motion_occupancy": MagicMock(state="off", attributes={}),
-        }
-        return states.get(entity_id)
-
-    mock_hass.states.get = MagicMock(side_effect=_state_getter)
-    lr_coord = RoomPresenceCoordinator(
-        mock_hass,
-        "entry_lr",
-        {
-            CONF_ROOM_NAME: "Living Room",
-            CONF_MODE: str(Mode.OPEN),
-            CONF_TRIGGER_ENTITIES: ["binary_sensor.living_room_person_occupancy"],
-        },
-    )
-    await lr_coord.async_setup()
-    mock_hass.data.setdefault(DOMAIN, {})["entry_lr"] = lr_coord
-
-    preview = PDDPreviewBayesianView()
-    req = _make_request(
-        mock_hass,
-        {
-            "ble_decider_enabled": True,
-            "config": {
-                "room_name": "Office",
-                "bayesian_prior": 0.2,
-                "bayesian_threshold": 0.75,
-                "bayesian_observations": [
-                    {
-                        "entity_id": "sensor.steve_s_s25_ble_area",
-                        "label": "Steve BLE",
-                        "preset": "moderate",
-                        "operator": "equals",
-                        "state": "Office",
-                    },
-                    {
-                        "entity_id": "binary_sensor.office_person_occupancy",
-                        "label": "Office Camera Person",
-                        "preset": "decisive",
-                        "operator": "equals",
-                        "state": "on",
-                    },
-                    {
-                        "entity_id": "binary_sensor.office_motion_occupancy",
-                        "label": "Office PIR",
-                        "preset": "strong",
-                        "operator": "equals",
-                        "state": "on",
-                    },
-                ],
-            },
-        },
-    )
-
-    status, res = _unpack(await preview.post(req))
-    assert status == 200
-    assert res["probability"] == 0.0
-    inactive = {o["entity_id"]: o for o in res["inactive_observations"]}
-    assert inactive["sensor.steve_s_s25_ble_area"]["likelihood_ratio"] < 0.99
-    assert inactive["binary_sensor.office_person_occupancy"]["likelihood_ratio"] == 1.0
-    assert inactive["binary_sensor.office_motion_occupancy"]["likelihood_ratio"] == 1.0
-    assert len(res["sensor_weights"]) == 3
 
 
 @pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")

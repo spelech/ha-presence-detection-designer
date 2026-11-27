@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from .bayesian_engine import (
-    apply_contextual_bayesian_penalties,
     build_effective_observations,
     evaluate_bayesian,
     parse_yaml_or_dict_to_config,
@@ -205,12 +204,6 @@ def simulate_config_on_timelines(
                     return _SimStateObj(entity_id=eid, state="off", attributes={})
                 return current_states.get(eid)
 
-            obs_to_eval = apply_contextual_bayesian_penalties(
-                obs_to_eval,
-                room_name=room_name_str,
-                spatial_frame=prev_spatial_frame,
-                guest_mode_enabled=bool(config.get("guest_mode_enabled", False)),
-            )
             evaluation = evaluate_bayesian(
                 obs_to_eval,
                 _sim_state_getter,

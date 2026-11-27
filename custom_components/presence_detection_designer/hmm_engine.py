@@ -20,7 +20,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .sensor_reliability import ECOBEE_MOTION_ENTITIES, ECOBEE_OCCUPANCY_ENTITIES
+from .sensor_reliability import (
+    ECOBEE_MOTION_ENTITIES,
+    ECOBEE_OCCUPANCY_ENTITIES,
+    classify_sensor_reliability,
+    is_camera_entity,
+)
 from .spatial_catalog import (
     CAMERA_WHOLE_FRAME_ENTITY,
     ROOM_DOG_OCCUPANCY_ENTITIES,
@@ -270,22 +275,24 @@ class HouseTopologyModel:
                 self.room_camera_subzones[sz_room].append(spec)
                 seen_cam_eids[sz_room].add(eid)
 
-        # Include whole-frame primary camera triggers (e.g., Storage Room)
+        # Include camera triggers declared in room configs (whole-frame or custom sub-zones)
         wf_to_cam = {v: k for k, v in CAMERA_WHOLE_FRAME_ENTITY.items()}
         for r, cfg in self.room_configs.items():
             if r not in self.tracked_set:
                 continue
             for eid in cfg.get("trigger_entities") or []:
                 eid_s = str(eid)
-                if eid_s in wf_to_cam and eid_s not in seen_cam_eids[r]:
-                    cid = wf_to_cam[eid_s]
+                if not eid_s or eid_s in seen_cam_eids[r]:
+                    continue
+                if eid_s in wf_to_cam or is_camera_entity(eid_s):
+                    cid = wf_to_cam.get(eid_s, eid_s)
                     spec = SubZoneBinding(
                         entity_id=eid_s,
                         room=r,
                         camera_id=cid,
                         floor=self.room_floor.get(r, "main"),
                         is_sunlit=(r in ROOM_SHADE_ENTITIES),
-                        is_whole_frame=True,
+                        is_whole_frame=(eid_s in wf_to_cam),
                     )
                     self.room_camera_subzones[r].append(spec)
                     seen_cam_eids[r].add(eid_s)
@@ -329,10 +336,33 @@ class HouseTopologyModel:
             if host in self.room_fast_pirs:
                 self.room_fast_pirs[host].append(pspec)
 
-        # Boundary entities and Ecobee observations declared in room configs
+        # Boundary entities, custom PIR triggers, and Ecobee observations declared in room configs
+        seen_pir_eids: dict[str, set[str]] = {
+            r: {p.entity_id for p in pirs} for r, pirs in self.room_fast_pirs.items()
+        }
         for r, cfg in self.room_configs.items():
             if r not in self.tracked_set:
                 continue
+            for eid in cfg.get("trigger_entities") or []:
+                eid_s = str(eid)
+                if (
+                    not eid_s
+                    or eid_s in seen_cam_eids[r]
+                    or eid_s in seen_pir_eids[r]
+                    or eid_s in ECOBEE_MOTION_ENTITIES
+                ):
+                    continue
+                if classify_sensor_reliability(eid_s).is_human_exclusive:
+                    self.room_fast_pirs[r].append(
+                        PIRBinding(
+                            entity_id=eid_s,
+                            host_room=r,
+                            floor=self.room_floor.get(r, "main"),
+                            is_pet_immune=False,
+                            model_preset="",
+                        )
+                    )
+                    seen_pir_eids[r].add(eid_s)
             for beid in cfg.get("boundary_entities") or []:
                 beid_s = str(beid)
                 if beid_s.startswith("binary_sensor."):
