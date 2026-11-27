@@ -338,3 +338,65 @@ def test_legacy_bermuda_ble_tracker_migrates_seamlessly_to_private_ble_device(mo
     assert "device_tracker.private_ble_device_6d94ad" not in tracks
     assert tracks["device_tracker.private_ble_device_cde674"]["floor"] == "upstairs"
     assert tracks["device_tracker.private_ble_device_cde674"]["active_proxy_count"] == 1
+
+
+def test_scanner_matches_proxy_via_device_registry_name_when_esphome_name_is_stale(monkeypatch):
+    """A repurposed scanner (e.g. mainfloor-bt-proxy) matches via Device Registry name."""
+    fake_dr = SimpleNamespace(
+        CONNECTION_BLUETOOTH="bluetooth",
+        CONNECTION_NETWORK_MAC="mac",
+        async_get=lambda _h: SimpleNamespace(
+            async_get_device=lambda connections=None: (
+                SimpleNamespace(
+                    name="Master Bedroom NFC Reader (08:3A:F2:AD:DB:12)",
+                    name_by_user=None,
+                    area_id="area_mb",
+                )
+                if connections and ("bluetooth", "08:3A:F2:AD:DB:12") in connections
+                else None
+            )
+        ),
+    )
+    fake_ar = SimpleNamespace(
+        async_get=lambda _h: SimpleNamespace(
+            async_get_area=lambda aid: (
+                SimpleNamespace(name="Master Bedroom") if aid == "area_mb" else None
+            )
+        )
+    )
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.device_registry", fake_dr)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.area_registry", fake_ar)
+    if "homeassistant.helpers" in sys.modules:
+        monkeypatch.setattr(
+            sys.modules["homeassistant.helpers"], "device_registry", fake_dr, raising=False
+        )
+        monkeypatch.setattr(
+            sys.modules["homeassistant.helpers"], "area_registry", fake_ar, raising=False
+        )
+
+    scanner = SimpleNamespace(
+        source="08:3A:F2:AD:DB:12",
+        name="mainfloor-bt-proxy",
+        discovered_devices_and_advertisement_data={
+            "11:22:33:44:55:66": (
+                SimpleNamespace(address="11:22:33:44:55:66"),
+                SimpleNamespace(rssi=-55, tx_power=None, manufacturer_data={}),
+            )
+        },
+        discovered_device_timestamps={"11:22:33:44:55:66": 499.0},
+    )
+    fp = get_default_floorplan()
+    hub = NativeBLEScannerHub()
+    hass = MagicMock()
+    hass.config_entries.async_entries.return_value = []
+    _tids, ranges_map = hub.collect_proxy_ranges(
+        hass,
+        fp,
+        now_ts=1000.0,
+        tracker_specs=["phone=mac:11:22:33:44:55:66"],
+        scanners_override=[scanner],
+        now_mono_override=500.0,
+    )
+    assert len(ranges_map["phone"]) == 1
+    assert ranges_map["phone"][0].proxy_id == "nfc_master_bedroom"
+    assert ranges_map["phone"][0].floor == "upstairs"

@@ -109,35 +109,43 @@ def _get_ha_scanners(hass: Any) -> list[Any]:
     return []
 
 
-def _resolve_scanner_area_name(hass: Any, scanner: Any) -> str:
-    """Resolve scanner's Home Assistant area name via Device + Area registries."""
-    direct = getattr(scanner, "area_name", None)
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
+def _resolve_scanner_device_info(hass: Any, scanner: Any) -> tuple[list[str], str]:
+    """Resolve scanner's Device Registry names and Area Registry name."""
+    dev_names: list[str] = []
+    direct_area = getattr(scanner, "area_name", None)
+    area_name = direct_area.strip() if isinstance(direct_area, str) and direct_area.strip() else ""
     if hass is None:
-        return ""
+        return dev_names, area_name
     src = str(getattr(scanner, "source", "") or "").strip()
     if not src:
-        return ""
+        return dev_names, area_name
     try:
         from homeassistant.helpers import area_registry as ar
         from homeassistant.helpers import device_registry as dr
 
         dev_reg = dr.async_get(hass)
         area_reg = ar.async_get(hass)
-        if dev_reg is None or area_reg is None:
-            return ""
+        if dev_reg is None:
+            return dev_names, area_name
         dev = dev_reg.async_get_device(connections={(dr.CONNECTION_BLUETOOTH, src.upper())})
         if dev is None:
             dev = dev_reg.async_get_device(connections={(dr.CONNECTION_NETWORK_MAC, src.lower())})
-        area_id = getattr(dev, "area_id", None) if dev is not None else None
-        if area_id:
-            area = area_reg.async_get_area(area_id)
-            if area is not None and getattr(area, "name", None):
-                return str(area.name)
+        if dev is not None:
+            for attr in ("name_by_user", "name"):
+                val = getattr(dev, attr, None)
+                if isinstance(val, str) and val.strip():
+                    cleaned = re.sub(r"\s*\([0-9A-Fa-f:]{17}\)\s*$", "", val.strip())
+                    if cleaned and cleaned not in dev_names:
+                        dev_names.append(cleaned)
+            if not area_name and area_reg is not None:
+                area_id = getattr(dev, "area_id", None)
+                if area_id:
+                    area = area_reg.async_get_area(area_id)
+                    if area is not None and getattr(area, "name", None):
+                        area_name = str(area.name)
     except Exception:  # noqa: BLE001
         pass
-    return ""
+    return dev_names, area_name
 
 
 def _index_floorplan_proxies(
@@ -188,21 +196,36 @@ def _match_scanner_to_proxy(
             return by_source[norm_src]
 
     s_name = str(getattr(scanner, "name", "") or "")
-    s_norm = _norm_token(s_name)
-    if s_norm:
-        if s_norm in by_key:
-            return by_key[s_norm]
+    dev_names, area_name = _resolve_scanner_device_info(hass, scanner)
+    candidate_norms = [n for n in (_norm_token(x) for x in [s_name, *dev_names]) if n]
+
+    for c_norm in candidate_norms:
+        if c_norm in by_key:
+            return by_key[c_norm]
+    for c_norm in candidate_norms:
         for key, proxy in by_key.items():
-            if key in s_norm or s_norm in key:
+            if len(key) >= 4 and (key in c_norm or c_norm in key):
                 return proxy
 
-    s_area = _norm_token(_resolve_scanner_area_name(hass, scanner))
+    s_area = _norm_token(area_name)
     if s_area:
         cands = by_room.get(s_area) or []
         if len(cands) == 1:
             return cands[0]
-        if cands and s_norm:
-            return next((c for c in cands if _norm_token(c.get("id")) in s_norm), cands[0])
+        if cands and candidate_norms:
+            for c_norm in candidate_norms:
+                hit = next(
+                    (
+                        c
+                        for c in cands
+                        if _norm_token(c.get("id")) in c_norm
+                        or c_norm in _norm_token(c.get("name"))
+                    ),
+                    None,
+                )
+                if hit is not None:
+                    return hit
+            return cands[0]
     return None
 
 
