@@ -772,7 +772,20 @@ class HouseHMMEngine:
                 states.get(eid) == "on" for eid in topo.room_ecobee_occupancy[r]
             )
             ekf_confirming = p_ekf_r >= 0.40 and ekf_conf >= 0.25
-            if sust or (self.occupied[r] and ekf_confirming and ecobee_on):
+            other_room_active = any(
+                cam_active_room.get(other, False)
+                or (now_ts - self.last_fresh_trigger_ts[other]) <= 60.0
+                for other in rooms
+                if other != r
+            )
+            ekf_stationary_hold = (
+                self.occupied[r]
+                and r not in TRANSIT_ROOMS
+                and p_ekf_r >= 0.70
+                and ekf_conf >= 0.30
+                and not other_room_active
+            )
+            if sust or ekf_stationary_hold or (self.occupied[r] and ekf_confirming and ecobee_on):
                 h *= sustain_mult
 
             cur_l += h * (_L_PRIOR - cur_l) * 3.5 * dt
@@ -785,9 +798,9 @@ class HouseHMMEngine:
             cov_pct = float(topo.room_coverage.get(r, {}).get("max_coverage_pct", 0.0))
             if cov_pct > 0.0 and self._is_camera_clear(r, states) and cur_l > _L_PRIOR:
                 neg_mult = 1.0
-                if sust or (ekf_confirming and ecobee_on):
+                if sust or ekf_stationary_hold or (ekf_confirming and ecobee_on):
                     neg_mult = 0.08
-                elif ekf_confirming and r not in TRANSIT_ROOMS:
+                elif ekf_confirming and r not in TRANSIT_ROOMS and not other_room_active:
                     neg_mult = 0.35
                 cur_l -= clear_decay * (cov_pct / 100.0) * neg_mult * dt
 
