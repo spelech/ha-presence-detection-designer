@@ -14,7 +14,7 @@ def reconcile_tracker_headcount(
     now_ts: float | None = None,
     occupied_room_names: list[str] | None = None,
     force: bool = False,
-    ) -> bool:
+) -> bool:
     """Reconcile house occupancy mode on missed exits or pet presence updates."""
     from .perimeter_helpers import active_ble_resident_count, has_active_pet_presence
 

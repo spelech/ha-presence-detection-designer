@@ -93,17 +93,16 @@ def _normalize_store_payload(hass: Any, stored: Any) -> tuple[dict[str, Any], bo
             gs[key] = copy.deepcopy(default_val)
             dirty = True
 
-    if (
-        hass
-        and hasattr(hass, "config_entries")
-        and hasattr(hass.config_entries, "async_entries")
-    ):
+    if hass and hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_entries"):
         rooms = stored["rooms"]
         for entry in hass.config_entries.async_entries(DOMAIN):
             eid = getattr(entry, "entry_id", None)
             if not eid or eid in rooms:
                 continue
-            merged = {**(getattr(entry, "data", None) or {}), **(getattr(entry, "options", None) or {})}
+            merged = {
+                **(getattr(entry, "data", None) or {}),
+                **(getattr(entry, "options", None) or {}),
+            }
             rooms[eid] = copy.deepcopy(merged)
             dirty = True
             for llm_key in (

@@ -95,10 +95,6 @@ def test_ups_watts_never_pins_steve_location_in_spatial_frame() -> None:
     assert frame["room_estimates"]["Office"]["occupied"] is False
 
 
-
-
-
-
 @pytest.mark.requirement("SIGNAL-02", category="SIGNAL", req_type="PositiveFeature")
 @pytest.mark.asyncio
 async def test_migration_topology_and_state_graph_demote_and_label_non_exclusive(
@@ -167,8 +163,6 @@ async def test_migration_topology_and_state_graph_demote_and_label_non_exclusive
     weights = {w["entity_id"]: w for w in body["rooms"][0]["sensor_weights"]}
     assert weights["sensor.office_ups_used_watts_filtered"]["human_exclusive"] is False
     assert weights["light.office_lights"]["human_exclusive"] is False
-
-
 
 
 @pytest.mark.requirement("SIGNAL-01", category="SIGNAL", req_type="FailClosedGuardrail")

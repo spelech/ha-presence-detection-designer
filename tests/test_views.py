@@ -550,8 +550,6 @@ async def test_serialize_room_coordinator_includes_pir_gate_and_sensor_weights(m
     assert weights["sensor.office_ups_used_watts_filtered"]["human_exclusive"] is False
 
 
-
-
 @pytest.mark.requirement("UI-02", category="UI", req_type="PositiveFeature")
 def test_blueprints_consume_occupancy_state_without_box_state():
     """@requirement UI-02: PDD automation blueprints use occupancy_state cleanly without legacy box_state."""

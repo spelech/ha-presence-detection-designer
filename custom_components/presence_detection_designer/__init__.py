@@ -82,7 +82,9 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
 
     store = domain_data.get("_store")
     gs = getattr(store, "global_settings", None) if store is not None else None
-    designer_enabled = True if not isinstance(gs, dict) else bool(gs.get("designer_ui_enabled", True))
+    designer_enabled = (
+        True if not isinstance(gs, dict) else bool(gs.get("designer_ui_enabled", True))
+    )
 
     if not designer_enabled:
         if domain_data.get(PANEL_REGISTERED):

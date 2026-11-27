@@ -58,8 +58,6 @@ def _set_state(hass: MagicMock, entity_id: str, value: str) -> MagicMock:
     return st
 
 
-
-
 @pytest.mark.requirement("STATE-09", category="STATE", req_type="FailClosedGuardrail")
 def test_llm_room_empty_always_vacates_even_when_tv_hold_active():
     """@requirement STATE-09: Vision AI empty verdict always routes OCCUPIED_VERIFYING -> VACANT, and hold_timeout locks out cooling hold resumption."""

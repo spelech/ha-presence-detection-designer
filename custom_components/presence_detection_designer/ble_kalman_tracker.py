@@ -411,7 +411,6 @@ def update_house_ekf_from_hass(
     }
     raw_ble = (spatial_frame or {}).get("raw_ble_positions") or {}
 
-
     for ble_eid in tracker_entities:
         eid_str = str(ble_eid).strip()
         if not eid_str:

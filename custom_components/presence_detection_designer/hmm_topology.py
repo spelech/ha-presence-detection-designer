@@ -439,7 +439,9 @@ def extract_ekf_room_probs(
     tr_floor = str(best_tr.get("floor", ""))
     rprobs = best_tr.get("room_probabilities") or {}
     out = {
-        r: (float(rprobs.get(r, 0.0)), conf) if topology.room_floor.get(r) == tr_floor else (0.0, conf)
+        r: (float(rprobs.get(r, 0.0)), conf)
+        if topology.room_floor.get(r) == tr_floor
+        else (0.0, conf)
         for r in rooms
     }
     return True, out

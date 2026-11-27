@@ -50,7 +50,6 @@ _MACHINE_TRANSITIONS: list[dict[str, Any]] = [
 ]
 
 
-
 def format_state_machine_explanation(sm: Any) -> str:
     """Return plain-English explanation of current occupancy state and recent transition."""
     state_label = "OCCUPIED" if sm.is_present else "VACANT"

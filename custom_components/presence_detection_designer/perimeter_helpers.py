@@ -301,7 +301,10 @@ async def async_reset_house_vacancy(hass: Any, *, clear_rooms: bool = False) -> 
     if clear_rooms and hass and isinstance(getattr(hass, "data", None), dict):
         for coord in hass.data.get(DOMAIN, {}).values():
             if isinstance(coord, RoomPresenceCoordinator):
-                if getattr(coord, "state_machine", None) is not None and coord.state_machine.is_present:
+                if (
+                    getattr(coord, "state_machine", None) is not None
+                    and coord.state_machine.is_present
+                ):
                     coord.state_machine.force_clear(reason="House vacancy reset")
                     coord.async_update_listeners()
 

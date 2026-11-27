@@ -28,9 +28,16 @@ from .hmm_topology import (
 )
 
 __all__ = [
-    "DEFAULT_HMM_PARAMS", "EXTERIOR_BIRTH_ROOMS", "OPEN_PLAN_MAIN_ROOMS",
-    "SLEEP_BATH_ROOMS", "TRANSIT_ROOMS", "HouseHMMEngine", "HouseTopologyModel",
-    "PIRBinding", "RoomBeliefSnapshot", "SubZoneBinding",
+    "DEFAULT_HMM_PARAMS",
+    "EXTERIOR_BIRTH_ROOMS",
+    "OPEN_PLAN_MAIN_ROOMS",
+    "SLEEP_BATH_ROOMS",
+    "TRANSIT_ROOMS",
+    "HouseHMMEngine",
+    "HouseTopologyModel",
+    "PIRBinding",
+    "RoomBeliefSnapshot",
+    "SubZoneBinding",
 ]
 
 
@@ -119,9 +126,6 @@ class HouseHMMEngine:
                 return False
         return True
 
-    def _extract_ekf_room_probs(self, ekf_tracks: dict[str, dict[str, Any]] | None) -> tuple[bool, dict[str, tuple[float, float]]]:
-        return extract_ekf_room_probs(self.topology, ekf_tracks)
-
     def step(
         self,
         *,
@@ -194,8 +198,8 @@ class HouseHMMEngine:
         handoff_drain = float(p["handoff_drain_rate"])
         ekf_gain = float(p["ekf_support_gain"])
 
-        ekf_init, ekf_probs = self._extract_ekf_room_probs(
-            None if guest_mode_enabled else ekf_tracks
+        ekf_init, ekf_probs = extract_ekf_room_probs(
+            self.topology, None if guest_mode_enabled else ekf_tracks
         )
 
         fresh_human_room: dict[str, bool] = {r: False for r in rooms}
