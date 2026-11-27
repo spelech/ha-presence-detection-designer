@@ -41,7 +41,7 @@ except Exception:  # noqa: BLE001
 
 from .binary_sensor import _extract_spatial_and_causal_attrs
 from .const import DOMAIN
-from .coordinator import RoomPresenceCoordinator
+from .engine.coordinator import RoomPresenceCoordinator
 from .entity import PresenceDesignerEntityMixin
 
 
@@ -237,7 +237,7 @@ class HouseHeadcountSensor(SensorEntity):
 
 async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
     """Set up the sensor platform."""
-    from .house_perimeter import get_house_perimeter_tracker
+    from .spatial.house_perimeter import get_house_perimeter_tracker
 
     coordinator: RoomPresenceCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = [OccupancyProbabilitySensor(coordinator, entry.entry_id)]

@@ -31,89 +31,32 @@ except Exception:  # noqa: BLE001
             self._mem = copy.deepcopy(data)
 
 
-from .ble_kalman_tracker import HouseEKFManager
 from .const import (
     DATA_STORE,
-    DEFAULT_BLE_DECIDER_ENABLED,
-    DEFAULT_BLE_TRACKERS,
-    DEFAULT_DOOR_DUPLICATE_WINDOW,
-    DEFAULT_EKF_FLOOR_STABILITY_V2,
-    DEFAULT_EXIT_CORROBORATION_WINDOW,
-    DEFAULT_EXIT_CORROBORATORS,
-    DEFAULT_GUEST_MODE_ENABLED,
-    DEFAULT_INTERIOR_DOORS,
-    DEFAULT_MAX_OCCUPANTS,
-    DEFAULT_NEGATIVE_SPACE_ENABLED,
-    DEFAULT_PERIMETER_DOORS,
-    DEFAULT_PIR_CANDIDATE_WINDOW,
-    DEFAULT_PIR_VALIDATION_ENABLED,
-    DEFAULT_SLACK_CHANNEL,
-    DEFAULT_SLACK_NOTIFY_SERVICE,
-    DEFAULT_SLACK_VERBOSITY,
-    DEFAULT_STALE_COUNT_TIMEOUT,
     DOMAIN,
     MAX_ROOM_REVISIONS,
     MAX_TIMELINE_EVENTS,
     STORAGE_KEY,
     STORAGE_VERSION,
-    LLMProviderType,
 )
-from .hmm_engine import DEFAULT_HMM_PARAMS, HouseHMMEngine, HouseTopologyModel
-from .spatial_topology import get_default_floorplan
-from .store_migrations import migrate_and_backfill_store_payload
+from .engine.hmm_engine import DEFAULT_HMM_PARAMS, HouseHMMEngine, HouseTopologyModel
+from .spatial.ble_kalman_tracker import HouseEKFManager
+from .spatial.spatial_topology import get_default_floorplan
+from .store_defaults import (
+    DEFAULT_GLOBAL_SETTINGS,
+    _default_store_data,
+    _normalize_store_payload,
+)
+
+__all__ = [
+    "DEFAULT_GLOBAL_SETTINGS",
+    "PDDStore",
+    "_default_store_data",
+    "_normalize_store_payload",
+    "async_get_store",
+]
 
 _LOGGER = logging.getLogger(__name__)
-
-DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
-    "llm_provider_type": str(LLMProviderType.VISION_API),
-    "llm_api_url": "",
-    "llm_api_key": "",
-    "llm_model": "gemini-2.5-flash",
-    "llm_agent_id": "",
-    "ble_trackers": list(DEFAULT_BLE_TRACKERS),
-    "notifications_enabled": True,
-    "slack_notify_service": DEFAULT_SLACK_NOTIFY_SERVICE,
-    "slack_channel": DEFAULT_SLACK_CHANNEL,
-    "slack_verbosity": DEFAULT_SLACK_VERBOSITY,
-    "slack_daily_thread": True,
-    "slack_notify_transitions": False,
-    "slack_webhook_id": "",
-    "slack_signing_secret": "",
-    "include_camera_snapshot": False,
-    "negative_space_enabled": DEFAULT_NEGATIVE_SPACE_ENABLED,
-    "guest_mode_enabled": DEFAULT_GUEST_MODE_ENABLED,
-    "ble_decider_enabled": DEFAULT_BLE_DECIDER_ENABLED,
-    "ekf_floor_stability_v2": DEFAULT_EKF_FLOOR_STABILITY_V2,
-    "inference_engine": "coupled_hmm",
-    "hmm_params": dict(DEFAULT_HMM_PARAMS),
-    "pir_validation_enabled": DEFAULT_PIR_VALIDATION_ENABLED,
-    "pir_candidate_window": DEFAULT_PIR_CANDIDATE_WINDOW,
-    "ui_advanced_mode": False,
-    "transit_window_sec": 90.0,
-    "settling_window_sec": 2.0,
-    "house_occupant_count": 1,
-    "house_occupancy_mode": "occupied",
-    "enable_conservation_law": False,
-    "perimeter_doors": dict(DEFAULT_PERIMETER_DOORS),
-    "interior_doors": list(DEFAULT_INTERIOR_DOORS),
-    "max_occupants": DEFAULT_MAX_OCCUPANTS,
-    "stale_count_timeout": DEFAULT_STALE_COUNT_TIMEOUT,
-    "door_duplicate_window": DEFAULT_DOOR_DUPLICATE_WINDOW,
-    "exit_corroborators": dict(DEFAULT_EXIT_CORROBORATORS),
-    "exit_corroboration_window": DEFAULT_EXIT_CORROBORATION_WINDOW,
-}
-
-
-def _default_store_data() -> dict[str, Any]:
-    """Return default .storage payload."""
-    return {
-        "global_settings": copy.deepcopy(DEFAULT_GLOBAL_SETTINGS),
-        "rooms": {},
-        "revisions": {},
-        "timeline": {},
-        "floorplan": get_default_floorplan(),
-        "daily_threads": {},
-    }
 
 
 class PDDStore:
@@ -168,12 +111,7 @@ class PDDStore:
             _LOGGER.warning("Could not load .storage/%s: %s", STORAGE_KEY, err)
             stored = None
 
-        stored, dirty = migrate_and_backfill_store_payload(
-            self.hass,
-            stored,
-            _default_store_data,
-            DEFAULT_GLOBAL_SETTINGS,
-        )
+        stored, dirty = _normalize_store_payload(self.hass, stored)
 
         self._data = stored
         self._loaded = True
@@ -355,25 +293,21 @@ class PDDStore:
             "llm_api_key",
             "llm_model",
             "llm_agent_id",
-            "slack_notify_service",
-            "slack_channel",
-            "slack_verbosity",
-            "slack_webhook_id",
-            "slack_signing_secret",
+            "notify_service",
+            "notify_target",
+            "notify_verbosity",
         ):
             if key in updates and updates[key] is not None:
                 gs[key] = str(updates[key]).strip()
 
         for bkey in (
             "notifications_enabled",
+            "designer_ui_enabled",
             "negative_space_enabled",
             "guest_mode_enabled",
             "ble_decider_enabled",
             "ekf_floor_stability_v2",
             "pir_validation_enabled",
-            "slack_daily_thread",
-            "slack_notify_transitions",
-            "include_camera_snapshot",
             "enable_conservation_law",
             "ui_advanced_mode",
         ):
@@ -434,22 +368,6 @@ class PDDStore:
         """Alias for async_update_global_settings."""
         return await self.async_update_global_settings(updates)
 
-    def get_daily_threads(self) -> dict[str, Any]:
-        """Return cached daily thread metadata map."""
-        return self._data.setdefault("daily_threads", {})
-
-    async def async_save_daily_thread(self, channel: str, data: dict[str, Any]) -> None:
-        """Persist daily thread timestamp for a channel."""
-        self._data.setdefault("daily_threads", {})[channel] = copy.deepcopy(data)
-        await self.async_save()
-
-    async def async_delete_daily_thread(self, channel: str) -> None:
-        """Remove cached daily thread metadata for a channel."""
-        threads = self._data.setdefault("daily_threads", {})
-        if channel in threads:
-            threads.pop(channel, None)
-            await self.async_save()
-
     def get_floorplan(self) -> dict[str, Any]:
         """Return a deep copy of the stored 2D spatial floorplan and camera view cones."""
         fp = self._data.get("floorplan")
@@ -477,9 +395,6 @@ class PDDStore:
         if not isinstance(floorplan, dict) or not floorplan.get("floors"):
             floorplan = get_default_floorplan()
         fp_copy = copy.deepcopy(floorplan)
-        from .store_migrations import enforce_floorplan_preset_specs
-
-        enforce_floorplan_preset_specs(fp_copy)
         self._data["floorplan"] = fp_copy
         self._hmm_sig = None
         await self.async_save()

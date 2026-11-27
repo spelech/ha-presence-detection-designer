@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.helpers import config_validation as cv
 
-from .bayesian_engine import parse_yaml_or_dict_to_config
+from .api.views import async_apply_and_persist_room_config, async_register_views
 from .const import (
     CONF_LLM_AGENT_ID,
     CONF_LLM_API_KEY,
@@ -22,15 +22,11 @@ from .const import (
     VIEWS_REGISTERED,
     LLMProviderType,
 )
-from .coordinator import RoomPresenceCoordinator
-from .llm_verifier import LLMVerifier
-from .slack_blocks import (
-    async_refresh_slack_daily_digest,
-    cancel_startup_slack_digest_sync,
-    schedule_startup_slack_digest_sync,
-)
+from .engine.bayesian_engine import parse_yaml_or_dict_to_config
+from .engine.coordinator import RoomPresenceCoordinator
+from .llm.config_translator import _collect_available_entities_for_room
+from .llm.llm_verifier import LLMVerifier
 from .store import async_get_store
-from .views import async_apply_and_persist_room_config, async_register_views
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,14 +79,23 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
             domain_data[VIEWS_REGISTERED] = True
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Skipping HTTP view registration: %s", err)
-        try:
-            from .slack_actions import async_setup_slack_webhook
 
-            await async_setup_slack_webhook(hass)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("Skipping Slack webhook setup: %s", err)
+    store = domain_data.get("_store")
+    gs = getattr(store, "global_settings", None) if store is not None else None
+    designer_enabled = (
+        True if not isinstance(gs, dict) else bool(gs.get("designer_ui_enabled", True))
+    )
 
-    if domain_data.get(PANEL_REGISTERED) != version:
+    if not designer_enabled:
+        if domain_data.get(PANEL_REGISTERED):
+            try:
+                from homeassistant.components.frontend import async_remove_panel
+
+                async_remove_panel(hass, DOMAIN, warn_if_unknown=False)
+                domain_data[PANEL_REGISTERED] = False
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Skipping sidebar panel removal: %s", err)
+    elif domain_data.get(PANEL_REGISTERED) != version:
         try:
             from homeassistant.components.frontend import (
                 async_register_built_in_panel,
@@ -112,7 +117,7 @@ async def _async_ensure_panel_and_views_locked(hass: Any, domain_data: dict[str,
                     config={
                         "_panel_custom": {
                             "name": "presence-detection-designer-panel",
-                            "js_url": f"/presence_detection_designer/static/panel.js?v={version}",
+                            "module_url": f"/presence_detection_designer/static/panel.js?v={version}",
                         },
                         "version": version,
                     },
@@ -143,47 +148,6 @@ def _register_service(
         except (ImportError, TypeError):
             pass
     hass.services.async_register(DOMAIN, service, handler)
-
-
-def _collect_available_entities_for_room(
-    hass: Any, room_name: str | None = None
-) -> list[dict[str, str]]:
-    """Collect candidate entities from HA state machine matching a room name."""
-    if not hass or not hasattr(hass, "states") or not hasattr(hass.states, "async_all"):
-        return []
-    room_tokens = (
-        [t for t in room_name.lower().replace("'", "").split() if len(t) > 2] if room_name else []
-    )
-    results: list[dict[str, str]] = []
-    try:
-        for state_obj in hass.states.async_all():
-            eid = getattr(state_obj, "entity_id", "")
-            if not eid.startswith(
-                (
-                    "binary_sensor.",
-                    "sensor.",
-                    "media_player.",
-                    "camera.",
-                    "light.",
-                    "fan.",
-                    "switch.",
-                )
-            ):
-                continue
-            attrs = getattr(state_obj, "attributes", {}) or {}
-            fname = str(attrs.get("friendly_name", eid))
-            haystack = f"{eid} {fname}".lower()
-            if not room_tokens or all(tok in haystack for tok in room_tokens) or "ble_area" in eid:
-                results.append(
-                    {
-                        "entity_id": eid,
-                        "name": fname,
-                        "state": str(getattr(state_obj, "state", "")),
-                    }
-                )
-    except Exception:  # noqa: BLE001
-        return []
-    return results[:80]
 
 
 def _get_default_llm_verifier(hass: Any) -> LLMVerifier:
@@ -220,7 +184,6 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             ):
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
-        await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_explain_presence(call: Any) -> dict[str, Any] | None:
         """Generate natural-language and YAML explanations for one or all rooms."""
@@ -339,7 +302,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 
     async def handle_set_guest_mode(call: Any) -> None:
         """Enable or disable global Guest Mode across all rooms."""
-        from .house_perimeter import get_house_perimeter_tracker
+        from .spatial.house_perimeter import get_house_perimeter_tracker
 
         enabled = bool(call.data.get("enabled", True))
         tracker = get_house_perimeter_tracker(hass)
@@ -359,7 +322,6 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
             if isinstance(coordinator, RoomPresenceCoordinator):
                 coordinator.async_refresh_all_states()
                 coordinator.async_update_listeners()
-        await async_refresh_slack_daily_digest(hass, force=True)
 
     async def handle_clear_manual_intent(call: Any) -> None:
         """Reset manual switch / Google Assistant override state back to 'auto' for one or all rooms."""
@@ -379,7 +341,7 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
 
     async def handle_set_house_occupant_count(call: Any) -> None:
         """Set whole-house occupancy mode (vacant/occupied/guest/pet_only) or mapped count."""
-        from .house_perimeter import get_house_perimeter_tracker
+        from .spatial.house_perimeter import get_house_perimeter_tracker
 
         tracker = get_house_perimeter_tracker(hass)
         raw_mode = str(call.data.get("mode") or "").strip().lower()
@@ -397,17 +359,12 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
                 "guest_mode_enabled": tracker.state.mode == "guest",
             }
         )
-        await async_refresh_slack_daily_digest(hass, force=True)
-
-    async def handle_update_slack_digest(call: Any) -> None:
-        """Manually trigger an immediate update of the main Slack daily presence card."""
-        await async_refresh_slack_daily_digest(hass, force=True, respect_toggles=False)
 
     async def handle_reset_vacancy(call: Any) -> None:
         """Reset house vacancy to 0 (and optionally clear occupied rooms)."""
-        from .slack_actions import async_handle_reset_vacancy_service
+        from .spatial.perimeter_helpers import async_reset_house_vacancy
 
-        await async_handle_reset_vacancy_service(hass, call)
+        await async_reset_house_vacancy(hass, clear_rooms=bool(call.data.get("clear_rooms", False)))
 
     if hasattr(hass, "services") and not hass.services.has_service(DOMAIN, "verify_presence"):
         _register_service(hass, "verify_presence", handle_verify_presence)
@@ -415,7 +372,6 @@ async def async_setup(hass: Any, config: dict[str, Any]) -> bool:
         _register_service(hass, "set_guest_mode", handle_set_guest_mode)
         _register_service(hass, "clear_manual_intent", handle_clear_manual_intent)
         _register_service(hass, "set_house_occupant_count", handle_set_house_occupant_count)
-        _register_service(hass, "update_slack_digest", handle_update_slack_digest)
         _register_service(hass, "reset_vacancy", handle_reset_vacancy)
         _register_service(
             hass, "explain_presence", handle_explain_presence, supports_optional_response=True
@@ -481,7 +437,6 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
             pass
 
     entry.async_on_unload(entry.add_update_listener(async_update_options))
-    schedule_startup_slack_digest_sync(hass)
     return True
 
 
@@ -505,7 +460,6 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
         v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, RoomPresenceCoordinator)
     ]
     if not remaining_coords:
-        cancel_startup_slack_digest_sync(hass)
         if hass.data.get(DOMAIN, {}).get(PANEL_REGISTERED):
             try:
                 from homeassistant.components.frontend import async_remove_panel

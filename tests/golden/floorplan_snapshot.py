@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from custom_components.presence_detection_designer.floorplan_presets import get_default_floorplan
+from custom_components.presence_detection_designer.spatial.floorplan_presets import (
+    get_default_floorplan,
+)
 
 _LIVE_SNAPSHOT_PATH = Path(__file__).parent / "live_floorplan_snapshot.json"
 
