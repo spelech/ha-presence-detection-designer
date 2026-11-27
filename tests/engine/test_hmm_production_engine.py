@@ -161,3 +161,56 @@ def test_webos_media_player_on_matches_playing_sustain_condition():
         )
         is True
     )
+
+
+def test_ekf_stationary_hold_prevents_sleeping_bedroom_clear_and_releases_on_other_room():
+    """EKF locked in an occupied bedroom holds against clear-camera decay until another room triggers."""
+    from custom_components.presence_detection_designer.engine.hmm_engine import (
+        HouseHMMEngine,
+        HouseTopologyModel,
+    )
+
+    fp = load_golden_floorplan()
+    room_cfgs = {r["room_name"]: r for r in HOUSE_ROOM_CONFIGS}
+    topology = HouseTopologyModel(fp, room_cfgs)
+    engine = HouseHMMEngine(topology)
+
+    # 1. Occupy Master Bedroom via PIR + realistic sleeping EKF lock (p=0.80, sigma=6ft)
+    mb_floor = topology.room_floor["Master Bedroom"]
+    ekf_mb = {
+        "t1": {
+            "floor": mb_floor,
+            "room_probabilities": {"Master Bedroom": 0.80},
+            "sigma_x_ft": 6.0,
+            "sigma_y_ft": 6.0,
+        }
+    }
+    t = 1000.0
+    for _ in range(4):
+        t += 1.0
+        engine.step(
+            now_ts=t,
+            state_getter=lambda eid: (
+                "on" if eid == "binary_sensor.master_bedroom_motion_occupancy" else "off"
+            ),
+            ekf_tracks=ekf_mb,
+        )
+    assert engine.occupied["Master Bedroom"] is True
+
+    # 2. Occupant lies still under covers (PIR off, camera clear, TV off) for 10 minutes with EKF locked
+    for _ in range(120):
+        t += 5.0
+        engine.step(now_ts=t, state_getter=lambda _eid: "off", ekf_tracks=ekf_mb)
+    assert engine.occupied["Master Bedroom"] is True
+
+    # 3. Phone left behind: another room (Living Room camera) activates -> hold releases and bedroom clears
+    for _ in range(80):
+        t += 2.0
+        engine.step(
+            now_ts=t,
+            state_getter=lambda eid: (
+                "on" if eid == "binary_sensor.living_room_couch_person_occupancy" else "off"
+            ),
+            ekf_tracks=ekf_mb,
+        )
+    assert engine.occupied["Master Bedroom"] is False

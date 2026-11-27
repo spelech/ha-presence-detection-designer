@@ -445,3 +445,51 @@ def extract_ekf_room_probs(
         for r in rooms
     }
     return True, out
+
+
+def build_room_belief_snapshot(
+    topo: HouseTopologyModel,
+    room: str,
+    *,
+    prob: float,
+    log_odds: float,
+    is_occupied: bool,
+    theta_enter: float,
+    theta_clear: float,
+    ambiguity_dwell_sec: float,
+    sustaining_active: bool,
+    bounded_sealed: bool,
+    ekf_room_prob: float,
+    active_drivers: list[str],
+    phys_age: float,
+) -> RoomBeliefSnapshot:
+    """Build an immutable RoomBeliefSnapshot with lighting threshold recommendations."""
+    spill_exp = topo.room_spillover_exposure.get(room, 0.0)
+    cfg_thresh = topo.room_configs.get(room, {}).get("lighting_confidence_threshold")
+    if cfg_thresh is not None:
+        rec_thresh = float(cfg_thresh)
+    elif spill_exp >= 0.20:
+        rec_thresh = max(theta_enter, 0.80)
+    elif spill_exp >= 0.08:
+        rec_thresh = max(theta_enter, 0.72)
+    else:
+        rec_thresh = theta_enter
+    return RoomBeliefSnapshot(
+        room_name=room,
+        probability=round(prob, 5),
+        probability_pct=round(prob * 100.0, 1),
+        log_odds=round(log_odds, 4),
+        is_occupied=bool(is_occupied),
+        theta_enter=round(theta_enter, 4),
+        theta_clear=round(theta_clear, 4),
+        confidence_tier=_classify_confidence_tier(prob),
+        spillover_exposure=spill_exp,
+        recommended_lighting_threshold=round(rec_thresh, 4),
+        llm_ambiguity_active=bool(ambiguity_dwell_sec >= 5.0),
+        ambiguity_dwell_sec=round(ambiguity_dwell_sec, 1),
+        sustaining_active=bool(sustaining_active),
+        bounded_sealed=bool(bounded_sealed),
+        ekf_room_prob=round(ekf_room_prob, 4),
+        active_drivers=tuple(dict.fromkeys(active_drivers)),
+        last_human_phys_age_sec=round(phys_age, 1),
+    )

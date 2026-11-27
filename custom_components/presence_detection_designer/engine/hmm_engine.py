@@ -20,10 +20,10 @@ from .hmm_topology import (
     PIRBinding,
     RoomBeliefSnapshot,
     SubZoneBinding,
-    _classify_confidence_tier,
     _eval_condition,
     _logit,
     _sigmoid,
+    build_room_belief_snapshot,
     extract_ekf_room_probs,
 )
 
@@ -392,7 +392,20 @@ class HouseHMMEngine:
                 states.get(eid) == "on" for eid in topo.room_ecobee_occupancy[r]
             )
             ekf_confirming = p_ekf_r >= 0.40 and ekf_conf >= 0.25
-            if sust or (self.occupied[r] and ekf_confirming and ecobee_on):
+            other_room_active = any(
+                cam_active_room.get(other, False)
+                or (now_ts - self.last_fresh_trigger_ts[other]) <= 60.0
+                for other in rooms
+                if other != r
+            )
+            ekf_stationary_hold = (
+                self.occupied[r]
+                and r not in TRANSIT_ROOMS
+                and p_ekf_r >= 0.70
+                and ekf_conf >= 0.30
+                and not other_room_active
+            )
+            if sust or ekf_stationary_hold or (self.occupied[r] and ekf_confirming and ecobee_on):
                 h *= sustain_mult
 
             cur_l += h * (_L_PRIOR - cur_l) * 3.5 * dt
@@ -405,9 +418,9 @@ class HouseHMMEngine:
             cov_pct = float(topo.room_coverage.get(r, {}).get("max_coverage_pct", 0.0))
             if cov_pct > 0.0 and self._is_camera_clear(r, states) and cur_l > _L_PRIOR:
                 neg_mult = 1.0
-                if sust or (ekf_confirming and ecobee_on):
+                if sust or ekf_stationary_hold or (ekf_confirming and ecobee_on):
                     neg_mult = 0.08
-                elif ekf_confirming and r not in TRANSIT_ROOMS:
+                elif ekf_confirming and r not in TRANSIT_ROOMS and not other_room_active:
                     neg_mult = 0.35
                 cur_l -= clear_decay * (cov_pct / 100.0) * neg_mult * dt
 
@@ -464,36 +477,21 @@ class HouseHMMEngine:
             else:
                 self.ambiguity_dwell_sec[r] = 0.0
 
-            spill_exp = topo.room_spillover_exposure.get(r, 0.0)
-            cfg_thresh = topo.room_configs.get(r, {}).get("lighting_confidence_threshold")
-            if cfg_thresh is not None:
-                rec_thresh = float(cfg_thresh)
-            elif spill_exp >= 0.20:
-                rec_thresh = max(theta_enter, 0.80)
-            elif spill_exp >= 0.08:
-                rec_thresh = max(theta_enter, 0.72)
-            else:
-                rec_thresh = theta_enter
-
             p_ekf_r, _ = ekf_probs[r]
-            snapshots[r] = RoomBeliefSnapshot(
-                room_name=r,
-                probability=round(prob, 5),
-                probability_pct=round(prob * 100.0, 1),
-                log_odds=round(self.log_odds[r], 4),
-                is_occupied=bool(self.occupied[r]),
-                theta_enter=round(theta_enter, 4),
-                theta_clear=round(theta_clear, 4),
-                confidence_tier=_classify_confidence_tier(prob),
-                spillover_exposure=spill_exp,
-                recommended_lighting_threshold=round(rec_thresh, 4),
-                llm_ambiguity_active=bool(self.ambiguity_dwell_sec[r] >= 5.0),
-                ambiguity_dwell_sec=round(self.ambiguity_dwell_sec[r], 1),
-                sustaining_active=bool(sustained_room[r]),
-                bounded_sealed=bool(bounded_sealed[r]),
-                ekf_room_prob=round(p_ekf_r, 4),
-                active_drivers=tuple(dict.fromkeys(active_drivers[r])),
-                last_human_phys_age_sec=round(phys_age, 1),
+            snapshots[r] = build_room_belief_snapshot(
+                topo,
+                r,
+                prob=prob,
+                log_odds=self.log_odds[r],
+                is_occupied=self.occupied[r],
+                theta_enter=theta_enter,
+                theta_clear=theta_clear,
+                ambiguity_dwell_sec=self.ambiguity_dwell_sec[r],
+                sustaining_active=sustained_room[r],
+                bounded_sealed=bounded_sealed[r],
+                ekf_room_prob=p_ekf_r,
+                active_drivers=active_drivers[r],
+                phys_age=phys_age,
             )
 
         self._snapshots = snapshots
