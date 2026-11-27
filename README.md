@@ -1,17 +1,17 @@
 <div align="center">
 
-<img src="logo.png" alt="Presence Detection Designer Logo" width="600" />
+<img src="logo.png" alt="Presence Detection Designer Logo" width="560" />
 
 # Presence Detection Designer (`ha-presence-detection-designer`)
 
-**Intelligent Home Assistant Presence State Machine with Hybrid Wasp-in-a-Box (WIB), Explainable Bayesian Sensor Fusion, Dynamic Sustaining Conditions & Bidirectional AI/LLM Integration.**
+**3D Floorplan-Aware Multi-Modal Presence Engine for Home Assistant** — uniting a **Coupled Continuous-Time Log-Odds HMM**, **2D+Floor Extended Kalman Filter (EKF)**, **Wall-Clipped Negative-Space Geometry**, **Sustaining Conditions**, and **Confidence-Gated Lighting Control**.
 
 [![CI Quality Gate](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml/badge.svg)](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/ci.yml)
 [![HACS & Hassfest](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/validate.yml/badge.svg)](https://github.com/spelech/ha-presence-detection-designer/actions/workflows/validate.yml)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://spelech.github.io/ha-presence-detection-designer/)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
 [![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen.svg)](https://github.com/spelech/ha-presence-detection-designer)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=spelech&repository=ha-presence-detection-designer&category=integration)
 
@@ -19,106 +19,132 @@
 
 ---
 
-## 🌟 Why Presence Detection Designer?
+## Why Presence Detection Designer?
 
-Passive infrared (PIR) motion sensors, slow thermostat occupancy sensors, and raw Bayesian YAML sensors each struggle in isolation:
-- **Stationary Occupancy Failure**: Watching a movie on the couch, reading in bed, or working at a desk? Motion clears and room lights shut off.
-- **Opaque Bayesian Math**: Standard `platform: bayesian` sensors require hand-tuning raw `prob_given_true` / `prob_given_false` floats and penalize multi-zone rooms when an occupant is only sitting in one sub-zone.
-- **Open vs Bounded Rooms**: Traditional Wasp-in-a-Box setups assume every room has closed perimeter doors.
+Most Home Assistant presence setups fail in predictable ways because each sensor class is blind to the house's physical layout:
 
-**Presence Detection Designer** solves this by uniting **four coordinated layers**:
-1. **Explainable Bayesian Sensor Fusion**: Uses intuitive natural-language weight presets (`decisive`, `strong`, `moderate`, `supporting`) that compute real-time posterior occupancy probability (`0–100%`) and explain in plain English why a room is considered occupied or vacant.
-2. **Hybrid Wasp-in-a-Box (WIB)**: Distinguishes between enclosed rooms (with door sensors that seal presence inside) and open-concept zones.
-3. **Dynamic Sustaining Conditions**: Preserves occupancy while secondary devices indicate presence (e.g., TV playing, workstation UPS power draw > 140W, shower exhaust fan running).
-4. **AI Vision Pre-Vacate Guard & Bidirectional LLM Config Translator**: Before marking a room vacant, captures a camera snapshot to visually confirm if a stationary human is still present—and provides services to translate back and forth between natural-language descriptions and Home Assistant YAML.
+- **Stationary Occupancy Drops:** Watching TV on the couch, working at a desk, or reading in bed? PIR motion clears and lights shut off on you.
+- **Multi-Story BLE Bleed:** 2.4 GHz BLE passes through wood subfloors more easily than through a human body, causing standalone BLE trackers (Bermuda / ESPresense) to ping-pong between stacked floors.
+- **Hallway PIR Spillover:** A motion sensor inside a bedroom or family room sees people walking past the open doorway and falsely triggers lights.
+- **Pets, Sunlight & Manual Overrides:** Dogs trigger non-pet-immune PIRs, moving shades trigger cameras, and turning off a light manually shouldn't immediately get overridden 10 seconds later.
 
-> 📐 **Deep-Dive Documentation:** See [docs/ARCHITECTURE_AND_MATH.md](docs/ARCHITECTURE_AND_MATH.md) for the complete 3-layer signal-processing & control architecture, 2D+Floor Extended Kalman Filter (EKF) equations, PIR cross-talk matrix, cooldown tempering math, state machine transitions, and Golden Benchmark results.
+**Presence Detection Designer (PDD)** solves these together by modeling the **entire house as a coupled 3D spatial graph**:
 
----
+| Layer | Engine | What It Solves |
+| :--- | :--- | :--- |
+| **Layer 1: Spatial Geometry** | Wall-clipped camera & PIR cones, raycast spillover matrix, pet/shade guards | Quantifies hallway PIR spillover (`0–100%`), blocks pet/sunlight false triggers, and applies negative-space decay when a camera clearly sees an empty room. |
+| **Layer 2A: 2D+Floor EKF** | Continuous `[x, y, vx, vy]` + hysteretic floor selector (`ekf_floor_stability_v2`) | Fuses live Bermuda per-proxy BLE ranges with Mahalanobis-gated camera/PIR hits without proxy-count bias or cross-floor teleports. |
+| **Layer 2B: Coupled HMM** | Continuous-time log-odds `HouseHMMEngine` (`coupled_hmm`) | Fuses cameras, PIRs, door contacts, Ecobee thermal sensors, EKF room integrals, and sustaining conditions (TV/HDMI, UPS watts, shower humidity) across connected rooms. |
+| **Layer 3: Output & Intent** | Room state machine + `meets_lighting_threshold` + `manual_off_suppressed` | Exposes clean `binary_sensor.<room>_presence` entities with spillover-aware lighting confidence gates and automatic manual-off suppression. |
 
-## 🧮 Explainable Bayesian Weight Presets
-
-With the default **20% baseline prior** and **75% occupancy threshold**, sensors can be assigned human-friendly presets instead of raw probabilities:
-
-| Preset | `prob_given_true` | `prob_given_false` | Likelihood Ratio | Solo Posterior | Behavior & Typical Use Case |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **`decisive`** | `0.95` | `0.02` | `47.5x` | **92.2%** | Crosses 75% immediately solo. Use for specific Frigate 2K seating/bed/desk sub-zones. |
-| **`strong`** | `0.85` | `0.05` | `17.0x` | **81.0%** | Crosses 75% solo. Use for full-room camera person detection, primary PIR motion, or active media/workstation power draw. |
-| **`moderate`** | `0.72` | `0.12` | `6.0x` | **60.0%** | Needs corroboration (`moderate` + `supporting` = **80.5%**). Use for Bermuda BLE phone area localization or secondary/doorway motion. |
-| **`supporting`** | `0.55` | `0.20` | `2.75x` | **40.7%** | Corroborating context; cannot trigger occupancy solo or in pairs (`65.4%`). Use for slow 30-min Ecobee occupancy tails or pet/light context. |
+> **Full Documentation:** Read the complete setup guide, lighting automation recipes, and mathematical reference on **[GitHub Pages](https://spelech.github.io/ha-presence-detection-designer/)**.
 
 ---
 
-## 📦 Entities Created per Room
+## Visual Tour
+
+<p align="center">
+  <img src="docs/images/design_studio_overview.png" alt="Presence Detection Designer Studio Overview" width="49%" />
+  <img src="docs/screenshots/floorplan_sensors_and_subzones.png" alt="3D Floorplan Sensors and Camera Sub-Zones" width="49%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/whole_house_timeline_playback.png" alt="Whole-House Timeline Playback" width="49%" />
+  <img src="docs/images/optimization_pareto_frontier.svg" alt="Coupled HMM Optimization Pareto Frontier" width="49%" />
+</p>
+
+---
+
+## Quick Start
+
+### 1. Install via HACS
+1. Click the **Open HACS Repository** badge above (or add `https://github.com/spelech/ha-presence-detection-designer` as a custom **Integration** repository in HACS).
+2. Download **Presence Detection Designer** and restart Home Assistant.
+3. Go to **Settings → Devices & Services → Add Integration → Presence Detection Designer** to add your rooms.
+
+### 2. Map Your Floorplan & Sensors
+Open **Presence Detection** in the Home Assistant sidebar:
+1. Draw or import your rooms across floors (Basement, Main Floor, Upstairs) and connect doorways/stairs.
+2. Place your **Frigate camera sub-zones**, **PIR sensors** (with FOV/range presets), **door contacts**, and **BLE proxies**.
+3. Configure **Sustaining Conditions** for stationary rooms (e.g., LG webOS / Android TV `media_player`, workstation UPS wattage, shower humidity derivative).
+4. Use **Playback** to scrub historical sensor timelines and verify room transitions before wiring lights.
+
+### 3. Wire Confidence-Gated Lighting Automations
+PDD exposes two attributes specifically designed for rock-solid lighting automations:
+- **`meets_lighting_threshold`** (`true`/`false`): Automatically enforces higher confidence in high-spillover rooms (`61.4%` in enclosed rooms, `72%` in medium-spillover rooms, `80%` in open-plan/high-spillover rooms).
+- **`manual_off_suppressed`** (`true`/`false`): Automatically pauses re-triggering when you turn a room's lights off manually while still inside.
+
+```yaml
+alias: "Office - Presence Entry Lighting"
+mode: single
+triggers:
+  - trigger: occupancy.detected
+    target:
+      entity_id: binary_sensor.office_presence
+conditions:
+  - condition: state
+    entity_id:
+      - light.office_fan_light
+      - light.office_floor_lamp
+    state: "off"
+  - condition: state
+    entity_id: binary_sensor.office_presence
+    attribute: meets_lighting_threshold
+    state: true
+  - condition: state
+    entity_id: binary_sensor.office_presence
+    attribute: manual_off_suppressed
+    state: false
+  - condition: state
+    entity_id: sun.sun
+    state: "below_horizon"
+actions:
+  - action: scene.turn_on
+    target:
+      entity_id: scene.office_evening
+```
+
+> See the **[Lighting Automations Guide](docs/lighting-automations.md)** for the companion **anti-reset auto-off** pattern with UI-tunable timeout sliders.
+
+---
+
+## Entities Created per Room
 
 | Entity | Domain | Purpose |
 | :--- | :--- | :--- |
-| `binary_sensor.<room>_presence` | `binary_sensor` (`occupancy`) | Primary room presence output with `natural_language_explanation`, `bayesian_probability_pct`, `box_state`, and `active_evidence` attributes. |
-| `sensor.<room>_occupancy_probability` | `sensor` (`%`) | Live `0.0–100.0%` Bayesian occupancy probability with `rule_guide`, `active_observations`, `ha_bayesian_yaml`, and `designer_yaml` attributes. |
-| `button.<room>_verify_presence` | `button` | Triggers an immediate camera snapshot capture and AI vision verification check. |
-| `switch.<room>_presence_override` | `switch` | Locks presence ON indefinitely (parties, guests, cleaning). |
+| `binary_sensor.<room>_presence` | `binary_sensor` (`occupancy`) | Primary occupancy entity with `bayesian_probability_pct`, `meets_lighting_threshold`, `recommended_lighting_threshold_pct`, `manual_off_suppressed`, `confidence_tier`, `hmm_active_drivers`, `ekf_track`, and `natural_language_explanation`. |
+| `sensor.<room>_occupancy_probability` | `sensor` (`%`) | Live `0.0–100.0%` continuous occupancy probability for dashboards, history graphs, and diagnostics. |
+| `button.<room>_verify_presence` | `button` | Triggers an immediate camera snapshot + Vision LLM verification check. |
+| `switch.<room>_presence_override` | `switch` | Locks room presence `on` indefinitely (guests, parties, cleaning). |
 
 ---
 
-## 🛎️ Services / Actions
+## Documentation Map
 
-### `presence_detection_designer.explain_presence`
-Returns a structured response (`SupportsResponse.OPTIONAL`) containing the room's live Bayesian probability, per-sensor percentage lift, plain-English rule guide, conversational LLM explanation, and equivalent YAML:
-```yaml
-action: presence_detection_designer.explain_presence
-data:
-  room_name: "Office"
-  use_llm: true
-```
-
-### `presence_detection_designer.translate_config`
-Bidirectionally translates between **Natural Language <-> YAML / Designer Configuration**:
-```yaml
-# Natural Language -> Designer YAML & HA platform: bayesian YAML
-action: presence_detection_designer.translate_config
-data:
-  direction: "to_yaml"
-  room_name: "Office"
-  description: >
-    Use Steve's Desk and Sim Rig Frigate person sensors as decisive triggers,
-    Office UPS watts > 140W as a strong sustaining condition, and Steve's S25+
-    BLE area == Office as a moderate Bayesian signal with Ecobee occupancy as supporting.
-  use_llm: true
-```
-
-### `presence_detection_designer.configure_room`
-Applies a YAML or JSON room configuration directly to a room config entry and reloads it live:
-```yaml
-action: presence_detection_designer.configure_room
-data:
-  room_name: "Office"
-  config:
-    mode: "open"
-    bayesian_prior: 0.20
-    bayesian_threshold: 0.75
-```
-
-### `presence_detection_designer.verify_presence` & `presence_detection_designer.force_refresh`
-Manually trigger a Vision LLM snapshot check or immediately re-evaluate all boundaries, triggers, sustaining conditions, and Bayesian observations.
+- **[Getting Started](docs/getting-started.md)** — Installation, room setup, floorplan calibration, Frigate & Bermuda integration.
+- **[Lighting Automations](docs/lighting-automations.md)** — Entry lighting, anti-reset auto-off with tunable helpers, and spillover thresholds.
+- **[How It Works](docs/how-it-works.md)** — Plain-English guide to the Coupled HMM, 2D+Floor EKF (`ekf_floor_stability_v2`), negative space, and Playback.
+- **[Configuration & Reference](docs/reference.md)** — Full entity attributes, services, global feature toggles, and troubleshooting.
+- **[Architecture & Mathematical Reference](docs/ARCHITECTURE_AND_MATH.md)** — Full equations, state machine transitions, and EKF/HMM math.
+- **[Signal-Processing Optimization Report](docs/SIGNAL_PROCESSING_OPTIMIZATION_REPORT.md)** — Empirical benchmark comparing 4 presence architectures across 15,000+ scenario runs.
 
 ---
 
-## 🧪 Development & Quality Gates
+## Development & Quality Gates
 
 ```bash
 # Verify version sync across pyproject.toml and manifest.json
 python3 scripts/verify_release.py --ci
 
-# Run Ruff lint and format check
+# Lint and format check
 uv run ruff check .
 uv run ruff format --check .
 
-# Run pytest with >= 80% coverage enforcement
-uv run pytest --cov=custom_components/presence_detection_designer --cov-fail-under=80 -v
+# Run test suite
+uv run pytest -q
 ```
 
 ---
 
-## 📄 License
+## License
 
 Distributed under the [MIT License](LICENSE). Copyright &copy; 2026 Steven T. Pelech.

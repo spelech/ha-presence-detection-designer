@@ -1,0 +1,71 @@
+site_name: Presence Detection Designer
+site_description: 3D Floorplan-Aware Coupled HMM & 2D+Floor EKF Presence Engine for Home Assistant
+site_url: https://spelech.github.io/ha-presence-detection-designer/
+repo_url: https://github.com/spelech/ha-presence-detection-designer
+repo_name: spelech/ha-presence-detection-designer
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+
+extra_javascript:
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Lighting Automations: lighting-automations.md
+  - How It Works: how-it-works.md
+  - Configuration & Reference: reference.md
+  - Deep Dive:
+      - Architecture & Math: ARCHITECTURE_AND_MATH.md
+      - Optimization Report: SIGNAL_PROCESSING_OPTIMIZATION_REPORT.md
+
+exclude_docs: |
+  superpowers/
