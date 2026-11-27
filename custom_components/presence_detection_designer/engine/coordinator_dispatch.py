@@ -114,6 +114,7 @@ def evaluate_coordinator_hmm(coord: Any, *, now_ts: float | None = None) -> Any:
                 None,
                 ts,
                 trackers,
+                ble_hub=getattr(store, "ble_hub", None),
                 ble_ranges_provider=getattr(store, "_ble_ranges_provider", None),
                 pir_spillover=hmm.topology.pir_spillover,
                 ekf_floor_stability_v2=ekf_floor_v2,

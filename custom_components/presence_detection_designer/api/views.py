@@ -132,6 +132,7 @@ class PDDOverviewView(HomeAssistantView):
                 spatial_inference,
                 now_ts,
                 list(store.global_settings.get("ble_trackers") or []),
+                ble_hub=getattr(store, "ble_hub", None),
                 ble_ranges_provider=getattr(store, "_ble_ranges_provider", None),
             )
         store._last_spatial_frame = spatial_inference

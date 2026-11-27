@@ -62,7 +62,7 @@ export function isHumanExclusiveCandidate(panel, eid, weightMap = null) {
     return false;
   }
   if (low.startsWith("sensor.")) {
-    return low.includes("ble_area") || low.includes("bermuda");
+    return low.includes("ble_area") || low.includes("private_ble");
   }
   if (low.startsWith("binary_sensor.")) {
     const nonHuman = [

@@ -1,10 +1,8 @@
-"""House-wide BLE 2D+Floor EKF manager and Bermuda proxy range reader."""
+"""House-wide BLE 2D+Floor EKF manager fed by PDD's native HA Bluetooth scanner hub."""
 
 from __future__ import annotations
 
 import math
-import re
-import time
 from typing import Any
 
 from .ble_ekf_core import BLEKalmanTracker
@@ -16,6 +14,7 @@ from .ble_ekf_models import (
     KalmanEstimate,
     ekf_room_probability_to_likelihood,
 )
+from .ble_scanner_hub import NativeBLEScannerHub
 from .spatial_catalog import _normalize_ble_area_to_room
 
 __all__ = [
@@ -26,166 +25,14 @@ __all__ = [
     "HouseEKFManager",
     "KalmanConfig",
     "KalmanEstimate",
+    "NativeBLEScannerHub",
     "ekf_room_probability_to_likelihood",
-    "read_bermuda_proxy_ranges",
     "update_house_ekf_from_hass",
 ]
 
 
-def _norm_token(val: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(val or "").lower()).strip("_")
-
-
-def read_bermuda_proxy_ranges(
-    hass: Any,
-    tracker_entity_id: str,
-    floorplan: dict[str, Any] | None,
-    now_ts: float,
-) -> list[BLERangeMeasurement]:
-    """Read live per-proxy calibrated distances from Bermuda's in-memory coordinator."""
-    if not hass or not isinstance(floorplan, dict):
-        return []
-    proxies = floorplan.get("ble_proxies") or []
-    if not proxies:
-        return []
-
-    # Locate Bermuda's active coordinator via config entries runtime_data
-    bermuda_coord = None
-    cfg_entries = getattr(hass, "config_entries", None)
-    if cfg_entries is not None and hasattr(cfg_entries, "async_entries"):
-        for entry in cfg_entries.async_entries("bermuda"):
-            rt = getattr(entry, "runtime_data", None)
-            coord = getattr(rt, "coordinator", None)
-            if coord is not None and hasattr(coord, "devices"):
-                bermuda_coord = coord
-                break
-    if bermuda_coord is None:
-        return []
-
-    # Resolve target Bermuda device by MAC, IRK advert MAC, or normalized name/slug
-    st_obj = hass.states.get(tracker_entity_id) if hasattr(hass, "states") else None
-    st_attrs = getattr(st_obj, "attributes", {}) or {}
-    cur_mac = str(st_attrs.get("current_mac") or "").lower()
-    friendly_norm = _norm_token(str(st_attrs.get("friendly_name") or "").removesuffix("Area"))
-    slug = _norm_token(
-        tracker_entity_id.split(".", 1)[-1].replace("_ble_area", "").replace("_area", "")
-    )
-
-    target_dev = None
-    devices = getattr(bermuda_coord, "devices", {}) or {}
-    for addr, dev in devices.items():
-        if cur_mac and (
-            str(addr).lower() == cur_mac
-            or str(getattr(dev, "address", "") or "").lower() == cur_mac
-            or any(
-                str(getattr(a, "device_address", "") or "").lower() == cur_mac
-                for a in (getattr(dev, "adverts", {}) or {}).values()
-            )
-        ):
-            target_dev = dev
-            break
-    if target_dev is None:
-        for _addr, dev in devices.items():
-            dev_norm = _norm_token(getattr(dev, "name", ""))
-            if not dev_norm:
-                continue
-            if (friendly_norm and (friendly_norm == dev_norm or dev_norm in friendly_norm)) or (
-                slug and (slug in dev_norm or dev_norm in slug)
-            ):
-                if getattr(dev, "adverts", None):
-                    target_dev = dev
-                    break
-    if target_dev is None:
-        return []
-
-    # Index floorplan proxies by normalized id, name, entity_id, and unique host_room/area
-    proxy_by_key: dict[str, dict[str, Any]] = {}
-    proxies_by_room: dict[str, list[dict[str, Any]]] = {}
-    for p in proxies:
-        if not isinstance(p, dict):
-            continue
-        for k in (p.get("id"), p.get("name"), p.get("entity_id")):
-            if k:
-                raw_k = str(k).replace("esphome.", "").replace("bluetooth.", "")
-                norm = _norm_token(raw_k)
-                if norm:
-                    proxy_by_key[norm] = p
-        for rk in (p.get("host_room"), p.get("area_name")):
-            rn = _norm_token(rk)
-            if rn:
-                proxies_by_room.setdefault(rn, []).append(p)
-
-    # Bermuda uses monotonic_time_coarse() for advert.stamp; bridge wall-clock vs monotonic cleanly
-    try:
-        from bluetooth_data_tools import monotonic_time_coarse
-
-        mono_now = float(monotonic_time_coarse())
-    except Exception:  # noqa: BLE001
-        mono_now = time.monotonic()
-
-    adverts = getattr(target_dev, "adverts", {}) or {}
-    out: list[BLERangeMeasurement] = []
-    seen_proxy_ids: set[str] = set()
-    for _scanner_key, adv in adverts.items():
-        dist_m = getattr(adv, "rssi_distance", None)
-        if dist_m is None:
-            continue
-        scanner_dev = getattr(adv, "scanner_device", None)
-        s_name = str(getattr(scanner_dev, "name", "") or getattr(adv, "name", "") or "")
-        s_norm = _norm_token(s_name)
-        matched_proxy = proxy_by_key.get(s_norm)
-        if matched_proxy is None and s_norm:
-            for key, p in proxy_by_key.items():
-                if key in s_norm or s_norm in key:
-                    matched_proxy = p
-                    break
-        if matched_proxy is None:
-            adv_area = _norm_token(
-                getattr(adv, "area_name", "") or getattr(scanner_dev, "area_name", "")
-            )
-            cands = proxies_by_room.get(adv_area) or []
-            if len(cands) == 1:
-                matched_proxy = cands[0]
-            elif cands and s_norm:
-                matched_proxy = next(
-                    (c for c in cands if _norm_token(c.get("id")) in s_norm), cands[0]
-                )
-        if matched_proxy is None:
-            continue
-
-        pid = str(matched_proxy.get("id", s_norm))
-        if pid in seen_proxy_ids:
-            continue
-        seen_proxy_ids.add(pid)
-
-        stamp = getattr(adv, "stamp", None)
-        if stamp is None:
-            age = 0.0
-        else:
-            st_f = float(stamp)
-            # Detect monotonic clock (< 1e9) vs epoch wall-clock (> 1e9)
-            if float(now_ts) > 1e9 and st_f < 1e9:
-                age = max(0.0, mono_now - st_f)
-            else:
-                age = max(0.0, float(now_ts) - st_f)
-
-        out.append(
-            BLERangeMeasurement(
-                proxy_id=pid,
-                floor=str(matched_proxy.get("floor", "main")),
-                x_px=float(matched_proxy.get("x", 0.0)),
-                y_px=float(matched_proxy.get("y", 0.0)),
-                distance_ft=float(dist_m) * FEET_PER_METER,
-                age_sec=age,
-                rssi=getattr(adv, "rssi", None),
-                host_room=str(matched_proxy.get("host_room", "")),
-            )
-        )
-    return out
-
-
 class HouseEKFManager:
-    """Manage per-tracker 2D+Floor EKF instances and fuse live Bermuda + camera/PIR hits."""
+    """Manage per-tracker 2D+Floor EKF instances and fuse live native BLE + camera/PIR hits."""
 
     def __init__(self, config: KalmanConfig | None = None) -> None:
         self.cfg = config or KalmanConfig()
@@ -207,7 +54,7 @@ class HouseEKFManager:
         now_ts: float,
         active_camera_hits: list[tuple[str, float, float]] | None = None,
         active_pir_hits: list[tuple[str, float, float]] | None = None,
-        bermuda_area_floor: str | None = None,
+        area_floor_hint: str | None = None,
         ekf_floor_stability_v2: bool | None = None,
     ) -> KalmanEstimate:
         """Update one tracker with BLE ranges + Mahalanobis-gated camera/PIR observations."""
@@ -227,10 +74,10 @@ class HouseEKFManager:
         }
 
         floor_hints: dict[str, float] = {}
-        if bermuda_area_floor and (not use_v2 or not live_ble_floors):
-            # In v2, only use Bermuda's area-floor fallback when live per-proxy ranges are absent
-            # (prevents double-counting Bermuda on top of per-proxy BLE floor scores).
-            floor_hints[bermuda_area_floor] = floor_hints.get(bermuda_area_floor, 0.0) + 1.5
+        if area_floor_hint and (not use_v2 or not live_ble_floors):
+            # In v2, only use an area-floor hint when live per-proxy ranges are absent
+            # (prevents double-counting on top of per-proxy BLE floor scores).
+            floor_hints[area_floor_hint] = floor_hints.get(area_floor_hint, 0.0) + 1.5
 
         if not live_ble_floors:
             for cfl, _cx, _cy in active_camera_hits or []:
@@ -320,13 +167,30 @@ def update_house_ekf_from_hass(
     now_ts: float,
     tracker_entities: list[str] | tuple[str, ...],
     *,
+    ble_hub: NativeBLEScannerHub | None = None,
     ble_ranges_provider: Any = None,
     pir_spillover: dict[str, dict[str, float]] | None = None,
     ekf_floor_stability_v2: bool | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Update all configured BLE EKF tracks from live Bermuda ranges + gated cameras/PIRs."""
+    """Update all tracked BLE EKF instances from native HA Bluetooth ranges + gated cameras/PIRs."""
     fp = floorplan if isinstance(floorplan, dict) else {}
-    if not tracker_entities or not fp.get("rooms"):
+    if not fp.get("rooms"):
+        return {}
+
+    hub = ble_hub if ble_hub is not None else getattr(ekf_manager, "_ble_hub", None)
+    if hub is None:
+        hub = NativeBLEScannerHub()
+        ekf_manager._ble_hub = hub  # type: ignore[attr-defined]
+
+    # Single-pass native BLE ingestion when no custom provider override is supplied
+    native_ranges_by_tracker: dict[str, list[BLERangeMeasurement]] = {}
+    if callable(ble_ranges_provider):
+        active_trackers = [str(e).strip() for e in (tracker_entities or ()) if str(e).strip()]
+    else:
+        active_trackers, native_ranges_by_tracker = hub.collect_proxy_ranges(
+            hass, fp, now_ts, tracker_entities
+        )
+    if not active_trackers:
         return {}
 
     states_obj = getattr(hass, "states", None)
@@ -403,7 +267,7 @@ def update_house_ekf_from_hass(
         py = float(sen.get("y", 0.0)) + 0.35 * range_px * math.sin(rad)
         pir_hits.append((str(sen.get("floor") or ""), px, py))
 
-    # Map room names to floor ids for Bermuda area floor hints
+    # Map room names to floor ids for optional area-floor hints
     room_to_floor: dict[str, str] = {
         str(r.get("name")): str(r.get("floor"))
         for r in (fp.get("rooms") or [])
@@ -411,14 +275,14 @@ def update_house_ekf_from_hass(
     }
     raw_ble = (spatial_frame or {}).get("raw_ble_positions") or {}
 
-    for ble_eid in tracker_entities:
+    for ble_eid in active_trackers:
         eid_str = str(ble_eid).strip()
         if not eid_str:
             continue
         if callable(ble_ranges_provider):
             ranges = list(ble_ranges_provider(eid_str, fp, now_ts) or [])
         else:
-            ranges = read_bermuda_proxy_ranges(hass, eid_str, fp, now_ts)
+            ranges = list(native_ranges_by_tracker.get(eid_str) or [])
 
         raw_area = raw_ble.get(eid_str)
         if raw_area is None and states_obj is not None:
@@ -443,7 +307,7 @@ def update_house_ekf_from_hass(
             now_ts=now_ts,
             active_camera_hits=cam_hits,
             active_pir_hits=pir_hits,
-            bermuda_area_floor=area_floor,
+            area_floor_hint=area_floor,
             ekf_floor_stability_v2=ekf_floor_stability_v2,
         )
 

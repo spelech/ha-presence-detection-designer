@@ -118,12 +118,12 @@ export function renderSettingsModal(panel) {
               📱 Use BLE Position as Presence Decider
               <span class="pdd-hint-badge" data-tip="OFF = BLE area only logs/pins diagnostics (avoids floor-to-floor bleed); ON = BLE area actively drives room occupancy.">i</span>
             </span>
-            <input type="checkbox" id="gl-ble-decider-enabled" data-tip="Allow Bermuda/BLE area trackers to directly trigger room occupancy." data-tip-align="right" title="Allow Bermuda/BLE area trackers to trigger room occupancy" ${
+            <input type="checkbox" id="gl-ble-decider-enabled" data-tip="Allow native BLE / Private BLE trackers to directly trigger room occupancy." data-tip-align="right" title="Allow native BLE / Private BLE trackers to trigger room occupancy" ${
               panel._globalDraft?.ble_decider_enabled ? "checked" : ""
             } />
           </div>
           <div style="font-size:12px;color:var(--ha-muted);line-height:1.4;">
-            When enabled, Bermuda/proxy phone BLE areas act as active occupancy triggers and occupant pinning. When disabled, BLE positions are logged and graphed for calibration without vertical floor bounce.
+            When enabled, native BLE / proxy phone positions act as active occupancy triggers and occupant pinning. When disabled, BLE positions are logged and graphed for calibration without vertical floor bounce.
           </div>
         </div>
       </div>
